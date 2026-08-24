@@ -20,13 +20,17 @@ limitations under the License.
 #include <sphinx/memory.h>
 #include <sphinx/protocol.h>
 #include <sphinx/reactor.h>
+#include <sphinx/stats.h>
 #include <sphinx/string.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <system_error>
 #include <thread>
@@ -51,6 +55,21 @@ static constexpr int DEFAULT_SEGMENT_SIZE = 2;
 static constexpr int DEFAULT_LISTEN_BACKLOG = 1024;
 static constexpr int DEFAULT_NR_THREADS = 4;
 
+// This one-shot seam is used only by the network test to exercise the
+// request-queue failure branch deterministically.  Normal launches never set
+// the variable, so production request routing still calls Reactor::send_msg
+// directly.
+static bool
+force_mget_queue_failure_once()
+{
+  static std::atomic<bool> used = false;
+  if (std::getenv("SPHINXD_TEST_FAIL_MGET_QUEUE_ONCE") == nullptr) {
+    return false;
+  }
+  bool expected = false;
+  return used.compare_exchange_strong(expected, true, std::memory_order_relaxed);
+}
+
 struct Args
 {
   std::string listen_addr = DEFAULT_LISTEN_ADDR;
@@ -68,6 +87,7 @@ enum class MessageType : uint8_t
 {
   Command,
   Response,
+  MultiGetResponse,
 };
 
 struct Message
@@ -81,6 +101,9 @@ struct Message
   uint32_t key_size;
   uint32_t flags;
   uint64_t expiration;
+  uint64_t delta;
+  bool multi_get = false;
+  uint32_t key_index = 0;
   std::string payload;
 
   std::string_view key() const
@@ -93,6 +116,13 @@ struct Message
   }
 };
 
+struct MultiGetState
+{
+  size_t pending;
+  bool failed = false;
+  std::vector<std::string> pieces;
+};
+
 struct Connection
 {
   uint64_t id;
@@ -100,6 +130,7 @@ struct Connection
   uint64_t next_request_sequence = 0;
   uint64_t next_response_sequence = 0;
   std::map<uint64_t, std::string> pending_responses;
+  std::map<uint64_t, MultiGetState> pending_multi_gets;
   std::weak_ptr<sphinx::reactor::TcpSocket> socket;
   bool closed = false;
 };
@@ -113,7 +144,8 @@ public:
   Server(const sphinx::logmem::LogConfig& log_cfg,
          const std::string& backend,
          size_t thread_id,
-         size_t nr_threads);
+         size_t nr_threads,
+         std::shared_ptr<sphinx::stats::ServerStats> stats);
   void serve(const Args& args);
 
 private:
@@ -144,10 +176,31 @@ private:
                    std::string_view blob,
                    uint32_t flags,
                    uint64_t expiration);
+  void cmd_delete(size_t response_thread,
+                  uint64_t connection_id,
+                  uint64_t sequence,
+                  std::string_view key);
+  void cmd_arithmetic(size_t response_thread,
+                      uint64_t connection_id,
+                      uint64_t sequence,
+                      std::string_view key,
+                      uint64_t delta,
+                      bool increment);
   void cmd_get(size_t response_thread,
                uint64_t connection_id,
                uint64_t sequence,
-               std::string_view key);
+               std::string_view key,
+               bool multi_get = false,
+               uint32_t key_index = 0);
+  void send_multi_get_piece(size_t response_thread,
+                            uint64_t connection_id,
+                            uint64_t sequence,
+                            uint32_t key_index,
+                            std::string_view payload);
+  void complete_multi_get(const std::shared_ptr<Connection>& conn,
+                          uint64_t sequence,
+                          uint32_t key_index,
+                          std::string_view payload);
   void send_response(size_t response_thread,
                      uint64_t connection_id,
                      uint64_t sequence,
@@ -162,17 +215,20 @@ private:
 
   std::unordered_map<uint64_t, std::shared_ptr<Connection>> _connections;
   uint64_t _next_connection_id = 1;
+  std::shared_ptr<sphinx::stats::ServerStats> _stats;
 };
 
 Server::Server(const sphinx::logmem::LogConfig& log_cfg,
                const std::string& backend,
                size_t thread_id,
-               size_t nr_threads)
+               size_t nr_threads,
+               std::shared_ptr<sphinx::stats::ServerStats> stats)
   : _reactor{sphinx::reactor::make_reactor(backend,
                                            thread_id,
                                            nr_threads,
                                            [this](void* data) { this->on_message(data); })}
   , _log{log_cfg}
+  , _stats{std::move(stats)}
 {
 }
 
@@ -199,6 +255,14 @@ Server::on_message(void* data)
     auto it = _connections.find(message->connection_id);
     if (it != _connections.end()) {
       enqueue_response(it->second, message->sequence, message->payload);
+    }
+    delete message;
+    return;
+  }
+  if (type == MessageType::MultiGetResponse) {
+    auto it = _connections.find(message->connection_id);
+    if (it != _connections.end()) {
+      complete_multi_get(it->second, message->sequence, message->key_index, message->payload);
     }
     delete message;
     return;
@@ -242,8 +306,31 @@ Server::on_message(void* data)
                   cmd->expiration);
       break;
     }
+    case Opcode::Delete: {
+      cmd_delete(cmd->source_thread, cmd->connection_id, cmd->sequence, cmd->key());
+      break;
+    }
+    case Opcode::Incr:
+    case Opcode::Decr: {
+      cmd_arithmetic(cmd->source_thread,
+                     cmd->connection_id,
+                     cmd->sequence,
+                     cmd->key(),
+                     cmd->delta,
+                     cmd->op == Opcode::Incr);
+      break;
+    }
     case Opcode::Get: {
-      cmd_get(cmd->source_thread, cmd->connection_id, cmd->sequence, cmd->key());
+      cmd_get(cmd->source_thread,
+              cmd->connection_id,
+              cmd->sequence,
+              cmd->key(),
+              cmd->multi_get,
+              cmd->key_index);
+      break;
+    }
+    case Opcode::Stats: {
+      send_response(cmd->source_thread, cmd->connection_id, cmd->sequence, _stats->render());
       break;
     }
   }
@@ -286,7 +373,13 @@ Server::recv(const std::shared_ptr<Connection>& conn,
   conn->_rx_buffer.append(msg);
   for (;;) {
     auto view = conn->_rx_buffer.string_view();
-    if (view.find('\n') == std::string_view::npos) {
+    auto line_end = view.find('\n');
+    if (line_end == std::string_view::npos) {
+      return;
+    }
+    // Only CRLF terminates an ASCII command.  Keep a bare LF in the receive
+    // buffer instead of turning it into an ERROR or consuming later bytes.
+    if (line_end == 0 || view[line_end - 1] != '\r') {
       return;
     }
     size_t nr_consumed = process_one(conn, view);
@@ -308,6 +401,14 @@ Server::process_one(const std::shared_ptr<Connection>& conn, std::string_view ms
   Parser parser;
   size_t nr_consumed = parser.parse(msg);
   if (parser._number_overflow) {
+    // A delta that does not fit uint64_t is a client error for this command;
+    // consume only its header so a pipelined request remains usable.  Keep the
+    // historical connection-closing behavior for overflowing storage fields.
+    if (parser._op && (parser._op.value() == Opcode::Incr || parser._op.value() == Opcode::Decr)) {
+      auto sequence = conn->next_request_sequence++;
+      enqueue_response(conn, sequence, "CLIENT_ERROR invalid numeric argument\r\n");
+      return nr_consumed;
+    }
     return std::numeric_limits<size_t>::max();
   }
   if (!parser._op) {
@@ -356,6 +457,19 @@ Server::process_one(const std::shared_ptr<Connection>& conn, std::string_view ms
       std::string_view blob{parser._blob_start, parser._blob_size};
       auto flags = static_cast<uint32_t>(parser._flags);
       auto expiration = normalize_expiration(parser._expiration);
+      switch (op) {
+        case Opcode::Set:
+          _stats->record_set_command();
+          break;
+        case Opcode::Add:
+          _stats->record_add_command();
+          break;
+        case Opcode::Replace:
+          _stats->record_replace_command();
+          break;
+        default:
+          break;
+      }
       if (target_id == _reactor->thread_id()) {
         switch (op) {
           case Opcode::Set:
@@ -389,11 +503,78 @@ Server::process_one(const std::shared_ptr<Connection>& conn, std::string_view ms
       return consumed;
     }
     case Opcode::Get: {
+      const auto& keys = parser.keys();
+      if (keys.empty()) {
+        return nr_consumed;
+      }
+      _stats->record_get_command();
+      if (keys.size() == 1) {
+        const auto& key = keys.front();
+        auto hash = sphinx::logmem::Object::hash_of(key);
+        auto target_id = find_target(hash);
+        if (target_id == _reactor->thread_id()) {
+          cmd_get(target_id, conn->id, sequence, key);
+        } else {
+          Message* cmd = new Message();
+          cmd->connection_id = conn->id;
+          cmd->sequence = sequence;
+          cmd->source_thread = static_cast<uint8_t>(_reactor->thread_id());
+          cmd->op = op;
+          cmd->key_size = static_cast<uint32_t>(key.size());
+          cmd->buffer.append(key);
+          if (!_reactor->send_msg(target_id, cmd)) {
+            delete cmd;
+            enqueue_response(conn, sequence, "SERVER_ERROR request queue is full\r\n");
+          }
+        }
+        return nr_consumed;
+      }
+
+      // A multi-key get is intentionally only a response aggregator.  Each
+      // key is read on its owning worker, so this does not provide a cross-key
+      // snapshot.  Results are held until every child completes to keep one
+      // END and the request order on the connection.
+      MultiGetState state;
+      state.pending = keys.size();
+      state.pieces.resize(keys.size());
+      conn->pending_multi_gets.emplace(sequence, std::move(state));
+      for (size_t key_index = 0; key_index < keys.size(); key_index++) {
+        const auto& key = keys[key_index];
+        auto hash = sphinx::logmem::Object::hash_of(key);
+        auto target_id = find_target(hash);
+        if (target_id == _reactor->thread_id()) {
+          cmd_get(target_id, conn->id, sequence, key, true, static_cast<uint32_t>(key_index));
+          continue;
+        }
+        Message* cmd = new Message();
+        cmd->connection_id = conn->id;
+        cmd->sequence = sequence;
+        cmd->source_thread = static_cast<uint8_t>(_reactor->thread_id());
+        cmd->op = op;
+        cmd->key_size = static_cast<uint32_t>(key.size());
+        cmd->multi_get = true;
+        cmd->key_index = static_cast<uint32_t>(key_index);
+        cmd->buffer.append(key);
+        const bool submitted =
+          !force_mget_queue_failure_once() && _reactor->send_msg(target_id, cmd);
+        if (!submitted) {
+          delete cmd;
+          auto it = conn->pending_multi_gets.find(sequence);
+          if (it != conn->pending_multi_gets.end()) {
+            it->second.failed = true;
+          }
+          complete_multi_get(conn, sequence, static_cast<uint32_t>(key_index), {});
+        }
+      }
+      return nr_consumed;
+    }
+    case Opcode::Delete: {
+      _stats->record_delete_command();
       const auto& key = parser.key();
       auto hash = sphinx::logmem::Object::hash_of(key);
       auto target_id = find_target(hash);
       if (target_id == _reactor->thread_id()) {
-        cmd_get(target_id, conn->id, sequence, key);
+        cmd_delete(target_id, conn->id, sequence, key);
       } else {
         Message* cmd = new Message();
         cmd->connection_id = conn->id;
@@ -407,6 +588,35 @@ Server::process_one(const std::shared_ptr<Connection>& conn, std::string_view ms
           enqueue_response(conn, sequence, "SERVER_ERROR request queue is full\r\n");
         }
       }
+      return nr_consumed;
+    }
+    case Opcode::Incr:
+    case Opcode::Decr: {
+      const auto& key = parser.key();
+      _stats->increment(op == Opcode::Incr ? sphinx::stats::ServerStats::Counter::CmdIncr
+                                           : sphinx::stats::ServerStats::Counter::CmdDecr);
+      auto hash = sphinx::logmem::Object::hash_of(key);
+      auto target_id = find_target(hash);
+      if (target_id == _reactor->thread_id()) {
+        cmd_arithmetic(target_id, conn->id, sequence, key, parser.delta(), op == Opcode::Incr);
+      } else {
+        Message* cmd = new Message();
+        cmd->connection_id = conn->id;
+        cmd->sequence = sequence;
+        cmd->source_thread = static_cast<uint8_t>(_reactor->thread_id());
+        cmd->op = op;
+        cmd->key_size = static_cast<uint32_t>(key.size());
+        cmd->delta = parser.delta();
+        cmd->buffer.append(key);
+        if (!_reactor->send_msg(target_id, cmd)) {
+          delete cmd;
+          enqueue_response(conn, sequence, "SERVER_ERROR request queue is full\r\n");
+        }
+      }
+      return nr_consumed;
+    }
+    case Opcode::Stats: {
+      send_response(_reactor->thread_id(), conn->id, sequence, _stats->render());
       return nr_consumed;
     }
   }
@@ -473,14 +683,60 @@ Server::cmd_replace(size_t response_thread,
 }
 
 void
+Server::cmd_delete(size_t response_thread,
+                   uint64_t connection_id,
+                   uint64_t sequence,
+                   std::string_view key)
+{
+  if (this->_log.remove(key)) {
+    send_response(response_thread, connection_id, sequence, "DELETED\r\n");
+  } else {
+    send_response(response_thread, connection_id, sequence, "NOT_FOUND\r\n");
+  }
+}
+
+void
+Server::cmd_arithmetic(size_t response_thread,
+                       uint64_t connection_id,
+                       uint64_t sequence,
+                       std::string_view key,
+                       uint64_t delta,
+                       bool increment)
+{
+  const auto result = increment ? this->_log.incr(key, delta) : this->_log.decr(key, delta);
+  switch (result.status) {
+    case sphinx::logmem::ArithmeticStatus::Success:
+      send_response(
+        response_thread, connection_id, sequence, sphinx::to_string(result.value) + "\r\n");
+      return;
+    case sphinx::logmem::ArithmeticStatus::NotFound:
+      send_response(response_thread, connection_id, sequence, "NOT_FOUND\r\n");
+      return;
+    case sphinx::logmem::ArithmeticStatus::NonNumeric:
+      send_response(response_thread,
+                    connection_id,
+                    sequence,
+                    "CLIENT_ERROR cannot increment or decrement non-numeric value\r\n");
+      return;
+    case sphinx::logmem::ArithmeticStatus::StorageFull:
+      send_response(
+        response_thread, connection_id, sequence, "SERVER_ERROR out of memory storing object\r\n");
+      return;
+  }
+}
+
+void
 Server::cmd_get(size_t response_thread,
                 uint64_t connection_id,
                 uint64_t sequence,
-                std::string_view key)
+                std::string_view key,
+                bool multi_get,
+                uint32_t key_index)
 {
   std::string response;
   auto search = this->_log.find_value(key);
   if (search) {
+    _stats->record_get_hit();
     const auto& value = search.value();
     response += "VALUE ";
     response += key;
@@ -491,9 +747,78 @@ Server::cmd_get(size_t response_thread,
     response += "\r\n";
     response += value.blob;
     response += "\r\n";
+  } else {
+    _stats->record_get_miss();
   }
-  response += "END\r\n";
-  send_response(response_thread, connection_id, sequence, response);
+  if (multi_get) {
+    send_multi_get_piece(response_thread, connection_id, sequence, key_index, response);
+  } else {
+    response += "END\r\n";
+    send_response(response_thread, connection_id, sequence, response);
+  }
+}
+
+void
+Server::send_multi_get_piece(size_t response_thread,
+                             uint64_t connection_id,
+                             uint64_t sequence,
+                             uint32_t key_index,
+                             std::string_view payload)
+{
+  if (response_thread == _reactor->thread_id()) {
+    auto it = _connections.find(connection_id);
+    if (it != _connections.end()) {
+      complete_multi_get(it->second, sequence, key_index, payload);
+    }
+    return;
+  }
+  auto* response = new Message();
+  response->type = MessageType::MultiGetResponse;
+  response->connection_id = connection_id;
+  response->sequence = sequence;
+  response->key_index = key_index;
+  response->payload = std::string{payload};
+  if (!_reactor->send_msg_deferred(response_thread, response)) {
+    std::cerr << "response queue allocation failed for multi-get connection " << connection_id
+              << std::endl;
+    delete response;
+  }
+}
+
+void
+Server::complete_multi_get(const std::shared_ptr<Connection>& conn,
+                           uint64_t sequence,
+                           uint32_t key_index,
+                           std::string_view payload)
+{
+  auto it = conn->pending_multi_gets.find(sequence);
+  if (it == conn->pending_multi_gets.end()) {
+    return;
+  }
+  auto& state = it->second;
+  if (key_index >= state.pieces.size()) {
+    state.failed = true;
+  } else {
+    state.pieces[key_index] = std::string{payload};
+  }
+  if (state.pending != 0) {
+    state.pending--;
+  }
+  if (state.pending != 0) {
+    return;
+  }
+
+  std::string response;
+  if (state.failed) {
+    response = "SERVER_ERROR request queue is full\r\n";
+  } else {
+    for (const auto& piece : state.pieces) {
+      response += piece;
+    }
+    response += "END\r\n";
+  }
+  conn->pending_multi_gets.erase(it);
+  enqueue_response(conn, sequence, response);
 }
 
 void
@@ -568,6 +893,7 @@ Server::close_connection(const std::shared_ptr<Connection>& conn,
   }
   conn->closed = true;
   conn->pending_responses.clear();
+  conn->pending_multi_gets.clear();
   auto it = _connections.find(conn->id);
   if (it != _connections.end() && it->second == conn) {
     _connections.erase(it);
@@ -757,7 +1083,10 @@ parse_cmd_line(int argc, char* argv[])
 }
 
 void
-server_thread(size_t thread_id, std::optional<int> cpu_id, const Args& args)
+server_thread(size_t thread_id,
+              std::optional<int> cpu_id,
+              const Args& args,
+              const std::shared_ptr<sphinx::stats::ServerStats>& stats)
 {
   try {
     if (cpu_id) {
@@ -783,7 +1112,7 @@ server_thread(size_t thread_id, std::optional<int> cpu_id, const Args& args)
     log_cfg.segment_size = size_t(args.segment_size) * 1024 * 1024;
     log_cfg.memory_ptr = reinterpret_cast<char*>(memory.addr());
     log_cfg.memory_size = memory.size();
-    Server server{log_cfg, args.backend, thread_id, size_t(args.nr_threads)};
+    Server server{log_cfg, args.backend, thread_id, size_t(args.nr_threads), stats};
     server.serve(args);
   } catch (const std::exception& e) {
     std::cerr << "error: " << e.what() << std::endl;
@@ -820,10 +1149,14 @@ main(int argc, char* argv[])
   try {
     program = ::basename(argv[0]);
     auto args = parse_cmd_line(argc, argv);
+    auto stats = std::make_shared<sphinx::stats::ServerStats>(
+      std::string{SPHINX_VERSION},
+      static_cast<uint64_t>(args.nr_threads),
+      static_cast<uint64_t>(args.memory_limit) * 1024 * 1024);
     CpuAffinity cpu_affinity{args.isolate_cpus};
     std::vector<std::thread> threads;
     for (int i = 0; i < args.nr_threads; i++) {
-      auto thread = std::thread{server_thread, i, cpu_affinity.next_cpu_id(), args};
+      auto thread = std::thread{server_thread, i, cpu_affinity.next_cpu_id(), args, stats};
       threads.push_back(std::move(thread));
     }
     for (auto& t : threads) {

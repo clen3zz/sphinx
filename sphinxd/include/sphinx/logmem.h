@@ -152,6 +152,22 @@ struct Value
   uint64_t expiration;
 };
 
+/// The outcome of an atomic counter update.
+enum class ArithmeticStatus
+{
+  Success,
+  NotFound,
+  NonNumeric,
+  StorageFull,
+};
+
+/// The result of an atomic counter update.
+struct ArithmeticResult
+{
+  ArithmeticStatus status;
+  uint64_t value;
+};
+
 /// A log of objects.
 class Log
 {
@@ -174,6 +190,10 @@ public:
   bool append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration);
   /// \brief Remove the given \ref key from the log.
   bool remove(const Key& key);
+  /// \brief Increment a decimal counter while preserving its metadata.
+  ArithmeticResult incr(const Key& key, uint64_t delta);
+  /// \brief Decrement a decimal counter while preserving its metadata.
+  ArithmeticResult decr(const Key& key, uint64_t delta);
 
 private:
   bool try_to_append(const Key& key, const Blob& blob);

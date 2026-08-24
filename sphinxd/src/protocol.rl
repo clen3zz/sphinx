@@ -18,7 +18,9 @@ limitations under the License.
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 %%{
 
@@ -32,6 +34,7 @@ action key_start {
 
 action key_end {
     _key_end = p;
+    _owned_keys.emplace_back(_key_start, static_cast<size_t>(_key_end - _key_start));
 }
 
 action blob_start {
@@ -40,12 +43,13 @@ action blob_start {
 
 crlf = "\r\n";
 
-key = [^ ]+ >key_start %key_end;
+key = [^ \t\r\n]+ >key_start %key_end;
 
-number = digit+ >{ _number = 0; _number_overflow = false; } ${
-    if (!_number_overflow) {
+number = digit+ >{ _number = 0; _current_number_overflow = false; } ${
+    if (!_current_number_overflow) {
         auto digit_value = uint64_t(fc - '0');
         if (_number > (std::numeric_limits<uint64_t>::max() - digit_value) / 10) {
+            _current_number_overflow = true;
             _number_overflow = true;
         } else {
             _number = _number * 10 + digit_value;
@@ -67,11 +71,21 @@ add = "add" space key space flags space exptime space bytes space? crlf @blob_st
 
 replace = "replace" space key space flags space exptime space bytes space? crlf @blob_start @{ _op = Opcode::Replace; };
 
-get = "get" space key crlf @{ _op = Opcode::Get; };
+get = "get" space key (space key)* crlf @{ _op = Opcode::Get; };
+
+delete = "delete" space key crlf @{ _op = Opcode::Delete; };
+
+delta = number %{ _delta = _number; };
+
+incr = "incr" space key space delta crlf @{ _op = Opcode::Incr; };
+
+decr = "decr" space key space delta crlf @{ _op = Opcode::Decr; };
 
 version = "version" crlf @{ _op = Opcode::Version; };
 
-main := (set | add | replace | get | version);
+stats = "stats" crlf @{ _op = Opcode::Stats; };
+
+main := (set | add | replace | get | delete | incr | decr | version | stats);
 
 }%%
 
@@ -85,7 +99,11 @@ enum class Opcode
   Add,
   Replace,
   Get,
+  Delete,
+  Incr,
+  Decr,
   Version,
+  Stats,
 };
 
 class Parser
@@ -96,12 +114,15 @@ public:
   std::optional<Opcode> _op;
   const char* _key_start = nullptr;
   const char* _key_end = nullptr;
+  std::vector<std::string> _owned_keys;
   uint64_t _number = 0;
   bool _number_overflow = false;
+  bool _current_number_overflow = false;
   uint64_t _flags = 0;
   uint64_t _expiration = 0;
   const char* _blob_start = nullptr;
   uint64_t _blob_size = 0;
+  uint64_t _delta = 0;
 
   Parser()
   {
@@ -110,28 +131,53 @@ public:
 
   std::string_view key() const
   {
-    std::string_view::size_type key_size = _key_end - _key_start;
-    return std::string_view{_key_start, key_size};
+    if (_owned_keys.empty()) {
+      return {};
+    }
+    return std::string_view{_owned_keys.front().data(), _owned_keys.front().size()};
+  }
+
+  const std::vector<std::string>& keys() const
+  {
+    return _owned_keys;
+  }
+
+  uint64_t delta() const
+  {
+    return _delta;
   }
 
   size_t parse(std::string_view msg)
   {
+    _fsm_cs = start;
+    _op.reset();
+    _key_start = nullptr;
+    _key_end = nullptr;
+    _owned_keys.clear();
+    _number = 0;
+    _number_overflow = false;
+    _current_number_overflow = false;
+    _flags = 0;
+    _expiration = 0;
+    _blob_start = nullptr;
+    _blob_size = 0;
+    _delta = 0;
     if (msg.empty()) {
       return 0;
     }
     auto* start = msg.data();
-    auto* end = start + msg.size();
-    // Parse exactly one command header.  Ragel's default scanner may continue
-    // into a pipelined command after the first accepting state; bounding the
-    // execution range at the first CRLF keeps the returned offset and all
-    // captured fields tied to this command.
     auto header_end = msg.find("\r\n");
-    auto* parse_end = header_end == std::string_view::npos ? end : start + header_end + 2;
-    auto* next = parse(start, parse_end);
-    if (start != next) {
-      return next - start;
+    if (header_end == std::string_view::npos) {
+      // A command header is not complete until CRLF arrives.  Leaving the
+      // operation unset tells the reactor to retain the receive buffer.
+      return 0;
     }
-    return end - start;
+    auto* parse_end = start + header_end + 2;
+    parse(start, parse_end);
+    // The parser is deliberately bounded by the first CRLF, so even a
+    // complete invalid line consumes exactly that line and cannot eat the
+    // following pipelined command.
+    return header_end + 2;
   }
 
 private:

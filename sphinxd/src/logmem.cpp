@@ -22,6 +22,7 @@ limitations under the License.
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 #include <MurmurHash3.h>
 
@@ -32,6 +33,27 @@ current_time_seconds()
 {
   using namespace std::chrono;
   return uint64_t(duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
+}
+
+static std::optional<uint64_t>
+parse_uint64_decimal(const Blob& blob)
+{
+  if (blob.empty()) {
+    return std::nullopt;
+  }
+
+  uint64_t value = 0;
+  for (char digit : blob) {
+    if (digit < '0' || digit > '9') {
+      return std::nullopt;
+    }
+    auto numeric_digit = static_cast<uint64_t>(digit - '0');
+    if (value > (std::numeric_limits<uint64_t>::max() - numeric_digit) / 10) {
+      return std::nullopt;
+    }
+    value = value * 10 + numeric_digit;
+  }
+  return value;
 }
 
 Object::Object(const Key& key, const Blob& blob)
@@ -384,12 +406,65 @@ bool
 Log::remove(const Key& key)
 {
   auto value_opt = _index.find(key);
-  if (value_opt) {
-    value_opt.value()->expire();
-    _index.erase(key);
-    return true;
+  if (!value_opt) {
+    return false;
   }
-  return false;
+  auto* object = value_opt.value();
+  if (object->is_expired(current_time_seconds())) {
+    // An expired object is a miss.  Remove the index entry only when it still
+    // points at this object; a later append may already have rebound the key.
+    const auto current = _index.find(object->key());
+    if (current && current.value() == object) {
+      _index.erase(object->key());
+    }
+    object->expire();
+    return false;
+  }
+  object->expire();
+  _index.erase(key);
+  return true;
+}
+
+ArithmeticResult
+Log::incr(const Key& key, uint64_t delta)
+{
+  auto current = find_value(key);
+  if (!current) {
+    return {ArithmeticStatus::NotFound, 0};
+  }
+  auto parsed = parse_uint64_decimal(current->blob);
+  if (!parsed) {
+    return {ArithmeticStatus::NonNumeric, 0};
+  }
+
+  // Unsigned arithmetic is intentionally modulo 2^64, matching the protocol
+  // contract for increment overflow.
+  auto updated = parsed.value() + delta;
+  auto encoded = std::to_string(updated);
+  if (!append(key, encoded, current->flags, current->expiration)) {
+    return {ArithmeticStatus::StorageFull, 0};
+  }
+  return {ArithmeticStatus::Success, updated};
+}
+
+ArithmeticResult
+Log::decr(const Key& key, uint64_t delta)
+{
+  auto current = find_value(key);
+  if (!current) {
+    return {ArithmeticStatus::NotFound, 0};
+  }
+  auto parsed = parse_uint64_decimal(current->blob);
+  if (!parsed) {
+    return {ArithmeticStatus::NonNumeric, 0};
+  }
+
+  auto updated = parsed.value() < delta ? 0 : parsed.value() - delta;
+  auto encoded = std::to_string(updated);
+  if (!append(key, encoded, current->flags, current->expiration)) {
+    return {ArithmeticStatus::StorageFull, 0};
+  }
+  return {ArithmeticStatus::Success, updated};
 }
 
 size_t
