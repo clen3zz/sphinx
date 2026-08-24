@@ -39,6 +39,29 @@ Memory::Memory(void* addr, size_t size)
 {
 }
 
+Memory::Memory(Memory&& other) noexcept
+  : _addr{other._addr}
+  , _size{other._size}
+{
+  other._addr = nullptr;
+  other._size = 0;
+}
+
+Memory&
+Memory::operator=(Memory&& other) noexcept
+{
+  if (this != &other) {
+    if (_addr != nullptr && _size != 0) {
+      ::munmap(_addr, _size);
+    }
+    _addr = other._addr;
+    _size = other._size;
+    other._addr = nullptr;
+    other._size = 0;
+  }
+  return *this;
+}
+
 void*
 Memory::addr() const
 {
@@ -53,6 +76,8 @@ Memory::size() const
 
 Memory::~Memory()
 {
-  ::munmap(_addr, _size);
+  if (_addr != nullptr && _size != 0) {
+    ::munmap(_addr, _size);
+  }
 }
 }

@@ -19,6 +19,9 @@ limitations under the License.
 #include <sphinx/logmem.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
 
 static std::string
 make_random(size_t len)
@@ -66,4 +69,43 @@ TEST(LogTest, append_expires)
     blob = make_random(16);
     ASSERT_TRUE(log.append(key, blob));
   }
+}
+
+TEST(LogTest, overwrite_rebinds_index_before_segment_reclamation)
+{
+  using namespace sphinx::logmem;
+  alignas(std::max_align_t) std::array<char, 4 * 64> memory;
+  LogConfig cfg{memory.data(), memory.size(), 64};
+  Log log{cfg};
+
+  // Each object occupies one segment.  Repeatedly overwriting the same key
+  // therefore exercises both index-key rebinding and old-segment reclamation.
+  for (int i = 0; i < 12; i++) {
+    auto value = std::string{"value-"} + std::to_string(i);
+    ASSERT_TRUE(log.append("same-key", value));
+    auto found = log.find("same-key");
+    ASSERT_TRUE(found.has_value());
+    ASSERT_EQ(found.value(), value);
+  }
+}
+
+TEST(LogTest, stores_flags_and_expiration)
+{
+  using namespace sphinx::logmem;
+  alignas(std::max_align_t) std::array<char, 128> memory;
+  LogConfig cfg{memory.data(), memory.size(), 64};
+  Log log{cfg};
+  auto now = uint64_t(std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count());
+
+  ASSERT_TRUE(log.append("metadata", "payload", 123, now + 3600));
+  auto value = log.find_value("metadata");
+  ASSERT_TRUE(value.has_value());
+  ASSERT_EQ(value->flags, 123U);
+  ASSERT_EQ(value->blob, "payload");
+  ASSERT_EQ(value->expiration, now + 3600);
+
+  ASSERT_TRUE(log.append("expired", "payload", 7, 1));
+  ASSERT_FALSE(log.find_value("expired").has_value());
 }

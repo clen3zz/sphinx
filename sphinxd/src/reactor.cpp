@@ -28,9 +28,12 @@ limitations under the License.
 #include <unistd.h>
 
 #include <array>
+#include <chrono>
 #include <cstring>
+#include <new>
 #include <stdexcept>
 #include <system_error>
+#include <thread>
 
 namespace sphinx::reactor {
 
@@ -82,11 +85,25 @@ TcpListener::on_pollout()
 void
 TcpListener::accept()
 {
-  int connfd = ::accept4(_sockfd, nullptr, nullptr, SOCK_NONBLOCK);
-  if (connfd < 0) {
+  for (;;) {
+    int connfd = ::accept4(_sockfd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    if (connfd >= 0) {
+      try {
+        _accept_fn(connfd);
+      } catch (...) {
+        ::close(connfd);
+        throw;
+      }
+      continue;
+    }
+    if (errno == EINTR) {
+      continue;
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return;
+    }
     throw std::system_error(errno, std::system_category(), "accept4");
   }
-  _accept_fn(connfd);
 }
 
 int
@@ -117,12 +134,14 @@ make_tcp_listener(const std::string& iface, int port, int backlog, TcpAcceptFn&&
 {
   auto* addresses = lookup_addresses(iface, port, SOCK_STREAM);
   for (addrinfo* rp = addresses; rp != NULL; rp = rp->ai_next) {
-    int sockfd = ::socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+    int sockfd =
+      ::socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC, rp->ai_protocol);
     if (sockfd < 0) {
       continue;
     }
     int one = 1;
-    ::setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &one, sizeof(one));
+    ::setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    ::setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
     if (::bind(sockfd, rp->ai_addr, rp->ai_addrlen) < 0) {
       ::close(sockfd);
       continue;
@@ -132,7 +151,12 @@ make_tcp_listener(const std::string& iface, int port, int backlog, TcpAcceptFn&&
       continue;
     }
     freeaddrinfo(addresses);
-    return std::make_shared<TcpListener>(sockfd, std::move(accept_fn));
+    try {
+      return std::make_shared<TcpListener>(sockfd, std::move(accept_fn));
+    } catch (...) {
+      ::close(sockfd);
+      throw;
+    }
   }
   freeaddrinfo(addresses);
   throw std::runtime_error("Failed to listen to interface: '" + iface + "'");
@@ -158,14 +182,30 @@ TcpSocket::set_tcp_nodelay(bool nodelay)
 }
 
 bool
+TcpSocket::closed() const
+{
+  return _closed;
+}
+
+bool
 TcpSocket::send(const char* msg, size_t len, [[gnu::unused]] std::optional<SockAddr> dst)
 {
+  if (_closed) {
+    return true;
+  }
+  if (len == 0) {
+    return true;
+  }
   if (!_tx_buf.empty()) {
     _tx_buf.insert(_tx_buf.end(), msg, msg + len);
     return false;
   }
-  ssize_t nr = ::send(_sockfd, msg, len, MSG_NOSIGNAL | MSG_DONTWAIT);
-  if ((nr < 0) && (errno == ECONNRESET || errno == EPIPE)) {
+  ssize_t nr;
+  do {
+    nr = ::send(_sockfd, msg, len, MSG_NOSIGNAL | MSG_DONTWAIT);
+  } while (nr < 0 && errno == EINTR);
+  if ((nr < 0) && (errno == ECONNRESET || errno == EPIPE || errno == ENOTCONN || errno == EBADF)) {
+    _closed = true;
     return true;
   }
   if ((nr < 0) && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -175,8 +215,8 @@ TcpSocket::send(const char* msg, size_t len, [[gnu::unused]] std::optional<SockA
   if (nr < 0) {
     throw std::system_error(errno, std::system_category(), "send");
   }
-  if (size_t(nr) < len) {
-    _tx_buf.insert(_tx_buf.end(), msg + nr, msg + (len - nr));
+  if (nr == 0 || size_t(nr) < len) {
+    _tx_buf.insert(_tx_buf.end(), msg + nr, msg + len);
     return false;
   }
   return true;
@@ -187,26 +227,45 @@ TcpSocket::on_pollin()
 {
   constexpr size_t rx_buf_size = 256 * 1024;
   std::array<char, rx_buf_size> rx_buf;
-  ssize_t nr = ::recv(_sockfd, rx_buf.data(), rx_buf.size(), MSG_DONTWAIT);
-  if ((nr < 0 && errno == ECONNRESET)) {
-    _recv_fn(this->shared_from_this(), std::string_view{});
-    return;
-  }
-  if (nr < 0) {
+  for (;;) {
+    ssize_t nr = ::recv(_sockfd, rx_buf.data(), rx_buf.size(), MSG_DONTWAIT);
+    if (nr > 0) {
+      _recv_fn(this->shared_from_this(),
+               std::string_view{rx_buf.data(), std::string_view::size_type(nr)});
+      return;
+    }
+    if (nr == 0) {
+      _closed = true;
+      _recv_fn(this->shared_from_this(), std::string_view{});
+      return;
+    }
+    if (errno == EINTR) {
+      continue;
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return;
+    }
+    if (errno == ECONNRESET || errno == ENOTCONN || errno == EBADF) {
+      _closed = true;
+      _recv_fn(this->shared_from_this(), std::string_view{});
+      return;
+    }
     throw std::system_error(errno, std::system_category(), "recv");
   }
-  _recv_fn(this->shared_from_this(),
-           std::string_view{rx_buf.data(), std::string_view::size_type(nr)});
 }
 
 bool
 TcpSocket::on_pollout()
 {
-  if (_tx_buf.empty()) {
+  if (_closed || _tx_buf.empty()) {
     return true;
   }
-  ssize_t nr = ::send(_sockfd, _tx_buf.data(), _tx_buf.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
-  if ((nr < 0) && (errno == ECONNRESET || errno == EPIPE)) {
+  ssize_t nr;
+  do {
+    nr = ::send(_sockfd, _tx_buf.data(), _tx_buf.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+  } while (nr < 0 && errno == EINTR);
+  if ((nr < 0) && (errno == ECONNRESET || errno == EPIPE || errno == ENOTCONN || errno == EBADF)) {
+    _closed = true;
     return true;
   }
   if ((nr < 0) && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -214,6 +273,9 @@ TcpSocket::on_pollout()
   }
   if (nr < 0) {
     throw std::system_error(errno, std::system_category(), "send");
+  }
+  if (nr == 0) {
+    return false;
   }
   _tx_buf.erase(_tx_buf.begin(), _tx_buf.begin() + nr);
   return _tx_buf.empty();
@@ -232,12 +294,18 @@ UdpSocket::~UdpSocket()
 bool
 UdpSocket::send(const char* msg, size_t len, std::optional<SockAddr> dst)
 {
-  ssize_t nr = ::sendto(_sockfd,
-                        msg,
-                        len,
-                        MSG_NOSIGNAL | MSG_DONTWAIT,
-                        reinterpret_cast<::sockaddr*>(&dst->addr),
-                        dst->len);
+  if (!dst) {
+    throw std::invalid_argument("UDP send requires a destination");
+  }
+  ssize_t nr;
+  do {
+    nr = ::sendto(_sockfd,
+                  msg,
+                  len,
+                  MSG_NOSIGNAL | MSG_DONTWAIT,
+                  reinterpret_cast<::sockaddr*>(&dst->addr),
+                  dst->len);
+  } while (nr < 0 && errno == EINTR);
   if ((nr < 0) && (errno == ECONNRESET || errno == EPIPE)) {
     return true;
   }
@@ -263,8 +331,14 @@ UdpSocket::on_pollin()
                           MSG_DONTWAIT,
                           reinterpret_cast<::sockaddr*>(&src_addr),
                           &src_addr_len);
-  if ((nr < 0 && errno == ECONNRESET)) {
+  if ((nr < 0 && (errno == ECONNRESET || errno == ENOTCONN))) {
     _recv_fn(this->shared_from_this(), std::string_view{}, std::nullopt);
+    return;
+  }
+  if (nr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    return;
+  }
+  if (nr < 0 && errno == EINTR) {
     return;
   }
   if (nr < 0) {
@@ -287,18 +361,25 @@ make_udp_socket(const std::string& iface, int port, UdpRecvFn&& recv_fn)
 {
   auto* addresses = lookup_addresses(iface, port, SOCK_DGRAM);
   for (addrinfo* rp = addresses; rp != NULL; rp = rp->ai_next) {
-    int sockfd = ::socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK, rp->ai_protocol);
+    int sockfd =
+      ::socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC, rp->ai_protocol);
     if (sockfd < 0) {
       continue;
     }
     int one = 1;
-    ::setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &one, sizeof(one));
+    ::setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    ::setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
     if (::bind(sockfd, rp->ai_addr, rp->ai_addrlen) < 0) {
       ::close(sockfd);
       continue;
     }
     freeaddrinfo(addresses);
-    return std::make_shared<UdpSocket>(sockfd, std::move(recv_fn));
+    try {
+      return std::make_shared<UdpSocket>(sockfd, std::move(recv_fn));
+    } catch (...) {
+      ::close(sockfd);
+      throw;
+    }
   }
   freeaddrinfo(addresses);
   throw std::runtime_error("Failed to listen to interface: '" + iface + "'");
@@ -309,6 +390,11 @@ pthread_t Reactor::_pthread_ids[max_nr_threads];
 std::atomic<bool> Reactor::_thread_is_sleeping[max_nr_threads];
 sphinx::spsc::Queue<void*, Reactor::_msg_queue_size> Reactor::_msg_queues[max_nr_threads]
                                                                          [max_nr_threads];
+std::mutex Reactor::_state_mutex;
+std::mutex Reactor::_overflow_mutex;
+std::deque<void*> Reactor::_msg_overflow[max_nr_threads][max_nr_threads];
+size_t Reactor::_initialized_threads = 0;
+size_t Reactor::_active_reactors = 0;
 
 std::string
 Reactor::default_backend()
@@ -317,18 +403,54 @@ Reactor::default_backend()
 }
 
 Reactor::Reactor(size_t thread_id, size_t nr_threads, OnMessageFn&& on_message_fn)
-  : _efd{::eventfd(0, EFD_NONBLOCK)}
-  , _thread_id{thread_id}
+  : _thread_id{thread_id}
   , _nr_threads{nr_threads}
   , _on_message_fn{on_message_fn}
 {
-  _efds[_thread_id] = _efd;
-  _thread_is_sleeping[_thread_id].store(false, std::memory_order_seq_cst);
+  if (nr_threads == 0 || nr_threads > max_nr_threads || thread_id >= nr_threads) {
+    throw std::invalid_argument("invalid reactor thread count or thread id");
+  }
+  std::lock_guard lock{_state_mutex};
+  if (_initialized_threads != 0 && _initialized_threads != nr_threads) {
+    throw std::invalid_argument("reactors must use one thread count per process");
+  }
+  if (_initialized_threads == 0) {
+    for (size_t id = 0; id < nr_threads; id++) {
+      _efds[id] = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+      if (_efds[id] < 0) {
+        auto saved_errno = errno;
+        for (size_t close_id = 0; close_id < id; close_id++) {
+          ::close(_efds[close_id]);
+          _efds[close_id] = -1;
+        }
+        throw std::system_error(saved_errno, std::system_category(), "eventfd");
+      }
+      _thread_is_sleeping[id].store(false, std::memory_order_relaxed);
+    }
+    _initialized_threads = nr_threads;
+  }
+  _efd = _efds[_thread_id];
   _pthread_ids[_thread_id] = pthread_self();
+  _active_reactors++;
 }
 
 Reactor::~Reactor()
 {
+  std::lock_guard lock{_state_mutex};
+  if (_active_reactors == 0) {
+    return;
+  }
+  _active_reactors--;
+  if (_active_reactors == 0) {
+    for (size_t id = 0; id < _initialized_threads; id++) {
+      if (_efds[id] >= 0) {
+        ::close(_efds[id]);
+        _efds[id] = -1;
+      }
+      _thread_is_sleeping[id].store(false, std::memory_order_relaxed);
+    }
+    _initialized_threads = 0;
+  }
 }
 
 size_t
@@ -346,12 +468,54 @@ Reactor::nr_threads() const
 bool
 Reactor::send_msg(size_t remote_id, void* msg)
 {
+  return send_msg_impl(remote_id, msg, false);
+}
+
+bool
+Reactor::send_msg_deferred(size_t remote_id, void* msg)
+{
+  return send_msg_impl(remote_id, msg, true);
+}
+
+bool
+Reactor::send_msg_impl(size_t remote_id, void* msg, bool defer_if_full)
+{
   if (remote_id == _thread_id) {
     throw std::invalid_argument("Attempting to send message to self");
   }
+  if (remote_id >= _nr_threads || msg == nullptr) {
+    throw std::invalid_argument("invalid reactor message target");
+  }
   auto& queue = _msg_queues[remote_id][_thread_id];
-  if (!queue.try_to_emplace(msg)) {
-    return false;
+  {
+    std::lock_guard lock{_overflow_mutex};
+    auto& overflow = _msg_overflow[remote_id][_thread_id];
+    // Once an overflow message exists, keep later messages there as well so
+    // the destination observes the same FIFO order as the bounded ring.
+    if (!overflow.empty()) {
+      if (!defer_if_full) {
+        return false;
+      }
+      try {
+        overflow.emplace_back(msg);
+      } catch (const std::bad_alloc&) {
+        return false;
+      }
+      _pending_wakeups.set(remote_id);
+      return true;
+    }
+    if (queue.try_to_emplace(msg)) {
+      _pending_wakeups.set(remote_id);
+      return true;
+    }
+    if (!defer_if_full) {
+      return false;
+    }
+    try {
+      overflow.emplace_back(msg);
+    } catch (const std::bad_alloc&) {
+      return false;
+    }
   }
   _pending_wakeups.set(remote_id);
   return true;
@@ -374,7 +538,13 @@ Reactor::wake_up_pending()
 void
 Reactor::wake_up(size_t thread_id)
 {
+  if (thread_id >= _nr_threads || _efds[thread_id] < 0) {
+    throw std::invalid_argument("invalid reactor wakeup target");
+  }
   if (::eventfd_write(_efds[thread_id], 1) < 0) {
+    if (errno == EAGAIN) {
+      return;
+    }
     throw std::system_error(errno, std::system_category(), "eventfd_write");
   }
 }
@@ -394,6 +564,12 @@ Reactor::has_messages() const
       }
       return true;
     }
+    {
+      std::lock_guard lock{_overflow_mutex};
+      if (!_msg_overflow[_thread_id][other].empty()) {
+        return true;
+      }
+    }
   }
   return false;
 }
@@ -409,12 +585,25 @@ Reactor::poll_messages()
     auto& queue = _msg_queues[_thread_id][other];
     for (;;) {
       auto* msg = queue.front();
-      if (!msg) {
-        break;
+      if (msg) {
+        has_messages |= true;
+        auto* data = *msg;
+        queue.pop();
+        _on_message_fn(data);
+        continue;
+      }
+      void* data = nullptr;
+      {
+        std::lock_guard lock{_overflow_mutex};
+        auto& overflow = _msg_overflow[_thread_id][other];
+        if (overflow.empty()) {
+          break;
+        }
+        data = overflow.front();
+        overflow.pop_front();
       }
       has_messages |= true;
-      _on_message_fn(*msg);
-      queue.pop();
+      _on_message_fn(data);
     }
   }
   return has_messages;

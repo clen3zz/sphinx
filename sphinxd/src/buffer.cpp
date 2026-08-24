@@ -16,6 +16,8 @@ limitations under the License.
 
 #include <sphinx/buffer.h>
 
+#include <stdexcept>
+
 namespace sphinx::buffer {
 
 bool
@@ -27,12 +29,18 @@ Buffer::is_empty() const
 void
 Buffer::append(std::string_view data)
 {
+  if (data.empty()) {
+    return;
+  }
   _data.insert(_data.end(), data.data(), data.data() + data.size());
 }
 
 void
 Buffer::remove_prefix(size_t n)
 {
+  if (n > _data.size()) {
+    throw std::out_of_range("buffer prefix is larger than the buffer");
+  }
   _data.erase(_data.begin(), _data.begin() + n);
 }
 

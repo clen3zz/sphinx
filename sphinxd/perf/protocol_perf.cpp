@@ -26,6 +26,8 @@ Protocol_parse(benchmark::State& state)
   for (auto _ : state) {
     Parser parser;
     parser.parse(msg);
+    benchmark::DoNotOptimize(parser._op);
+    benchmark::ClobberMemory();
   }
 }
 BENCHMARK(Protocol_parse);

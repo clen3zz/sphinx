@@ -43,7 +43,7 @@ public:
   void on_pollin() override
   {
     eventfd_t unused;
-    if (::eventfd_read(_efd, &unused) < 0) {
+    if (::eventfd_read(_efd, &unused) < 0 && errno != EAGAIN && errno != EINTR) {
       throw std::system_error(errno, std::system_category(), "eventfd_read");
     }
   }
@@ -57,19 +57,33 @@ EpollReactor::EpollReactor(size_t thread_id, size_t nr_threads, OnMessageFn&& on
   : Reactor{thread_id, nr_threads, std::move(on_message_fn)}
   , _epollfd{::epoll_create1(0)}
 {
-  auto eventfd = std::make_shared<Eventfd>(_efd);
-  update_epoll(eventfd.get(), EPOLLIN);
-  _pollables.emplace(eventfd->fd(), eventfd);
+  if (_epollfd < 0) {
+    throw std::system_error(errno, std::system_category(), "epoll_create1");
+  }
+  try {
+    auto eventfd = std::make_shared<Eventfd>(_efd);
+    update_epoll(eventfd.get(), EPOLLIN);
+    _pollables.emplace(eventfd->fd(), eventfd);
+  } catch (...) {
+    ::close(_epollfd);
+    _epollfd = -1;
+    throw;
+  }
 }
 
 EpollReactor::~EpollReactor()
 {
-  ::close(_epollfd);
+  if (_epollfd >= 0) {
+    ::close(_epollfd);
+  }
 }
 
 void
 EpollReactor::accept(std::shared_ptr<TcpListener>&& listener)
 {
+  if (!listener) {
+    throw std::invalid_argument("cannot register a null listener");
+  }
   update_epoll(listener.get(), EPOLLIN);
   _pollables.emplace(listener->fd(), std::move(listener));
 }
@@ -77,6 +91,9 @@ EpollReactor::accept(std::shared_ptr<TcpListener>&& listener)
 void
 EpollReactor::recv(std::shared_ptr<Socket>&& socket)
 {
+  if (!socket) {
+    throw std::invalid_argument("cannot register a null socket");
+  }
   update_epoll(socket.get(), EPOLLIN);
   _pollables.emplace(socket->fd(), std::move(socket));
 }
@@ -84,6 +101,9 @@ EpollReactor::recv(std::shared_ptr<Socket>&& socket)
 void
 EpollReactor::send(std::shared_ptr<Socket> socket)
 {
+  if (!socket) {
+    throw std::invalid_argument("cannot register a null socket");
+  }
   update_epoll(socket.get(), EPOLLIN | EPOLLOUT);
   _pollables.emplace(socket->fd(), socket);
 }
@@ -91,12 +111,16 @@ EpollReactor::send(std::shared_ptr<Socket> socket)
 void
 EpollReactor::close(std::shared_ptr<Socket> socket)
 {
+  if (!socket) {
+    return;
+  }
   _epoll_events.erase(socket->fd());
-  if (::epoll_ctl(_epollfd, EPOLL_CTL_DEL, socket->fd(), nullptr) < 0) {
+  if (::epoll_ctl(_epollfd, EPOLL_CTL_DEL, socket->fd(), nullptr) < 0 && errno != ENOENT &&
+      errno != EBADF) {
     throw std::system_error(errno, std::system_category(), "epoll_ctl");
   }
   if (::shutdown(socket->fd(), SHUT_RDWR) < 0) {
-    if (errno != ENOTCONN) {
+    if (errno != ENOTCONN && errno != EINVAL && errno != EBADF) {
       throw std::system_error(errno, std::system_category(), "close");
     }
   }
@@ -140,8 +164,11 @@ EpollReactor::run()
         continue;
       }
       auto pollable = it->second;
-      if (event->events & EPOLLIN) {
+      if (event->events & (EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP)) {
         pollable->on_pollin();
+      }
+      if (_pollables.find(fd) == _pollables.end()) {
+        continue;
       }
       if (event->events & EPOLLOUT) {
         if (pollable->on_pollout()) {
@@ -165,7 +192,7 @@ EpollReactor::update_epoll(Pollable* pollable, uint32_t events)
   }
   ::epoll_event ev = {};
   ev.data.fd = pollable->fd();
-  ev.events = events;
+  ev.events = events | EPOLLRDHUP;
   if (::epoll_ctl(_epollfd, op, pollable->fd(), &ev) < 0) {
     throw std::system_error(errno, std::system_category(), "epoll_ctl");
   }

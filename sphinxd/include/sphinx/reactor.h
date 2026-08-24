@@ -18,12 +18,17 @@ limitations under the License.
 
 #include <sphinx/spsc_queue.h>
 
+#include <atomic>
 #include <bitset>
+#include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <sys/socket.h>
@@ -60,6 +65,10 @@ protected:
 
 public:
   explicit Socket(int sockfd);
+  Socket(const Socket&) = delete;
+  Socket& operator=(const Socket&) = delete;
+  Socket(Socket&&) = delete;
+  Socket& operator=(Socket&&) = delete;
   virtual ~Socket();
 
   int fd() const;
@@ -73,6 +82,8 @@ class TcpListener : public Pollable
 
 public:
   explicit TcpListener(int sockfd, TcpAcceptFn&& accept_fn);
+  TcpListener(const TcpListener&) = delete;
+  TcpListener& operator=(const TcpListener&) = delete;
   ~TcpListener();
 
   int fd() const override;
@@ -103,11 +114,13 @@ public:
   ~TcpSocket();
   void set_tcp_nodelay(bool nodelay);
   bool send(const char* msg, size_t len, std::optional<SockAddr> dst = std::nullopt) override;
+  bool closed() const;
   void on_pollin() override;
   bool on_pollout() override;
 
 private:
   void recv();
+  bool _closed = false;
 };
 
 class UdpSocket;
@@ -144,8 +157,13 @@ protected:
   static std::atomic<bool> _thread_is_sleeping[max_nr_threads];
   static constexpr int _msg_queue_size = 10000;
   static sphinx::spsc::Queue<void*, _msg_queue_size> _msg_queues[max_nr_threads][max_nr_threads];
+  static std::mutex _state_mutex;
+  static std::mutex _overflow_mutex;
+  static std::deque<void*> _msg_overflow[max_nr_threads][max_nr_threads];
+  static size_t _initialized_threads;
+  static size_t _active_reactors;
 
-  int _efd;
+  int _efd = -1;
   size_t _thread_id;
   size_t _nr_threads;
   std::bitset<max_nr_threads> _pending_wakeups;
@@ -159,6 +177,7 @@ public:
   size_t thread_id() const;
   size_t nr_threads() const;
   bool send_msg(size_t thread, void* data);
+  bool send_msg_deferred(size_t thread, void* data);
   virtual void accept(std::shared_ptr<TcpListener>&& listener) = 0;
   virtual void recv(std::shared_ptr<Socket>&& socket) = 0;
   virtual void send(std::shared_ptr<Socket> socket) = 0;
@@ -168,6 +187,7 @@ public:
 protected:
   void wake_up_pending();
   void wake_up(size_t thread_id);
+  bool send_msg_impl(size_t thread, void* data, bool defer_if_full);
   bool has_messages() const;
   bool poll_messages();
 };

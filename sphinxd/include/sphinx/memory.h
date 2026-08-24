@@ -28,6 +28,10 @@ class Memory
 public:
   static Memory mmap(size_t size);
   explicit Memory(void* ptr, size_t size);
+  Memory(const Memory&) = delete;
+  Memory& operator=(const Memory&) = delete;
+  Memory(Memory&& other) noexcept;
+  Memory& operator=(Memory&& other) noexcept;
   ~Memory();
   void* addr() const;
   size_t size() const;

@@ -32,16 +32,29 @@ if(GTEST_FOUND)
       src/MurmurHash3.cpp
       src/buffer.cpp
       src/logmem.cpp
+      src/memory.cpp
+      src/reactor.cpp
+      src/reactor-epoll.cpp
       test/buffer_test.cpp
+      test/index_test.cpp
       test/logmem_test.cpp
       test/main.cpp
       test/protocol_test.cpp
+      test/reactor_test.cpp
       test/spsc_queue_test.cpp
       test/string_test.cpp
       ${RAGEL_protocol_OUTPUTS}
   )
   target_link_libraries(sphinxd_tests ${GTEST_BOTH_LIBRARIES} pthread)
   add_test(sphinxd_tests sphinxd_tests)
+endif()
+
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME sphinxd_network_test
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/network_test.py
+                   $<TARGET_FILE:sphinxd>)
+  set_tests_properties(sphinxd_network_test PROPERTIES TIMEOUT 180)
 endif()
 
 if(BUILD_BENCHMARKS)

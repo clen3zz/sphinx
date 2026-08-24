@@ -37,11 +37,19 @@ public:
   }
   std::optional<Value> insert_or_assign(Key key, Value value)
   {
-    auto [it, inserted] = _index.insert_or_assign(key, value);
-    if (!inserted) {
-      return it->second;
+    auto it = _index.find(key);
+    if (it == _index.end()) {
+      _index.emplace(key, value);
+      return std::nullopt;
     }
-    return std::nullopt;
+    auto old = it->second;
+    // `Key` is allowed to be a non-owning view (the log uses string_view keys).
+    // insert_or_assign updates only the mapped value when a key compares equal,
+    // leaving the old view pointing into an object that may be reclaimed.  Erase
+    // and insert so the index key is rebound to the newly appended object.
+    _index.erase(it);
+    _index.emplace(key, value);
+    return old;
   }
   void erase(Key key)
   {

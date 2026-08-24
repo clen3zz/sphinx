@@ -14,6 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <optional>
 #include <string_view>
 
 %%{
@@ -38,7 +42,16 @@ crlf = "\r\n";
 
 key = [^ ]+ >key_start %key_end;
 
-number = digit+ >{ _number = 0; } ${ _number *= 10; _number += fc - '0'; };
+number = digit+ >{ _number = 0; _number_overflow = false; } ${
+    if (!_number_overflow) {
+        auto digit_value = uint64_t(fc - '0');
+        if (_number > (std::numeric_limits<uint64_t>::max() - digit_value) / 10) {
+            _number_overflow = true;
+        } else {
+            _number = _number * 10 + digit_value;
+        }
+    }
+};
 
 flags = number %{ _flags = _number; };
 
@@ -84,6 +97,7 @@ public:
   const char* _key_start = nullptr;
   const char* _key_end = nullptr;
   uint64_t _number = 0;
+  bool _number_overflow = false;
   uint64_t _flags = 0;
   uint64_t _expiration = 0;
   const char* _blob_start = nullptr;
@@ -102,9 +116,18 @@ public:
 
   size_t parse(std::string_view msg)
   {
+    if (msg.empty()) {
+      return 0;
+    }
     auto* start = msg.data();
     auto* end = start + msg.size();
-    auto* next = parse(start, end);
+    // Parse exactly one command header.  Ragel's default scanner may continue
+    // into a pipelined command after the first accepting state; bounding the
+    // execution range at the first CRLF keeps the returned offset and all
+    // captured fields tied to this command.
+    auto header_end = msg.find("\r\n");
+    auto* parse_end = header_end == std::string_view::npos ? end : start + header_end + 2;
+    auto* next = parse(start, parse_end);
     if (start != next) {
       return next - start;
     }

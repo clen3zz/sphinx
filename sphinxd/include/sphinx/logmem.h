@@ -65,7 +65,9 @@ class Object final
 {
   uint32_t _key_size;
   uint32_t _blob_size;
+  uint32_t _flags;
   uint32_t _expiration;
+  uint32_t _expired;
 
 public:
   /// \brief Return the size of an object of \ref key and \ref blob.
@@ -76,15 +78,23 @@ public:
   static Hash hash_of(const Key& key);
   /// \brief Construct a \ref Object instance.
   Object(const Key& key, const Blob& blob);
+  /// \brief Construct an object with Memcached metadata.
+  Object(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration);
   /// \brief Expire object.
   void expire();
   /// \brief Return true if object is expired; otherwise return false.
   bool is_expired() const;
+  /// \brief Return true if the object has reached its wall-clock expiration.
+  bool is_expired(uint64_t now) const;
+  /// \brief Return the flags stored with this object.
+  uint32_t flags() const;
+  /// \brief Return the absolute Unix expiration time, or zero for no expiry.
+  uint64_t expiration() const;
   /// \brief Returns the size of the object in memory.
   size_t size() const;
-  /// \brief Return object key.
+  /// \brief Return object key.
   Key key() const;
-  /// \brief Return object blob.
+  /// \brief Return object blob.
   Blob blob() const;
 
 private:
@@ -115,6 +125,8 @@ public:
   void reset();
   /// \brief Append an object represented by \ref key and \ref blob to the log.
   Object* append(const Key& key, const Blob& blob);
+  /// \brief Append an object with Memcached metadata.
+  Object* append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration);
   /// \brief Return a pointer to the first object in the segment.
   Object* first_object();
   /// \brief Return a pointer to the next object immediatelly following \ref object.
@@ -132,6 +144,14 @@ struct LogConfig
   size_t segment_size;
 };
 
+/// A value and its Memcached metadata.
+struct Value
+{
+  Blob blob;
+  uint32_t flags;
+  uint64_t expiration;
+};
+
 /// A log of objects.
 class Log
 {
@@ -146,14 +166,23 @@ public:
   Log(const LogConfig& config);
   /// \brief Find for a blob for a given \ref key from the log.
   std::optional<Blob> find(const Key& key) const;
+  /// \brief Find a value and its Memcached metadata.
+  std::optional<Value> find_value(const Key& key);
   /// \brief Append a key-blob pair to the log.
   bool append(const Key& key, const Blob& blob);
+  /// \brief Append a key-blob pair with Memcached metadata.
+  bool append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration);
   /// \brief Remove the given \ref key from the log.
   bool remove(const Key& key);
 
 private:
   bool try_to_append(const Key& key, const Blob& blob);
-  bool try_to_append(Segment* segment, const Key& key, const Blob& blob);
+  bool try_to_append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration);
+  bool try_to_append(Segment* segment,
+                     const Key& key,
+                     const Blob& blob,
+                     uint32_t flags,
+                     uint64_t expiration);
   size_t expire(size_t reclaim_target);
   size_t expire(Segment* segment);
   size_t segment_index(size_t size);

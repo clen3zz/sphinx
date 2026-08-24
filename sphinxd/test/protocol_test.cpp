@@ -65,3 +65,21 @@ TEST(ProtocolTest, parse_many)
     ASSERT_EQ(*parser._op, Opcode::Get);
   }
 }
+
+TEST(ProtocolTest, parse_pipelined_headers_without_consuming_next_command)
+{
+  using namespace sphinx::memcache;
+  std::string_view msg = "get first\r\nget second\r\n";
+  Parser first;
+  auto first_consumed = first.parse(msg);
+  ASSERT_EQ(first_consumed, 11U);
+  ASSERT_EQ(first._op, Opcode::Get);
+  ASSERT_EQ(first.key(), "first");
+
+  msg.remove_prefix(first_consumed);
+  Parser second;
+  auto second_consumed = second.parse(msg);
+  ASSERT_EQ(second_consumed, 12U);
+  ASSERT_EQ(second._op, Opcode::Get);
+  ASSERT_EQ(second.key(), "second");
+}

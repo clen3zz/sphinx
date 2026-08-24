@@ -18,6 +18,8 @@ limitations under the License.
 
 #include <array>
 #include <atomic>
+#include <cstddef>
+#include <utility>
 
 #include <sphinx/hardware.h>
 
@@ -50,6 +52,7 @@ namespace sphinx::spsc {
 template<typename T, size_t N>
 class Queue
 {
+  static_assert(N > 1, "SPSC queue capacity must be greater than one");
   alignas(hardware::cache_line_size) std::atomic<size_t> _head = 0;
   alignas(hardware::cache_line_size) std::atomic<size_t> _tail = 0;
   std::array<T, N> _data;
@@ -91,10 +94,8 @@ public:
     if (next_head == N) {
       next_head = 0;
     }
-    _data[head].~T();
-    // The release fence here ensures that message is destructed before we update the head index.
-    // This prevents the producer from reusing memory for a message, which will be destructed later
-    // thus corrupting the new message.
+    // The release store ensures that the consumer has finished reading the
+    // slot before the producer is allowed to reuse it.
     _head.store(next_head, std::memory_order_release);
   }
 };

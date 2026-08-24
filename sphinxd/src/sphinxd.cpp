@@ -22,15 +22,21 @@ limitations under the License.
 #include <sphinx/reactor.h>
 #include <sphinx/string.h>
 
-#include <cassert> // FIXME
+#include <chrono>
+#include <cstdint>
 #include <iostream>
+#include <limits>
+#include <map>
 #include <sstream>
+#include <system_error>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <getopt.h>
 #include <libgen.h>
 #include <netinet/in.h>
+#include <sched.h>
 #include <sys/mman.h>
 
 #include "version.h"
@@ -58,13 +64,24 @@ struct Args
   bool sched_fifo = false;
 };
 
-struct Command
+enum class MessageType : uint8_t
 {
-  std::shared_ptr<sphinx::reactor::Socket> sock;
+  Command,
+  Response,
+};
+
+struct Message
+{
+  MessageType type = MessageType::Command;
+  uint64_t connection_id;
+  uint64_t sequence;
+  uint8_t source_thread;
   sphinx::buffer::Buffer buffer;
   sphinx::memcache::Opcode op;
-  uint8_t thread_id;
-  uint8_t key_size;
+  uint32_t key_size;
+  uint32_t flags;
+  uint64_t expiration;
+  std::string payload;
 
   std::string_view key() const
   {
@@ -78,7 +95,13 @@ struct Command
 
 struct Connection
 {
+  uint64_t id;
   sphinx::buffer::Buffer _rx_buffer;
+  uint64_t next_request_sequence = 0;
+  uint64_t next_response_sequence = 0;
+  std::map<uint64_t, std::string> pending_responses;
+  std::weak_ptr<sphinx::reactor::TcpSocket> socket;
+  bool closed = false;
 };
 
 class Server
@@ -96,16 +119,49 @@ public:
 private:
   void on_message(void* data);
   void accept(int sockfd);
-  void recv(Connection& conn,
+  void recv(const std::shared_ptr<Connection>& conn,
             std::shared_ptr<sphinx::reactor::TcpSocket> sock,
             std::string_view msg);
-  size_t process_one(std::shared_ptr<sphinx::reactor::TcpSocket> sock, std::string_view msg);
-  void cmd_set(std::shared_ptr<sphinx::reactor::Socket> sock, std::string_view key, std::string_view blob);
-  void cmd_add(std::shared_ptr<sphinx::reactor::Socket> sock, std::string_view key, std::string_view blob);
-  void cmd_replace(std::shared_ptr<sphinx::reactor::Socket> sock, std::string_view key, std::string_view blob);
-  void cmd_get(std::shared_ptr<sphinx::reactor::Socket> sock, std::string_view key);
-  void respond(std::shared_ptr<sphinx::reactor::Socket> sock, std::string_view msg);
+  size_t process_one(const std::shared_ptr<Connection>& conn, std::string_view msg);
+  void cmd_set(size_t response_thread,
+               uint64_t connection_id,
+               uint64_t sequence,
+               std::string_view key,
+               std::string_view blob,
+               uint32_t flags,
+               uint64_t expiration);
+  void cmd_add(size_t response_thread,
+               uint64_t connection_id,
+               uint64_t sequence,
+               std::string_view key,
+               std::string_view blob,
+               uint32_t flags,
+               uint64_t expiration);
+  void cmd_replace(size_t response_thread,
+                   uint64_t connection_id,
+                   uint64_t sequence,
+                   std::string_view key,
+                   std::string_view blob,
+                   uint32_t flags,
+                   uint64_t expiration);
+  void cmd_get(size_t response_thread,
+               uint64_t connection_id,
+               uint64_t sequence,
+               std::string_view key);
+  void send_response(size_t response_thread,
+                     uint64_t connection_id,
+                     uint64_t sequence,
+                     std::string_view msg);
+  void enqueue_response(const std::shared_ptr<Connection>& conn,
+                        uint64_t sequence,
+                        std::string_view msg);
+  void close_connection(const std::shared_ptr<Connection>& conn,
+                        const std::shared_ptr<sphinx::reactor::TcpSocket>& sock);
   size_t find_target(const sphinx::logmem::Hash& hash) const;
+  static uint64_t normalize_expiration(uint64_t expiration);
+
+  std::unordered_map<uint64_t, std::shared_ptr<Connection>> _connections;
+  uint64_t _next_connection_id = 1;
 };
 
 Server::Server(const sphinx::logmem::LogConfig& log_cfg,
@@ -134,225 +190,404 @@ void
 Server::on_message(void* data)
 {
   using namespace sphinx::memcache;
-  auto* cmd = reinterpret_cast<Command*>(data);
+  if (data == nullptr) {
+    return;
+  }
+  auto* message = static_cast<Message*>(data);
+  auto type = message->type;
+  if (type == MessageType::Response) {
+    auto it = _connections.find(message->connection_id);
+    if (it != _connections.end()) {
+      enqueue_response(it->second, message->sequence, message->payload);
+    }
+    delete message;
+    return;
+  }
+  if (type != MessageType::Command) {
+    delete message;
+    return;
+  }
+  auto* cmd = message;
   switch (cmd->op) {
     case Opcode::Version:
-      assert(0);
+      send_response(cmd->source_thread, cmd->connection_id, cmd->sequence, "VERSION 1.5.16\r\n");
+      break;
     case Opcode::Set: {
-      cmd_set(cmd->sock, cmd->key(), cmd->blob());
-      delete cmd;
+      cmd_set(cmd->source_thread,
+              cmd->connection_id,
+              cmd->sequence,
+              cmd->key(),
+              cmd->blob(),
+              cmd->flags,
+              cmd->expiration);
       break;
     }
     case Opcode::Add: {
-      cmd_add(cmd->sock, cmd->key(), cmd->blob());
-      delete cmd;
+      cmd_add(cmd->source_thread,
+              cmd->connection_id,
+              cmd->sequence,
+              cmd->key(),
+              cmd->blob(),
+              cmd->flags,
+              cmd->expiration);
       break;
     }
     case Opcode::Replace: {
-      cmd_replace(cmd->sock, cmd->key(), cmd->blob());
-      delete cmd;
+      cmd_replace(cmd->source_thread,
+                  cmd->connection_id,
+                  cmd->sequence,
+                  cmd->key(),
+                  cmd->blob(),
+                  cmd->flags,
+                  cmd->expiration);
       break;
     }
     case Opcode::Get: {
-      cmd_get(cmd->sock, cmd->key());
-      delete cmd;
+      cmd_get(cmd->source_thread, cmd->connection_id, cmd->sequence, cmd->key());
       break;
     }
   }
+  delete cmd;
 }
 
 void
 Server::accept(int sockfd)
 {
-  Connection conn;
-  auto recv_fn =
-    [this, conn = std::move(conn)](const std::shared_ptr<sphinx::reactor::TcpSocket>& sock,
-                                   std::string_view msg) mutable { this->recv(conn, sock, msg); };
+  auto conn = std::make_shared<Connection>();
+  do {
+    conn->id = _next_connection_id++;
+    if (conn->id == 0) {
+      conn->id = _next_connection_id++;
+    }
+  } while (_connections.find(conn->id) != _connections.end());
+  auto recv_fn = [this, conn](const std::shared_ptr<sphinx::reactor::TcpSocket>& sock,
+                              std::string_view msg) { this->recv(conn, sock, msg); };
   auto sock = std::make_shared<sphinx::reactor::TcpSocket>(sockfd, std::move(recv_fn));
+  conn->socket = sock;
+  _connections.emplace(conn->id, conn);
   sock->set_tcp_nodelay(true);
   this->_reactor->recv(std::move(sock));
 }
 
 void
-Server::recv(Connection& conn,
+Server::recv(const std::shared_ptr<Connection>& conn,
              std::shared_ptr<sphinx::reactor::TcpSocket> sock,
              std::string_view msg)
 {
   if (msg.size() == 0) {
-    _reactor->close(sock);
+    close_connection(conn, sock);
     return;
   }
-  if (conn._rx_buffer.is_empty()) {
-    for (;;) {
-      if (msg.find('\n') == std::string_view::npos) {
-        conn._rx_buffer.append(msg);
-        break;
-      }
-      size_t nr_consumed = process_one(sock, msg);
-      if (!nr_consumed) {
-        conn._rx_buffer.append(msg);
-        break;
-      }
-      msg.remove_prefix(nr_consumed);
+  constexpr size_t max_request_buffer_size = 8 * 1024 * 1024;
+  if (msg.size() > max_request_buffer_size - conn->_rx_buffer.size()) {
+    close_connection(conn, sock);
+    return;
+  }
+  conn->_rx_buffer.append(msg);
+  for (;;) {
+    auto view = conn->_rx_buffer.string_view();
+    if (view.find('\n') == std::string_view::npos) {
+      return;
     }
-  } else {
-    conn._rx_buffer.append(msg);
-    for (;;) {
-      msg = conn._rx_buffer.string_view();
-      if (msg.find('\n') == std::string_view::npos) {
-        break;
-      }
-      size_t nr_consumed = process_one(sock, msg);
-      if (!nr_consumed) {
-        break;
-      }
-      conn._rx_buffer.remove_prefix(nr_consumed);
+    size_t nr_consumed = process_one(conn, view);
+    if (nr_consumed == std::numeric_limits<size_t>::max()) {
+      close_connection(conn, sock);
+      return;
     }
+    if (!nr_consumed) {
+      return;
+    }
+    conn->_rx_buffer.remove_prefix(nr_consumed);
   }
 }
 
 size_t
-Server::process_one(std::shared_ptr<sphinx::reactor::TcpSocket> sock, std::string_view msg)
+Server::process_one(const std::shared_ptr<Connection>& conn, std::string_view msg)
 {
   using namespace sphinx::memcache;
   Parser parser;
   size_t nr_consumed = parser.parse(msg);
-  if (!parser._op) {
-    static std::string error{"ERROR\r\n"};
-    respond(sock, error);
-    return nr_consumed;
+  if (parser._number_overflow) {
+    return std::numeric_limits<size_t>::max();
   }
-  switch (*parser._op) {
+  if (!parser._op) {
+    auto line_end = msg.find('\n');
+    if (line_end == std::string_view::npos) {
+      return 0;
+    }
+    auto sequence = conn->next_request_sequence++;
+    enqueue_response(conn, sequence, "ERROR\r\n");
+    return line_end + 1;
+  }
+  if (nr_consumed > msg.size()) {
+    return 0;
+  }
+  const auto op = parser._op.value();
+  auto sequence = conn->next_request_sequence++;
+  switch (op) {
     case Opcode::Version: {
-      static std::string error{"VERSION 1.5.16\r\n"};
-      respond(sock, error);
+      send_response(_reactor->thread_id(), conn->id, sequence, "VERSION 1.5.16\r\n");
       return nr_consumed;
-      break;
     }
     case Opcode::Set:
     case Opcode::Add:
     case Opcode::Replace: {
-      size_t data_block_size = parser._blob_size + 2;
-      if (msg.size() < (nr_consumed + data_block_size)) {
-        nr_consumed = 0;
-        break;
+      if (parser._blob_size > std::numeric_limits<size_t>::max() - 2 || nr_consumed > msg.size() ||
+          parser._blob_size + 2 > msg.size() - nr_consumed) {
+        conn->next_request_sequence--;
+        return 0;
       }
-      nr_consumed += data_block_size;
+      size_t data_block_size = size_t(parser._blob_size) + 2;
+      auto consumed = nr_consumed + data_block_size;
       const auto& key = parser.key();
+      if (key.size() > std::numeric_limits<uint32_t>::max() ||
+          parser._flags > std::numeric_limits<uint32_t>::max() ||
+          parser._expiration > std::numeric_limits<uint32_t>::max()) {
+        enqueue_response(conn, sequence, "CLIENT_ERROR invalid numeric argument\r\n");
+        return consumed;
+      }
+      if (msg[nr_consumed + parser._blob_size] != '\r' ||
+          msg[nr_consumed + parser._blob_size + 1] != '\n') {
+        enqueue_response(conn, sequence, "CLIENT_ERROR bad data chunk\r\n");
+        return consumed;
+      }
       auto hash = sphinx::logmem::Object::hash_of(key);
       auto target_id = find_target(hash);
       std::string_view blob{parser._blob_start, parser._blob_size};
+      auto flags = static_cast<uint32_t>(parser._flags);
+      auto expiration = normalize_expiration(parser._expiration);
       if (target_id == _reactor->thread_id()) {
-	switch (*parser._op) {
-	case Opcode::Set: cmd_set(sock, key, blob); break;
-	case Opcode::Add: cmd_add(sock, key, blob); break;
-	case Opcode::Replace: cmd_replace(sock, key, blob); break;
-	default: assert(0);
-	}
+        switch (op) {
+          case Opcode::Set:
+            cmd_set(target_id, conn->id, sequence, key, blob, flags, expiration);
+            break;
+          case Opcode::Add:
+            cmd_add(target_id, conn->id, sequence, key, blob, flags, expiration);
+            break;
+          case Opcode::Replace:
+            cmd_replace(target_id, conn->id, sequence, key, blob, flags, expiration);
+            break;
+          default:
+            break;
+        }
       } else {
-        Command* cmd = new Command();
-        cmd->sock = sock;
-        cmd->op = *parser._op;
-        cmd->key_size = key.size();
+        Message* cmd = new Message();
+        cmd->connection_id = conn->id;
+        cmd->sequence = sequence;
+        cmd->source_thread = static_cast<uint8_t>(_reactor->thread_id());
+        cmd->op = op;
+        cmd->key_size = static_cast<uint32_t>(key.size());
+        cmd->flags = flags;
+        cmd->expiration = expiration;
         cmd->buffer.append(key);
         cmd->buffer.append(blob);
-        cmd->thread_id = _reactor->thread_id();
-        assert(_reactor->send_msg(target_id, cmd)); // FIXME
+        if (!_reactor->send_msg(target_id, cmd)) {
+          delete cmd;
+          enqueue_response(conn, sequence, "SERVER_ERROR request queue is full\r\n");
+        }
       }
-      break;
+      return consumed;
     }
     case Opcode::Get: {
       const auto& key = parser.key();
       auto hash = sphinx::logmem::Object::hash_of(key);
       auto target_id = find_target(hash);
       if (target_id == _reactor->thread_id()) {
-	cmd_get(sock, key);
+        cmd_get(target_id, conn->id, sequence, key);
       } else {
-        Command* cmd = new Command();
-        cmd->sock = sock;
-        cmd->op = *parser._op;
-        cmd->key_size = key.size();
+        Message* cmd = new Message();
+        cmd->connection_id = conn->id;
+        cmd->sequence = sequence;
+        cmd->source_thread = static_cast<uint8_t>(_reactor->thread_id());
+        cmd->op = op;
+        cmd->key_size = static_cast<uint32_t>(key.size());
         cmd->buffer.append(key);
-        cmd->thread_id = _reactor->thread_id();
-        assert(_reactor->send_msg(target_id, cmd)); // FIXME
+        if (!_reactor->send_msg(target_id, cmd)) {
+          delete cmd;
+          enqueue_response(conn, sequence, "SERVER_ERROR request queue is full\r\n");
+        }
       }
-      break;
+      return nr_consumed;
     }
   }
   return nr_consumed;
 }
 
 void
-Server::cmd_set(std::shared_ptr<sphinx::reactor::Socket> sock, std::string_view key, std::string_view blob)
+Server::cmd_set(size_t response_thread,
+                uint64_t connection_id,
+                uint64_t sequence,
+                std::string_view key,
+                std::string_view blob,
+                uint32_t flags,
+                uint64_t expiration)
 {
-  if (this->_log.append(key, blob)) {
-    static std::string stored{"STORED\r\n"};
-    respond(sock, stored);
+  if (this->_log.append(key, blob, flags, expiration)) {
+    send_response(response_thread, connection_id, sequence, "STORED\r\n");
   } else {
-    static std::string out_of_memory{"SERVER_ERROR out of memory storing object\r\n"};
-    respond(sock, out_of_memory);
+    send_response(
+      response_thread, connection_id, sequence, "SERVER_ERROR out of memory storing object\r\n");
   }
 }
 
 void
-Server::cmd_add(std::shared_ptr<sphinx::reactor::Socket> sock, std::string_view key, std::string_view blob)
+Server::cmd_add(size_t response_thread,
+                uint64_t connection_id,
+                uint64_t sequence,
+                std::string_view key,
+                std::string_view blob,
+                uint32_t flags,
+                uint64_t expiration)
 {
-  if (bool(this->_log.find(key))) {
-    static std::string not_stored{"NOT_STORED\r\n"};
-    respond(sock, not_stored);
+  if (this->_log.find_value(key)) {
+    send_response(response_thread, connection_id, sequence, "NOT_STORED\r\n");
     return;
   }
-  if (this->_log.append(key, blob)) {
-    static std::string stored{"STORED\r\n"};
-    respond(sock, stored);
+  if (this->_log.append(key, blob, flags, expiration)) {
+    send_response(response_thread, connection_id, sequence, "STORED\r\n");
   } else {
-    static std::string out_of_memory{"SERVER_ERROR out of memory storing object\r\n"};
-    respond(sock, out_of_memory);
+    send_response(
+      response_thread, connection_id, sequence, "SERVER_ERROR out of memory storing object\r\n");
   }
 }
 
 void
-Server::cmd_replace(std::shared_ptr<sphinx::reactor::Socket> sock, std::string_view key, std::string_view blob)
+Server::cmd_replace(size_t response_thread,
+                    uint64_t connection_id,
+                    uint64_t sequence,
+                    std::string_view key,
+                    std::string_view blob,
+                    uint32_t flags,
+                    uint64_t expiration)
 {
-  if (!bool(this->_log.find(key))) {
-    static std::string not_stored{"NOT_STORED\r\n"};
-    respond(sock, not_stored);
+  if (!this->_log.find_value(key)) {
+    send_response(response_thread, connection_id, sequence, "NOT_STORED\r\n");
     return;
   }
-  if (this->_log.append(key, blob)) {
-    static std::string stored{"STORED\r\n"};
-    respond(sock, stored);
+  if (this->_log.append(key, blob, flags, expiration)) {
+    send_response(response_thread, connection_id, sequence, "STORED\r\n");
   } else {
-    static std::string out_of_memory{"SERVER_ERROR out of memory storing object\r\n"};
-    respond(sock, out_of_memory);
+    send_response(
+      response_thread, connection_id, sequence, "SERVER_ERROR out of memory storing object\r\n");
   }
 }
 
 void
-Server::cmd_get(std::shared_ptr<sphinx::reactor::Socket> sock, std::string_view key)
+Server::cmd_get(size_t response_thread,
+                uint64_t connection_id,
+                uint64_t sequence,
+                std::string_view key)
 {
   std::string response;
-  auto search = this->_log.find(key);
+  auto search = this->_log.find_value(key);
   if (search) {
     const auto& value = search.value();
     response += "VALUE ";
     response += key;
-    response += " 0 ";
-    response += sphinx::to_string(value.size());
+    response += " ";
+    response += sphinx::to_string(value.flags);
+    response += " ";
+    response += sphinx::to_string(value.blob.size());
     response += "\r\n";
-    response += value;
+    response += value.blob;
     response += "\r\n";
   }
   response += "END\r\n";
-  respond(sock, response);
+  send_response(response_thread, connection_id, sequence, response);
 }
 
 void
-Server::respond(std::shared_ptr<sphinx::reactor::Socket> sock, std::string_view msg)
+Server::send_response(size_t response_thread,
+                      uint64_t connection_id,
+                      uint64_t sequence,
+                      std::string_view msg)
 {
-  if (!sock->send(msg.data(), msg.size(), std::nullopt)) {
-    _reactor->send(sock);
+  if (response_thread == _reactor->thread_id()) {
+    auto it = _connections.find(connection_id);
+    if (it != _connections.end()) {
+      enqueue_response(it->second, sequence, msg);
+    }
+    return;
   }
+  auto* response = new Message();
+  response->type = MessageType::Response;
+  response->connection_id = connection_id;
+  response->sequence = sequence;
+  response->payload = std::string{msg};
+  // A full bounded ring is handled by the Reactor's FIFO deferred mailbox, so
+  // this data core never blocks while the connection core drains responses.
+  // No Socket or epoll state crosses this boundary.
+  if (!_reactor->send_msg_deferred(response_thread, response)) {
+    // Allocation failure is the only expected failure for the deferred path;
+    // make it observable instead of silently stranding the client request.
+    std::cerr << "response queue allocation failed for connection " << connection_id << std::endl;
+    delete response;
+  }
+}
+
+void
+Server::enqueue_response(const std::shared_ptr<Connection>& conn,
+                         uint64_t sequence,
+                         std::string_view msg)
+{
+  if (conn->closed) {
+    return;
+  }
+  conn->pending_responses.emplace(sequence, std::string{msg});
+  for (;;) {
+    auto it = conn->pending_responses.find(conn->next_response_sequence);
+    if (it == conn->pending_responses.end()) {
+      return;
+    }
+    auto sock = conn->socket.lock();
+    if (!sock) {
+      conn->closed = true;
+      conn->pending_responses.clear();
+      _connections.erase(conn->id);
+      return;
+    }
+    auto complete = sock->send(it->second.data(), it->second.size(), std::nullopt);
+    conn->pending_responses.erase(it);
+    conn->next_response_sequence++;
+    if (!complete) {
+      _reactor->send(sock);
+    }
+    if (sock->closed()) {
+      close_connection(conn, sock);
+      return;
+    }
+  }
+}
+
+void
+Server::close_connection(const std::shared_ptr<Connection>& conn,
+                         const std::shared_ptr<sphinx::reactor::TcpSocket>& sock)
+{
+  if (conn->closed) {
+    return;
+  }
+  conn->closed = true;
+  conn->pending_responses.clear();
+  auto it = _connections.find(conn->id);
+  if (it != _connections.end() && it->second == conn) {
+    _connections.erase(it);
+  }
+  _reactor->close(sock);
+}
+
+uint64_t
+Server::normalize_expiration(uint64_t expiration)
+{
+  if (expiration == 0) {
+    return 0;
+  }
+  constexpr uint64_t thirty_days = 60 * 60 * 24 * 30;
+  using namespace std::chrono;
+  auto now = uint64_t(duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
+  if (expiration <= thirty_days) {
+    return now + expiration;
+  }
+  return expiration;
 }
 
 size_t
@@ -422,7 +657,11 @@ parse_cpu_list(const std::string& raw_cpu_list)
   std::istringstream iss(raw_cpu_list);
   std::string token;
   while (std::getline(iss, token, ',')) {
-    cpu_list.emplace(std::stoi(token));
+    auto cpu = std::stoi(token);
+    if (cpu < 0 || cpu >= CPU_SETSIZE) {
+      throw std::invalid_argument("CPU id is out of range");
+    }
+    cpu_list.emplace(cpu);
   }
   return cpu_list;
 }
@@ -487,11 +726,32 @@ parse_cmd_line(int argc, char* argv[])
         std::exit(EXIT_FAILURE);
     }
   }
+  if (args.tcp_port < 0 || args.tcp_port > 65535) {
+    throw std::invalid_argument("TCP port must be between 0 and 65535");
+  }
+  if (args.memory_limit <= 0) {
+    throw std::invalid_argument("memory limit must be positive");
+  }
+  if (args.segment_size <= 0) {
+    throw std::invalid_argument("segment size must be positive");
+  }
+  if (args.listen_backlog <= 0) {
+    throw std::invalid_argument("listen backlog must be positive");
+  }
+  if (args.nr_threads <= 0 || args.nr_threads > sphinx::reactor::max_nr_threads) {
+    throw std::invalid_argument("thread count must be between 1 and " +
+                                std::to_string(sphinx::reactor::max_nr_threads));
+  }
   if (args.memory_limit % args.nr_threads != 0) {
     throw std::invalid_argument("memory limit (" + std::to_string(args.memory_limit) +
                                 ") is not divisible by number of threads (" +
                                 std::to_string(args.nr_threads) +
                                 "), which is required for partitioning");
+  }
+  auto per_thread_memory = uint64_t(args.memory_limit / args.nr_threads) * 1024 * 1024;
+  auto segment_bytes = uint64_t(args.segment_size) * 1024 * 1024;
+  if (segment_bytes > per_thread_memory || per_thread_memory % segment_bytes != 0) {
+    throw std::invalid_argument("per-thread memory must contain whole segments");
   }
   return args;
 }
@@ -520,7 +780,7 @@ server_thread(size_t thread_id, std::optional<int> cpu_id, const Args& args)
     size_t mem_size = size_t(args.memory_limit) * 1024 * 1024;
     sphinx::memory::Memory memory = sphinx::memory::Memory::mmap(mem_size / args.nr_threads);
     sphinx::logmem::LogConfig log_cfg;
-    log_cfg.segment_size = args.segment_size * 1024 * 1024;
+    log_cfg.segment_size = size_t(args.segment_size) * 1024 * 1024;
     log_cfg.memory_ptr = reinterpret_cast<char*>(memory.addr());
     log_cfg.memory_size = memory.size();
     Server server{log_cfg, args.backend, thread_id, size_t(args.nr_threads)};
@@ -556,7 +816,7 @@ struct CpuAffinity
 int
 main(int argc, char* argv[])
 {
-  static_assert(sizeof(Command) <= sphinx::hardware::cache_line_size);
+  static_assert(sizeof(Message) <= 3 * sphinx::hardware::cache_line_size);
   try {
     program = ::basename(argv[0]);
     auto args = parse_cmd_line(argc, argv);
