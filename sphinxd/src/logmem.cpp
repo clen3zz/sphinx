@@ -1,6 +1,7 @@
 // Copyright 2018 The Sphinxd Authors.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <MurmurHash3.h>
 #include <sphinx/logmem.h>
 
 #include <chrono>
@@ -11,20 +12,14 @@
 #include <stdexcept>
 #include <string>
 
-#include <MurmurHash3.h>
-
 namespace sphinx::logmem {
 
-static uint64_t
-current_time_seconds()
-{
+static uint64_t current_time_seconds() {
   using namespace std::chrono;
   return uint64_t(duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
 }
 
-static std::optional<uint64_t>
-parse_uint64_decimal(const Blob& blob)
-{
+static std::optional<uint64_t> parse_uint64_decimal(const Blob& blob) {
   if (blob.empty()) {
     return std::nullopt;
   }
@@ -44,12 +39,11 @@ parse_uint64_decimal(const Blob& blob)
 }
 
 Object::Object(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration)
-  : _key_size{uint32_t(key.size())}
-  , _blob_size{uint32_t(blob.size())}
-  , _flags{flags}
-  , _expiration{uint32_t(expiration)}
-  , _expired{0}
-{
+    : _key_size{uint32_t(key.size())},
+      _blob_size{uint32_t(blob.size())},
+      _flags{flags},
+      _expiration{uint32_t(expiration)},
+      _expired{0} {
   if (expiration > std::numeric_limits<uint32_t>::max()) {
     throw std::invalid_argument("expiration is too large");
   }
@@ -61,15 +55,11 @@ Object::Object(const Key& key, const Blob& blob, uint32_t flags, uint64_t expira
   }
 }
 
-size_t
-Object::size_of(const Key& key, const Blob& blob)
-{
+size_t Object::size_of(const Key& key, const Blob& blob) {
   return Object::size_of(key.size(), blob.size());
 }
 
-size_t
-Object::size_of(size_t key_size, size_t blob_size)
-{
+size_t Object::size_of(size_t key_size, size_t blob_size) {
   if (key_size > std::numeric_limits<uint32_t>::max() ||
       blob_size > std::numeric_limits<uint32_t>::max() ||
       key_size > std::numeric_limits<size_t>::max() - sizeof(Object) ||
@@ -84,9 +74,7 @@ Object::size_of(size_t key_size, size_t blob_size)
   return (raw_size + alignment - 1) / alignment * alignment;
 }
 
-Hash
-Object::hash_of(const Key& key)
-{
+Hash Object::hash_of(const Key& key) {
   if (key.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
     throw std::invalid_argument("key is too large to hash");
   }
@@ -98,65 +86,44 @@ Object::hash_of(const Key& key)
   return hash;
 }
 
-size_t
-Object::size() const
-{
+size_t Object::size() const {
   return Object::size_of(_key_size, _blob_size);
 }
 
-void
-Object::expire()
-{
+void Object::expire() {
   _expired = 1;
 }
 
-bool
-Object::is_expired(uint64_t now) const
-{
+bool Object::is_expired(uint64_t now) const {
   return _expired != 0 || (_expiration != 0 && _expiration <= now);
 }
 
-uint32_t
-Object::flags() const
-{
+uint32_t Object::flags() const {
   return _flags;
 }
 
-uint64_t
-Object::expiration() const
-{
+uint64_t Object::expiration() const {
   return _expiration;
 }
 
-Key
-Object::key() const
-{
+Key Object::key() const {
   return Key{key_start(), _key_size};
 }
 
-Blob
-Object::blob() const
-{
+Blob Object::blob() const {
   return Blob{blob_start(), _blob_size};
 }
 
-const char*
-Object::key_start() const
-{
+const char* Object::key_start() const {
   const char* obj_start = reinterpret_cast<const char*>(this);
   return obj_start + sizeof(Object);
 }
 
-const char*
-Object::blob_start() const
-{
+const char* Object::blob_start() const {
   return key_start() + _key_size;
 }
 
-Segment::Segment(size_t size)
-  : _pos{nullptr}
-  , _end{nullptr}
-{
+Segment::Segment(size_t size) : _pos{nullptr}, _end{nullptr} {
   if (size < sizeof(Segment)) {
     throw std::invalid_argument("segment size is too small");
   }
@@ -164,27 +131,19 @@ Segment::Segment(size_t size)
   _end = start() + (size - sizeof(Segment));
 }
 
-bool
-Segment::is_empty() const
-{
+bool Segment::is_empty() const {
   return _pos == start();
 }
 
-size_t
-Segment::size() const
-{
+size_t Segment::size() const {
   return static_cast<size_t>(_end - start());
 }
 
-void
-Segment::reset()
-{
+void Segment::reset() {
   _pos = start();
 }
 
-Object*
-Segment::append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration)
-{
+Object* Segment::append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration) {
   size_t object_size = Object::size_of(key, blob);
   size_t remaining = static_cast<size_t>(_end - _pos);
   if (remaining >= object_size) {
@@ -195,18 +154,14 @@ Segment::append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expir
   return nullptr;
 }
 
-Object*
-Segment::first_object()
-{
+Object* Segment::first_object() {
   if (is_empty()) {
     return nullptr;
   }
   return reinterpret_cast<Object*>(start());
 }
 
-Object*
-Segment::next_object(Object* object)
-{
+Object* Segment::next_object(Object* object) {
   if (object == nullptr) {
     return nullptr;
   }
@@ -217,21 +172,15 @@ Segment::next_object(Object* object)
   return reinterpret_cast<Object*>(next);
 }
 
-char*
-Segment::start()
-{
+char* Segment::start() {
   return reinterpret_cast<char*>(this) + sizeof(Segment);
 }
 
-const char*
-Segment::start() const
-{
+const char* Segment::start() const {
   return reinterpret_cast<const char*>(this) + sizeof(Segment);
 }
 
-Log::Log(const LogConfig& config)
-  : _config{config}
-{
+Log::Log(const LogConfig& config) : _config{config} {
   auto seg_size = _config.segment_size;
   auto mem_ptr = _config.memory_ptr;
   auto mem_size = _config.memory_size;
@@ -258,9 +207,7 @@ Log::Log(const LogConfig& config)
   }
 }
 
-std::optional<Blob>
-Log::find(const Key& key) const
-{
+std::optional<Blob> Log::find(const Key& key) const {
   const auto& search = _index.find(key);
   if (search && !search.value()->is_expired(current_time_seconds())) {
     return search.value()->blob();
@@ -268,9 +215,7 @@ Log::find(const Key& key) const
   return std::nullopt;
 }
 
-std::optional<Value>
-Log::find_value(const Key& key)
-{
+std::optional<Value> Log::find_value(const Key& key) {
   const auto search = _index.find(key);
   if (!search) {
     return std::nullopt;
@@ -289,9 +234,7 @@ Log::find_value(const Key& key)
   return Value{object->blob(), object->flags(), object->expiration()};
 }
 
-bool
-Log::append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration)
-{
+bool Log::append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration) {
   size_t object_size = Object::size_of(key, blob);
   if (object_size > _config.segment_size) {
     return false;
@@ -306,9 +249,7 @@ Log::append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiratio
   }
 }
 
-bool
-Log::try_to_append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration)
-{
+bool Log::try_to_append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration) {
   if (try_to_append(_segment_ring[_segment_ring_tail], key, blob, flags, expiration)) {
     return true;
   }
@@ -321,13 +262,8 @@ Log::try_to_append(const Key& key, const Blob& blob, uint32_t flags, uint64_t ex
   return try_to_append(_segment_ring[_segment_ring_tail], key, blob, flags, expiration);
 }
 
-bool
-Log::try_to_append(Segment* segment,
-                   const Key& key,
-                   const Blob& blob,
-                   uint32_t flags,
-                   uint64_t expiration)
-{
+bool Log::try_to_append(Segment* segment, const Key& key, const Blob& blob, uint32_t flags,
+                        uint64_t expiration) {
   Object* object = segment->append(key, blob, flags, expiration);
   if (!object) {
     return false;
@@ -339,9 +275,7 @@ Log::try_to_append(Segment* segment,
   return true;
 }
 
-bool
-Log::remove(const Key& key)
-{
+bool Log::remove(const Key& key) {
   auto value_opt = _index.find(key);
   if (!value_opt) {
     return false;
@@ -362,21 +296,15 @@ Log::remove(const Key& key)
   return true;
 }
 
-ArithmeticResult
-Log::incr(const Key& key, uint64_t delta)
-{
+ArithmeticResult Log::incr(const Key& key, uint64_t delta) {
   return update_counter(key, delta, true);
 }
 
-ArithmeticResult
-Log::decr(const Key& key, uint64_t delta)
-{
+ArithmeticResult Log::decr(const Key& key, uint64_t delta) {
   return update_counter(key, delta, false);
 }
 
-ArithmeticResult
-Log::update_counter(const Key& key, uint64_t delta, bool increment)
-{
+ArithmeticResult Log::update_counter(const Key& key, uint64_t delta, bool increment) {
   auto current = find_value(key);
   if (!current) {
     return {ArithmeticStatus::NotFound, 0};
@@ -400,9 +328,7 @@ Log::update_counter(const Key& key, uint64_t delta, bool increment)
   return {ArithmeticStatus::Success, updated};
 }
 
-size_t
-Log::expire(size_t reclaim_target)
-{
+size_t Log::expire(size_t reclaim_target) {
   size_t nr_reclaimed = 0;
   for (;;) {
     if (_segment_ring_head == _segment_ring_tail) {
@@ -418,9 +344,7 @@ Log::expire(size_t reclaim_target)
   return nr_reclaimed;
 }
 
-size_t
-Log::expire(Segment* seg)
-{
+size_t Log::expire(Segment* seg) {
   Object* obj = seg->first_object();
   while (obj) {
     const auto current = _index.find(obj->key());
@@ -434,4 +358,4 @@ Log::expire(Segment* seg)
   return nr_reclaimed;
 }
 
-} // namespace sphinx::logmem
+}  // namespace sphinx::logmem

@@ -9,9 +9,7 @@
 
 namespace sphinx {
 
-inline std::string
-to_string(unsigned long n)
-{
+inline std::string to_string(unsigned long n) {
   if (n == 0) {
     return "0";
   }
@@ -26,4 +24,4 @@ to_string(unsigned long n)
   }
   return std::string{ret.data() + offset, max_digits - offset};
 }
-} // namespace sphinx
+}  // namespace sphinx

@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-#include <gtest/gtest.h>
-
-#include <sphinx/cluster_client.h>
-
 #include <arpa/inet.h>
+#include <gtest/gtest.h>
 #include <netinet/in.h>
+#include <sphinx/cluster_client.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -19,14 +17,11 @@
 
 namespace {
 
-class FakeServer final
-{
-public:
+class FakeServer final {
+ public:
   using Handler = std::function<void(int)>;
 
-  explicit FakeServer(Handler handler)
-    : _handler{std::move(handler)}
-  {
+  explicit FakeServer(Handler handler) : _handler{std::move(handler)} {
     _listener = ::socket(AF_INET, SOCK_STREAM, 0);
     if (_listener < 0) {
       throw std::runtime_error{"socket failed"};
@@ -52,8 +47,7 @@ public:
     }
   }
 
-  ~FakeServer()
-  {
+  ~FakeServer() {
     if (_thread.joinable()) {
       _thread.join();
     }
@@ -65,13 +59,11 @@ public:
   FakeServer(const FakeServer&) = delete;
   FakeServer& operator=(const FakeServer&) = delete;
 
-  uint16_t port() const
-  {
+  uint16_t port() const {
     return _port;
   }
 
-  void start()
-  {
+  void start() {
     _thread = std::thread{[this] {
       sockaddr_in address = {};
       socklen_t address_size = sizeof(address);
@@ -84,21 +76,18 @@ public:
     }};
   }
 
-private:
+ private:
   int _listener = -1;
   uint16_t _port = 0;
   Handler _handler;
   std::thread _thread;
 };
 
-void
-send_chunks(int fd, std::string_view value);
+void send_chunks(int fd, std::string_view value);
 
-class TwoConnectionServer final
-{
-public:
-  TwoConnectionServer()
-  {
+class TwoConnectionServer final {
+ public:
+  TwoConnectionServer() {
     _listener = ::socket(AF_INET, SOCK_STREAM, 0);
     if (_listener < 0) {
       throw std::runtime_error{"socket failed"};
@@ -124,8 +113,7 @@ public:
     }
   }
 
-  ~TwoConnectionServer()
-  {
+  ~TwoConnectionServer() {
     if (_thread.joinable()) {
       _thread.join();
     }
@@ -137,19 +125,17 @@ public:
   TwoConnectionServer(const TwoConnectionServer&) = delete;
   TwoConnectionServer& operator=(const TwoConnectionServer&) = delete;
 
-  uint16_t port() const
-  {
+  uint16_t port() const {
     return _port;
   }
 
-  void start()
-  {
+  void start() {
     _thread = std::thread{[this] {
       for (int connection_index = 0; connection_index < 2; connection_index++) {
         sockaddr_in address = {};
         socklen_t address_size = sizeof(address);
         const int client =
-          ::accept(_listener, reinterpret_cast<sockaddr*>(&address), &address_size);
+            ::accept(_listener, reinterpret_cast<sockaddr*>(&address), &address_size);
         if (client < 0) {
           return;
         }
@@ -167,15 +153,13 @@ public:
     }};
   }
 
-private:
+ private:
   int _listener = -1;
   uint16_t _port = 0;
   std::thread _thread;
 };
 
-bool
-read_until(int fd, std::string* buffer, std::string_view delimiter)
-{
+bool read_until(int fd, std::string* buffer, std::string_view delimiter) {
   char chunk[4096];
   while (buffer->find(delimiter) == std::string::npos) {
     const auto count = ::recv(fd, chunk, sizeof(chunk), 0);
@@ -187,12 +171,10 @@ read_until(int fd, std::string* buffer, std::string_view delimiter)
   return true;
 }
 
-void
-send_chunks(int fd, std::string_view value)
-{
-  for (const auto chunk : {value.substr(0, value.size() / 3),
-                           value.substr(value.size() / 3, value.size() / 3),
-                           value.substr((value.size() / 3) * 2)}) {
+void send_chunks(int fd, std::string_view value) {
+  for (const auto chunk :
+       {value.substr(0, value.size() / 3), value.substr(value.size() / 3, value.size() / 3),
+        value.substr((value.size() / 3) * 2)}) {
     if (!chunk.empty()) {
       const auto count = ::send(fd, chunk.data(), chunk.size(), MSG_NOSIGNAL);
       if (count != static_cast<ssize_t>(chunk.size())) {
@@ -203,9 +185,7 @@ send_chunks(int fd, std::string_view value)
   }
 }
 
-std::string
-read_request(int fd)
-{
+std::string read_request(int fd) {
   std::string request;
   if (!read_until(fd, &request, "\r\n")) {
     return {};
@@ -231,14 +211,11 @@ read_request(int fd)
   return request;
 }
 
-std::string
-node_spec(uint16_t port)
-{
+std::string node_spec(uint16_t port) {
   return "127.0.0.1:" + std::to_string(port);
 }
 
-TEST(ClusterClientTest, HandlesPartialResponsesAndBinaryValues)
-{
+TEST(ClusterClientTest, HandlesPartialResponsesAndBinaryValues) {
   FakeServer server{[](int client) {
     const auto request = read_request(client);
     ASSERT_EQ(request.substr(0, request.find("\r\n") + 2), "set key 0 0 4\r\n");
@@ -263,8 +240,7 @@ TEST(ClusterClientTest, HandlesPartialResponsesAndBinaryValues)
   EXPECT_EQ(value, std::optional<std::string>{expected});
 }
 
-TEST(ClusterClientTest, GetMissReturnsNullopt)
-{
+TEST(ClusterClientTest, GetMissReturnsNullopt) {
   FakeServer server{[](int client) {
     char request[128];
     ASSERT_GT(::recv(client, request, sizeof(request), 0), 0);
@@ -277,8 +253,7 @@ TEST(ClusterClientTest, GetMissReturnsNullopt)
   EXPECT_FALSE(result.has_value());
 }
 
-TEST(ClusterClientTest, ConnectionReuseAvoidsASecondAccept)
-{
+TEST(ClusterClientTest, ConnectionReuseAvoidsASecondAccept) {
   std::atomic<int> accepts = 0;
   FakeServer server{[&](int client) {
     accepts.fetch_add(1);
@@ -307,8 +282,7 @@ TEST(ClusterClientTest, ConnectionReuseAvoidsASecondAccept)
   EXPECT_EQ(accepts.load(), 1);
 }
 
-TEST(ClusterClientTest, EarlyCloseIsAnErrorRatherThanAGetMiss)
-{
+TEST(ClusterClientTest, EarlyCloseIsAnErrorRatherThanAGetMiss) {
   FakeServer server{[](int client) {
     char ignored[64];
     (void)::recv(client, ignored, sizeof(ignored), 0);
@@ -324,8 +298,7 @@ TEST(ClusterClientTest, EarlyCloseIsAnErrorRatherThanAGetMiss)
   }
 }
 
-TEST(ClusterClientTest, MalformedResponseIsAnError)
-{
+TEST(ClusterClientTest, MalformedResponseIsAnError) {
   FakeServer server{[](int client) {
     char ignored[64];
     (void)::recv(client, ignored, sizeof(ignored), 0);
@@ -342,8 +315,7 @@ TEST(ClusterClientTest, MalformedResponseIsAnError)
   }
 }
 
-TEST(ClusterClientTest, RejectsNonDecimalFlagsAndIncludesNode)
-{
+TEST(ClusterClientTest, RejectsNonDecimalFlagsAndIncludesNode) {
   FakeServer server{[](int client) {
     char request[128];
     ASSERT_GT(::recv(client, request, sizeof(request), 0), 0);
@@ -360,8 +332,7 @@ TEST(ClusterClientTest, RejectsNonDecimalFlagsAndIncludesNode)
   }
 }
 
-TEST(ClusterClientTest, ReconnectsOnTheNextOperationAfterFailure)
-{
+TEST(ClusterClientTest, ReconnectsOnTheNextOperationAfterFailure) {
   TwoConnectionServer server;
   server.start();
 
@@ -370,13 +341,11 @@ TEST(ClusterClientTest, ReconnectsOnTheNextOperationAfterFailure)
   EXPECT_FALSE(client.get("key").has_value());
 }
 
-TEST(ClusterClientTest, DefaultTimeoutIsTwoSeconds)
-{
+TEST(ClusterClientTest, DefaultTimeoutIsTwoSeconds) {
   EXPECT_EQ(sphinx::cluster::ClusterClient::kDefaultTimeout, std::chrono::milliseconds{2000});
 }
 
-TEST(ClusterClientTest, TimeoutIsBoundedAndIncludesNode)
-{
+TEST(ClusterClientTest, TimeoutIsBoundedAndIncludesNode) {
   FakeServer server{[](int client) {
     char ignored[64];
     (void)::recv(client, ignored, sizeof(ignored), 0);
@@ -396,4 +365,4 @@ TEST(ClusterClientTest, TimeoutIsBoundedAndIncludesNode)
   }
 }
 
-} // namespace
+}  // namespace

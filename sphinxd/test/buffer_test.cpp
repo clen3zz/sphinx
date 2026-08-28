@@ -2,13 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
-
 #include <sphinx/buffer.h>
 
 #include <algorithm>
 
-TEST(BufferTest, append)
-{
+TEST(BufferTest, append) {
   using namespace sphinx::buffer;
   Buffer buf;
   ASSERT_TRUE(buf.size() == 0);

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <benchmark/benchmark.h>
-
 #include <sphinx/logmem.h>
 #include <sphinx/memory.h>
 
@@ -10,9 +9,7 @@
 #include <cstdlib>
 #include <string>
 
-static std::string
-make_random(size_t len)
-{
+static std::string make_random(size_t len) {
   auto make_random_char = []() {
     static const char chars[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     const size_t nr_chars = sizeof(chars) - 1;
@@ -23,9 +20,7 @@ make_random(size_t len)
   return str;
 }
 
-static void
-Log_append_expiring(benchmark::State& state)
-{
+static void Log_append_expiring(benchmark::State& state) {
   using namespace sphinx::memory;
   using namespace sphinx::logmem;
   size_t mem_size = size_t{2} * 1024 * 1024;

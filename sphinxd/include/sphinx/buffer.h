@@ -8,11 +8,10 @@
 
 namespace sphinx::buffer {
 
-class Buffer
-{
+class Buffer {
   std::vector<char> _data;
 
-public:
+ public:
   bool is_empty() const;
   void append(std::string_view data);
   void remove_prefix(size_t n);
@@ -20,4 +19,4 @@ public:
   size_t size() const;
   std::string_view string_view() const;
 };
-} // namespace sphinx::buffer
+}  // namespace sphinx::buffer

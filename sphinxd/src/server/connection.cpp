@@ -2,19 +2,13 @@
 #include "connection.h"
 namespace sphinx::server {
 
-void
-Connection::begin_multi_get(uint64_t sequence, size_t key_count)
-{
+void Connection::begin_multi_get(uint64_t sequence, size_t key_count) {
   _pending_multi_gets.emplace(sequence,
                               MultiGetState{key_count, false, std::vector<std::string>(key_count)});
 }
-std::optional<std::string>
-Connection::add_multi_get_piece(
-  uint64_t sequence, // NOLINT(bugprone-easily-swappable-parameters)：参数含义由调用处明确区分
-  uint32_t key_index,
-  std::string_view payload,
-  bool failed)
-{
+std::optional<std::string> Connection::add_multi_get_piece(
+    uint64_t sequence,  // NOLINT(bugprone-easily-swappable-parameters)：参数含义由调用处明确区分
+    uint32_t key_index, std::string_view payload, bool failed) {
   auto it = _pending_multi_gets.find(sequence);
   if (it == _pending_multi_gets.end()) {
     return std::nullopt;
@@ -45,11 +39,8 @@ Connection::add_multi_get_piece(
   _pending_multi_gets.erase(it);
   return response;
 }
-Connection::WriteStatus
-Connection::enqueue_response(uint64_t sequence,
-                             std::string_view payload,
-                             sphinx::reactor::Reactor& reactor)
-{
+Connection::WriteStatus Connection::enqueue_response(uint64_t sequence, std::string_view payload,
+                                                     sphinx::reactor::Reactor& reactor) {
   if (_closed) {
     return WriteStatus::SocketUnavailable;
   }
@@ -75,4 +66,4 @@ Connection::enqueue_response(uint64_t sequence,
     }
   }
 }
-} // namespace sphinx::server
+}  // namespace sphinx::server

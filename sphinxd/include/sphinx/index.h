@@ -8,22 +8,19 @@
 
 namespace sphinx::index {
 
-template<typename Key, typename Value>
-class Index
-{
+template <typename Key, typename Value>
+class Index {
   std::unordered_map<Key, Value> _index;
 
-public:
-  std::optional<Value> find(const Key& key) const
-  {
+ public:
+  std::optional<Value> find(const Key& key) const {
     auto it = _index.find(key);
     if (it != _index.end()) {
       return it->second;
     }
     return std::nullopt;
   }
-  std::optional<Value> insert_or_assign(const Key& key, Value value)
-  {
+  std::optional<Value> insert_or_assign(const Key& key, Value value) {
     auto it = _index.find(key);
     if (it == _index.end()) {
       _index.emplace(key, value);
@@ -38,9 +35,8 @@ public:
     _index.emplace(key, value);
     return old;
   }
-  void erase(const Key& key)
-  {
+  void erase(const Key& key) {
     _index.erase(key);
   }
 };
-} // namespace sphinx::index
+}  // namespace sphinx::index

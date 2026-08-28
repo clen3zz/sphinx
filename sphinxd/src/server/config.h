@@ -15,18 +15,16 @@ inline constexpr int default_listen_backlog = 1024;
 inline constexpr int default_nr_threads = 4;
 
 // 守护进程入口解析这些配置，所有工作线程都会使用它们。
-struct Config
-{
+struct Config {
   std::string listen_addr = default_listen_addr;
   int tcp_port = default_tcp_port;
-  int memory_limit = default_memory_limit; // 兆字节
-  int segment_size = default_segment_size; // 兆字节
+  int memory_limit = default_memory_limit;  // 兆字节
+  int segment_size = default_segment_size;  // 兆字节
   int listen_backlog = default_listen_backlog;
   int nr_threads = default_nr_threads;
   std::string backend = sphinx::reactor::Reactor::default_backend();
   std::set<int> isolate_cpus;
   bool sched_fifo = false;
 };
-Config
-parse_options(int argc, char* argv[], const std::string& program);
-} // namespace sphinx::server
+Config parse_options(int argc, char* argv[], const std::string& program);
+}  // namespace sphinx::server

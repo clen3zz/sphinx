@@ -13,52 +13,45 @@ namespace {
 
 using Counter = ServerStats::Counter;
 
-struct CounterInfo
-{
+struct CounterInfo {
   Counter counter;
   const char* name;
 };
 
 constexpr std::array<CounterInfo, static_cast<size_t>(Counter::Count)> kCounterNames = {{
-  {Counter::CmdGet, "cmd_get"},
-  {Counter::GetHits, "get_hits"},
-  {Counter::GetMisses, "get_misses"},
-  {Counter::CmdSet, "cmd_set"},
-  {Counter::CmdAdd, "cmd_add"},
-  {Counter::CmdReplace, "cmd_replace"},
-  {Counter::CmdDelete, "cmd_delete"},
-  {Counter::CmdIncr, "cmd_incr"},
-  {Counter::CmdDecr, "cmd_decr"},
+    {Counter::CmdGet, "cmd_get"},
+    {Counter::GetHits, "get_hits"},
+    {Counter::GetMisses, "get_misses"},
+    {Counter::CmdSet, "cmd_set"},
+    {Counter::CmdAdd, "cmd_add"},
+    {Counter::CmdReplace, "cmd_replace"},
+    {Counter::CmdDelete, "cmd_delete"},
+    {Counter::CmdIncr, "cmd_incr"},
+    {Counter::CmdDecr, "cmd_decr"},
 }};
 
 static_assert(std::size(kCounterNames) == static_cast<size_t>(Counter::Count));
 
-} // namespace
+}  // namespace
 
 ServerStats::ServerStats(Config config)
-  : _version{std::move(config.version)}
-  , _threads{config.threads}
-  , _limit_maxbytes{config.limit_maxbytes}
-{
+    : _version{std::move(config.version)},
+      _threads{config.threads},
+      _limit_maxbytes{config.limit_maxbytes} {
 }
 
 ServerStats::ServerStats(std::string version, uint64_t threads, uint64_t limit_maxbytes)
-  : ServerStats(Config{std::move(version), threads, limit_maxbytes})
-{
+    : ServerStats(Config{std::move(version), threads, limit_maxbytes}) {
 }
 
-void
-ServerStats::increment(Counter counter, uint64_t amount) noexcept
-{
+void ServerStats::increment(Counter counter, uint64_t amount) noexcept {
   const auto index = static_cast<size_t>(counter);
   if (index < _counters.size()) {
     _counters[index].fetch_add(amount, std::memory_order_relaxed);
   }
 }
 
-uint64_t
-ServerStats::counter(Counter counter) const noexcept
-{
+uint64_t ServerStats::counter(Counter counter) const noexcept {
   const auto index = static_cast<size_t>(counter);
   if (index < _counters.size()) {
     return _counters[index].load(std::memory_order_relaxed);
@@ -66,9 +59,7 @@ ServerStats::counter(Counter counter) const noexcept
   return 0;
 }
 
-std::string
-ServerStats::render() const
-{
+std::string ServerStats::render() const {
   std::string response;
   response.reserve(256);
 
@@ -92,4 +83,4 @@ ServerStats::render() const
   return response;
 }
 
-} // namespace sphinx::stats
+}  // namespace sphinx::stats

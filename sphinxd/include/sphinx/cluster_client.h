@@ -16,25 +16,17 @@
 
 namespace sphinx::cluster {
 
-enum class DeleteStatus : std::uint8_t
-{
-  Deleted,
-  NotFound
-};
+enum class DeleteStatus : std::uint8_t { Deleted, NotFound };
 
-class ClientError : public std::runtime_error
-{
-public:
-  explicit ClientError(const std::string& message)
-    : std::runtime_error(message)
-  {
+class ClientError : public std::runtime_error {
+ public:
+  explicit ClientError(const std::string& message) : std::runtime_error(message) {
   }
 };
 
 /// 为静态配置的缓存节点集合提供同步客户端。
-class ClusterClient final
-{
-public:
+class ClusterClient final {
+ public:
   static constexpr std::chrono::milliseconds kDefaultTimeout{2000};
 
   explicit ClusterClient(std::string_view nodes,
@@ -59,18 +51,18 @@ public:
   /// 返回协议层的删除结果。
   DeleteStatus remove_status(std::string_view key);
 
-private:
+ private:
   class MemcachedConnection;
 
   MemcachedConnection& connection_for(const Node& node);
 
-  template<typename Operation>
+  template <typename Operation>
   auto execute(std::string_view key, Operation&& operation)
-    -> decltype(operation(std::declval<MemcachedConnection&>()));
+      -> decltype(operation(std::declval<MemcachedConnection&>()));
 
   ConsistentHashRing _ring;
   std::chrono::milliseconds _timeout;
   std::unordered_map<std::string, std::unique_ptr<MemcachedConnection>> _connections;
 };
 
-} // namespace sphinx::cluster
+}  // namespace sphinx::cluster

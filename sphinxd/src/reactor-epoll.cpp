@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <sphinx/reactor-epoll.h>
-
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/socket.h>
@@ -14,40 +13,31 @@
 
 namespace sphinx::reactor {
 
-class Eventfd : public Pollable
-{
+class Eventfd : public Pollable {
   int _efd;
 
-public:
-  explicit Eventfd(int efd)
-    : _efd{efd}
-  {
+ public:
+  explicit Eventfd(int efd) : _efd{efd} {
   }
 
-  int fd() const override
-  {
+  int fd() const override {
     return _efd;
   }
 
-  void on_pollin() override
-  {
+  void on_pollin() override {
     eventfd_t unused;
     if (::eventfd_read(_efd, &unused) < 0 && errno != EAGAIN && errno != EINTR) {
       throw std::system_error(errno, std::system_category(), "eventfd_read");
     }
   }
-  bool on_pollout() override
-  {
+  bool on_pollout() override {
     return false;
   }
 };
 
-EpollReactor::EpollReactor(size_t thread_id,
-                           std::shared_ptr<ReactorGroup> group,
+EpollReactor::EpollReactor(size_t thread_id, std::shared_ptr<ReactorGroup> group,
                            OnMessageFn&& on_message_fn)
-  : Reactor{thread_id, std::move(group), std::move(on_message_fn)}
-  , _epollfd{::epoll_create1(0)}
-{
+    : Reactor{thread_id, std::move(group), std::move(on_message_fn)}, _epollfd{::epoll_create1(0)} {
   if (_epollfd < 0) {
     throw std::system_error(errno, std::system_category(), "epoll_create1");
   }
@@ -63,20 +53,17 @@ EpollReactor::EpollReactor(size_t thread_id,
 }
 
 EpollReactor::EpollReactor(size_t thread_id, size_t nr_threads, OnMessageFn&& on_message_fn)
-  : EpollReactor{thread_id, std::make_shared<ReactorGroup>(nr_threads), std::move(on_message_fn)}
-{
+    : EpollReactor{thread_id, std::make_shared<ReactorGroup>(nr_threads),
+                   std::move(on_message_fn)} {
 }
 
-EpollReactor::~EpollReactor()
-{
+EpollReactor::~EpollReactor() {
   if (_epollfd >= 0) {
     ::close(_epollfd);
   }
 }
 
-void
-EpollReactor::accept(std::shared_ptr<TcpListener>&& listener)
-{
+void EpollReactor::accept(std::shared_ptr<TcpListener>&& listener) {
   if (!listener) {
     throw std::invalid_argument("cannot register a null listener");
   }
@@ -84,9 +71,7 @@ EpollReactor::accept(std::shared_ptr<TcpListener>&& listener)
   _pollables.emplace(listener->fd(), std::move(listener));
 }
 
-void
-EpollReactor::recv(std::shared_ptr<Socket>&& socket)
-{
+void EpollReactor::recv(std::shared_ptr<Socket>&& socket) {
   if (!socket) {
     throw std::invalid_argument("cannot register a null socket");
   }
@@ -94,9 +79,7 @@ EpollReactor::recv(std::shared_ptr<Socket>&& socket)
   _pollables.emplace(socket->fd(), std::move(socket));
 }
 
-void
-EpollReactor::send(std::shared_ptr<Socket> socket)
-{
+void EpollReactor::send(std::shared_ptr<Socket> socket) {
   if (!socket) {
     throw std::invalid_argument("cannot register a null socket");
   }
@@ -104,9 +87,7 @@ EpollReactor::send(std::shared_ptr<Socket> socket)
   _pollables.emplace(socket->fd(), socket);
 }
 
-void
-EpollReactor::close(std::shared_ptr<Socket> socket)
-{
+void EpollReactor::close(std::shared_ptr<Socket> socket) {
   if (!socket) {
     return;
   }
@@ -123,9 +104,7 @@ EpollReactor::close(std::shared_ptr<Socket> socket)
   _pollables.erase(socket->fd());
 }
 
-void
-EpollReactor::run()
-{
+void EpollReactor::run() {
   std::array<epoll_event, 128> events;
   for (;;) {
     wake_up_pending();
@@ -175,9 +154,7 @@ EpollReactor::run()
   }
 }
 
-void
-EpollReactor::update_epoll(Pollable* pollable, uint32_t events)
-{
+void EpollReactor::update_epoll(Pollable* pollable, uint32_t events) {
   int op = EPOLL_CTL_ADD;
   auto it = _epoll_events.find(pollable->fd());
   if (it != _epoll_events.end()) {
@@ -194,4 +171,4 @@ EpollReactor::update_epoll(Pollable* pollable, uint32_t events)
   }
   _epoll_events.insert_or_assign(pollable->fd(), events);
 }
-} // namespace sphinx::reactor
+}  // namespace sphinx::reactor

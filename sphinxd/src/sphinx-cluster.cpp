@@ -7,9 +7,7 @@
 
 namespace {
 
-void
-print_usage(std::ostream& output)
-{
+void print_usage(std::ostream& output) {
   output << "Usage:\n"
          << "  sphinx-cluster --nodes <host:port,...> route <key>\n"
          << "  sphinx-cluster --nodes <host:port,...> set <key> <value>\n"
@@ -17,19 +15,15 @@ print_usage(std::ostream& output)
          << "  sphinx-cluster --nodes <host:port,...> delete <key>\n";
 }
 
-int
-fail_usage(const std::string& message)
-{
+int fail_usage(const std::string& message) {
   std::cerr << "sphinx-cluster: " << message << "\n";
   print_usage(std::cerr);
   return 2;
 }
 
-} // namespace
+}  // namespace
 
-int
-main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
   if (argc == 2 && std::string_view{argv[1]} == "--help") {
     print_usage(std::cout);
     return 0;

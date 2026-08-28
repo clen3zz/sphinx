@@ -5,9 +5,7 @@
 #include <stdexcept>
 #include <string_view>
 
-int
-main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
   if (argc != 2) {
     std::cerr << "usage: cluster_client_integration_driver host:port\n";
     return 2;

@@ -82,3 +82,22 @@ Checks: >
 # 自动探测 CPU 核心数并发检查 build 目录编译产物
 ./scripts/tidy build
 ```
+
+---
+
+## 4. 代码格式化规范 (Code Formatting)
+
+项目使用根目录下的 `.clang-format` 统一格式化风格，基于 **Google C++ Style**（100 列宽，行内花括号）：
+
+- **基准风格**：`Google`
+- **缩进**：2 空格
+- **列宽限制**：100 列 (`ColumnLimit: 100`)
+- **花括号**：紧随同行（`Attach`，如 `void foo() {`、`if (...) {`）
+- **指针与引用**：靠左对齐（`PointerAlignment: Left`，如 `std::string_view& str`）
+- **单行函数**：禁止折叠为单行（`AllowShortFunctionsOnASingleLine: None`）
+
+本地执行全量格式化：
+
+```bash
+./scripts/fmt
+```

@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
-#include <sphinx/cluster_client.h>
-
-#include <algorithm>
-#include <cerrno>
-#include <charconv>
-#include <cstring>
 #include <fcntl.h>
 #include <netdb.h>
 #include <poll.h>
+#include <sphinx/cluster_client.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <cerrno>
+#include <charconv>
 #include <cstddef>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <system_error>
@@ -23,27 +22,19 @@ namespace {
 
 constexpr size_t kMaxResponseLine = size_t{64} * 1024;
 
-inline std::string
-errno_message(int err)
-{
+inline std::string errno_message(int err) {
   return std::generic_category().message(err);
 }
 
-[[noreturn]] void
-throw_node_error(std::string_view target, std::string_view detail)
-{
+[[noreturn]] void throw_node_error(std::string_view target, std::string_view detail) {
   throw ClientError{std::string{"node "} + std::string{target} + ": " + std::string{detail}};
 }
 
-std::string
-quote(std::string_view value)
-{
+std::string quote(std::string_view value) {
   return "'" + std::string{value} + "'";
 }
 
-uint64_t
-parse_decimal(std::string_view target, const char* field, std::string_view value)
-{
+uint64_t parse_decimal(std::string_view target, const char* field, std::string_view value) {
   uint64_t result = 0;
   const auto parsed = std::from_chars(value.data(), value.data() + value.size(), result);
   if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) {
@@ -52,58 +43,45 @@ parse_decimal(std::string_view target, const char* field, std::string_view value
   return result;
 }
 
-std::string
-make_key_request(std::string_view command, std::string_view key)
-{
+std::string make_key_request(std::string_view command, std::string_view key) {
   return std::string{command} + ' ' + std::string{key} + "\r\n";
 }
 
-void
-validate_timeout(std::chrono::milliseconds timeout)
-{
+void validate_timeout(std::chrono::milliseconds timeout) {
   if (timeout.count() <= 0) {
     throw std::invalid_argument("cluster client timeout must be positive");
   }
 }
 
-class TcpTransport final
-{
-public:
+class TcpTransport final {
+ public:
   TcpTransport(const Node& node, std::chrono::milliseconds timeout)
-    : _target{node.id()}
-    , _host{node.host}
-    , _port{node.port}
-    , _timeout{timeout}
-  {
+      : _target{node.id()}, _host{node.host}, _port{node.port}, _timeout{timeout} {
   }
 
-  ~TcpTransport()
-  {
+  ~TcpTransport() {
     close();
   }
 
   TcpTransport(const TcpTransport&) = delete;
   TcpTransport& operator=(const TcpTransport&) = delete;
 
-  std::string_view target() const
-  {
+  std::string_view target() const {
     return _target;
   }
 
-  void write_all(std::string_view message)
-  {
+  void write_all(std::string_view message) {
     ensure_connected();
     size_t offset = 0;
     while (offset < message.size()) {
       wait_for(_fd, POLLOUT);
       const auto count =
-        ::send(_fd, message.data() + offset, message.size() - offset, MSG_NOSIGNAL);
+          ::send(_fd, message.data() + offset, message.size() - offset, MSG_NOSIGNAL);
       if (count > 0) {
         offset += static_cast<size_t>(count);
         continue;
       }
-      if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
-        continue;
+      if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
       if (count == 0) {
         throw_node_error(_target, "connection closed while writing");
       }
@@ -111,8 +89,7 @@ public:
     }
   }
 
-  std::string read_line()
-  {
+  std::string read_line() {
     for (;;) {
       if (const auto separator = _read_buffer.find("\r\n"); separator != std::string::npos) {
         const auto line_end = separator + 2;
@@ -127,8 +104,7 @@ public:
     }
   }
 
-  std::string read_exact(size_t size)
-  {
+  std::string read_exact(size_t size) {
     std::string result;
     result.reserve(size);
     while (result.size() < size) {
@@ -143,9 +119,8 @@ public:
     return result;
   }
 
-private:
-  void ensure_connected()
-  {
+ private:
+  void ensure_connected() {
     if (_fd >= 0) {
       return;
     }
@@ -172,8 +147,7 @@ private:
     throw_node_error(_target, last_error);
   }
 
-  int connect_to(const addrinfo* address, std::string* last_error)
-  {
+  int connect_to(const addrinfo* address, std::string* last_error) {
     const auto fd = ::socket(address->ai_family, address->ai_socktype, address->ai_protocol);
     if (fd < 0) {
       *last_error = errno_message(errno);
@@ -210,11 +184,10 @@ private:
     return fd;
   }
 
-  void wait_for(int fd, short events)
-  {
+  void wait_for(int fd, short events) {
     pollfd descriptor = {fd, events, 0};
     const auto timeout =
-      std::clamp<int64_t>(_timeout.count(), int64_t{1}, std::numeric_limits<int>::max());
+        std::clamp<int64_t>(_timeout.count(), int64_t{1}, std::numeric_limits<int>::max());
     for (;;) {
       const auto result = ::poll(&descriptor, 1, static_cast<int>(timeout));
       if (result <= 0) {
@@ -232,8 +205,7 @@ private:
     }
   }
 
-  void read_some()
-  {
+  void read_some() {
     ensure_connected();
     wait_for(_fd, POLLIN);
     char buffer[16 * 1024];
@@ -245,13 +217,11 @@ private:
     if (count == 0) {
       throw_node_error(_target, "connection closed while reading");
     }
-    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
-      return;
+    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) return;
     throw_node_error(_target, errno_message(errno));
   }
 
-  void close()
-  {
+  void close() {
     if (_fd >= 0) {
       ::close(_fd);
     }
@@ -267,9 +237,8 @@ private:
   std::string _read_buffer;
 };
 
-size_t
-parse_value_header(std::string_view target, const std::string& response, std::string_view key)
-{
+size_t parse_value_header(std::string_view target, const std::string& response,
+                          std::string_view key) {
   if (response.size() < 10 || response.compare(0, 6, "VALUE ") != 0 ||
       response.compare(response.size() - 2, 2, "\r\n") != 0) {
     throw_node_error(target, "unexpected get response " + quote(response));
@@ -287,7 +256,7 @@ parse_value_header(std::string_view target, const std::string& response, std::st
   }
 
   const auto flags =
-    parse_decimal(target, "flags", body.substr(first_space + 1, second_space - first_space - 1));
+      parse_decimal(target, "flags", body.substr(first_space + 1, second_space - first_space - 1));
   if (flags > std::numeric_limits<uint32_t>::max()) {
     throw_node_error(target, "flags are out of range in response");
   }
@@ -303,21 +272,18 @@ parse_value_header(std::string_view target, const std::string& response, std::st
   return static_cast<size_t>(bytes);
 }
 
-} // namespace
+}  // namespace
 
-class ClusterClient::MemcachedConnection final
-{
-public:
+class ClusterClient::MemcachedConnection final {
+ public:
   MemcachedConnection(const Node& node, std::chrono::milliseconds timeout)
-    : _transport{node, timeout}
-  {
+      : _transport{node, timeout} {
   }
 
   MemcachedConnection(const MemcachedConnection&) = delete;
   MemcachedConnection& operator=(const MemcachedConnection&) = delete;
 
-  bool set(std::string_view key, std::string_view value)
-  {
+  bool set(std::string_view key, std::string_view value) {
     std::string request{"set "};
     request.reserve(32 + key.size() + value.size());
     request += key;
@@ -334,8 +300,7 @@ public:
     return true;
   }
 
-  std::optional<std::string> get(std::string_view key)
-  {
+  std::optional<std::string> get(std::string_view key) {
     _transport.write_all(make_key_request("get", key));
 
     const auto header = _transport.read_line();
@@ -354,8 +319,7 @@ public:
     return value;
   }
 
-  DeleteStatus remove(std::string_view key)
-  {
+  DeleteStatus remove(std::string_view key) {
     _transport.write_all(make_key_request("delete", key));
     const auto response = _transport.read_line();
     if (response == "DELETED\r\n") {
@@ -367,21 +331,17 @@ public:
     throw_node_error(_transport.target(), "unexpected delete response " + quote(response));
   }
 
-private:
+ private:
   TcpTransport _transport;
 };
 
 ClusterClient::ClusterClient(std::string_view nodes, std::chrono::milliseconds timeout)
-  : _ring{parse_nodes(nodes)}
-  , _timeout{timeout}
-{
+    : _ring{parse_nodes(nodes)}, _timeout{timeout} {
   validate_timeout(timeout);
 }
 
 ClusterClient::ClusterClient(const std::vector<Node>& nodes, std::chrono::milliseconds timeout)
-  : _ring{nodes}
-  , _timeout{timeout}
-{
+    : _ring{nodes}, _timeout{timeout} {
   if (_ring.nodes().empty()) {
     throw std::invalid_argument("cluster client requires at least one node");
   }
@@ -390,15 +350,11 @@ ClusterClient::ClusterClient(const std::vector<Node>& nodes, std::chrono::millis
 
 ClusterClient::~ClusterClient() = default;
 
-Node
-ClusterClient::route(std::string_view key) const
-{
+Node ClusterClient::route(std::string_view key) const {
   return _ring.route(key);
 }
 
-ClusterClient::MemcachedConnection&
-ClusterClient::connection_for(const Node& node)
-{
+ClusterClient::MemcachedConnection& ClusterClient::connection_for(const Node& node) {
   auto& connection = _connections[node.id()];
   if (!connection) {
     connection = std::make_unique<MemcachedConnection>(node, _timeout);
@@ -406,11 +362,9 @@ ClusterClient::connection_for(const Node& node)
   return *connection;
 }
 
-template<typename Operation>
-auto
-ClusterClient::execute(std::string_view key, Operation&& operation)
-  -> decltype(operation(std::declval<MemcachedConnection&>()))
-{
+template <typename Operation>
+auto ClusterClient::execute(std::string_view key, Operation&& operation)
+    -> decltype(operation(std::declval<MemcachedConnection&>())) {
   const auto node = route(key);
   try {
     return std::forward<Operation>(operation)(connection_for(node));
@@ -420,28 +374,20 @@ ClusterClient::execute(std::string_view key, Operation&& operation)
   }
 }
 
-bool
-ClusterClient::set(std::string_view key, std::string_view value)
-{
+bool ClusterClient::set(std::string_view key, std::string_view value) {
   return execute(key, [&](MemcachedConnection& connection) { return connection.set(key, value); });
 }
 
-std::optional<std::string>
-ClusterClient::get(std::string_view key)
-{
+std::optional<std::string> ClusterClient::get(std::string_view key) {
   return execute(key, [&](MemcachedConnection& connection) { return connection.get(key); });
 }
 
-bool
-ClusterClient::remove(std::string_view key)
-{
+bool ClusterClient::remove(std::string_view key) {
   return remove_status(key) == DeleteStatus::Deleted;
 }
 
-DeleteStatus
-ClusterClient::remove_status(std::string_view key)
-{
+DeleteStatus ClusterClient::remove_status(std::string_view key) {
   return execute(key, [&](MemcachedConnection& connection) { return connection.remove(key); });
 }
 
-} // namespace sphinx::cluster
+}  // namespace sphinx::cluster

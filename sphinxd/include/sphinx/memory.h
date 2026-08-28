@@ -7,12 +7,11 @@
 
 namespace sphinx::memory {
 
-class Memory
-{
+class Memory {
   void* _addr;
   size_t _size;
 
-public:
+ public:
   static Memory mmap(size_t size);
   explicit Memory(void* ptr, size_t size);
   Memory(const Memory&) = delete;
@@ -23,7 +22,7 @@ public:
   void* addr() const;
   size_t size() const;
 
-private:
+ private:
   void release() noexcept;
 };
-} // namespace sphinx::memory
+}  // namespace sphinx::memory

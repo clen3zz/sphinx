@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
-
 #include <sphinx/stats.h>
 
 #include <array>
@@ -17,19 +16,11 @@ using ServerStats = sphinx::stats::ServerStats;
 using Counter = ServerStats::Counter;
 
 constexpr std::array<Counter, 9> kCounters = {
-  Counter::CmdGet,
-  Counter::GetHits,
-  Counter::GetMisses,
-  Counter::CmdSet,
-  Counter::CmdAdd,
-  Counter::CmdReplace,
-  Counter::CmdDelete,
-  Counter::CmdIncr,
-  Counter::CmdDecr,
+    Counter::CmdGet,     Counter::GetHits,   Counter::GetMisses, Counter::CmdSet,  Counter::CmdAdd,
+    Counter::CmdReplace, Counter::CmdDelete, Counter::CmdIncr,   Counter::CmdDecr,
 };
 
-TEST(ServerStatsTest, CountersStartAtZero)
-{
+TEST(ServerStatsTest, CountersStartAtZero) {
   ServerStats stats{"v-test", 4, 64 * 1024 * 1024};
 
   for (auto counter : kCounters) {
@@ -52,8 +43,7 @@ TEST(ServerStatsTest, CountersStartAtZero)
             "END\r\n");
 }
 
-TEST(ServerStatsTest, RenderUsesFixedOrder)
-{
+TEST(ServerStatsTest, RenderUsesFixedOrder) {
   ServerStats stats{ServerStats::Config{"v-fixed", 8, 123456789}};
   for (auto counter : kCounters) {
     stats.increment(counter);
@@ -75,8 +65,7 @@ TEST(ServerStatsTest, RenderUsesFixedOrder)
             "END\r\n");
 }
 
-TEST(ServerStatsTest, ConcurrentIncrementsAreExact)
-{
+TEST(ServerStatsTest, ConcurrentIncrementsAreExact) {
   ServerStats stats{"v-concurrent", 8, 1};
   constexpr size_t kThreadCount = 8;
   constexpr size_t kIterations = 25000;
@@ -102,4 +91,4 @@ TEST(ServerStatsTest, ConcurrentIncrementsAreExact)
   }
 }
 
-} // namespace
+}  // namespace

@@ -10,8 +10,7 @@
 
 namespace sphinx::cluster {
 
-struct Node
-{
+struct Node {
   std::string host;
   uint16_t port;
 
@@ -19,20 +18,17 @@ struct Node
   bool operator==(const Node& other) const;
 };
 
-std::vector<Node>
-parse_nodes(std::string_view specification);
+std::vector<Node> parse_nodes(std::string_view specification);
 
-struct RingEntry
-{
+struct RingEntry {
   uint32_t hash;
   std::string node_id;
   uint32_t virtual_index;
   Node node;
 };
 
-class ConsistentHashRing
-{
-public:
+class ConsistentHashRing {
+ public:
   static constexpr uint32_t kVirtualNodesPerNode = 64;
 
   explicit ConsistentHashRing(std::vector<Node> nodes);
@@ -43,9 +39,9 @@ public:
   const std::vector<Node>& nodes() const;
   const std::vector<RingEntry>& entries() const;
 
-private:
+ private:
   std::vector<Node> _nodes;
   std::vector<RingEntry> _entries;
 };
 
-} // namespace sphinx::cluster
+}  // namespace sphinx::cluster

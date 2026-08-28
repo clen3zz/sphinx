@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
-
 #include <sphinx/spsc_queue.h>
+
 #include <thread>
 
-TEST(QueueTest, try_to_emplace)
-{
+TEST(QueueTest, try_to_emplace) {
   using namespace sphinx::spsc;
   Queue<int, 128> queue;
   ASSERT_TRUE(queue.empty());
@@ -15,8 +14,7 @@ TEST(QueueTest, try_to_emplace)
   ASSERT_FALSE(queue.empty());
 }
 
-TEST(QueueTest, producer_consumer)
-{
+TEST(QueueTest, producer_consumer) {
   using namespace sphinx::spsc;
   constexpr int nr_iterations = 1000000;
   Queue<int, 128> queue;

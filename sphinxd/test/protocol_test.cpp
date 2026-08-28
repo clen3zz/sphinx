@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
-
 #include <sphinx/protocol.h>
 
 #include <cstdint>
@@ -12,10 +11,8 @@
 
 namespace {
 
-template<typename Command>
-const Command*
-command_as(const sphinx::memcache::Parser& parser)
-{
+template <typename Command>
+const Command* command_as(const sphinx::memcache::Parser& parser) {
   const auto& parsed = parser.command();
   if (!parsed) {
     return nullptr;
@@ -23,10 +20,8 @@ command_as(const sphinx::memcache::Parser& parser)
   return std::get_if<Command>(&parsed.value());
 }
 
-template<typename Command>
-bool
-has_command(const sphinx::memcache::Parser& parser)
-{
+template <typename Command>
+bool has_command(const sphinx::memcache::Parser& parser) {
   const auto& parsed = parser.command();
   if (!parsed) {
     return false;
@@ -34,10 +29,9 @@ has_command(const sphinx::memcache::Parser& parser)
   return std::holds_alternative<Command>(parsed.value());
 }
 
-} // namespace
+}  // namespace
 
-TEST(ProtocolTest, parse_error)
-{
+TEST(ProtocolTest, parse_error) {
   using namespace sphinx::memcache;
   std::string msg = "foo";
   Parser parser;
@@ -46,8 +40,7 @@ TEST(ProtocolTest, parse_error)
   ASSERT_FALSE(parser.command().has_value());
 }
 
-TEST(ProtocolTest, parse_set)
-{
+TEST(ProtocolTest, parse_set) {
   using namespace sphinx::memcache;
   std::string msg = "set foo 0 0 3\r\nbar\r\n";
   Parser parser;
@@ -56,8 +49,7 @@ TEST(ProtocolTest, parse_set)
   ASSERT_TRUE(has_command<SetCommand>(parser));
 }
 
-TEST(ProtocolTest, parsed_command_is_typed_and_describes_storage_body)
-{
+TEST(ProtocolTest, parsed_command_is_typed_and_describes_storage_body) {
   using namespace sphinx::memcache;
   std::string msg = "set foo 7 11 3\r\nbar\r\n";
   Parser parser;
@@ -82,8 +74,7 @@ TEST(ProtocolTest, parsed_command_is_typed_and_describes_storage_body)
   EXPECT_EQ(*value, "bar");
 }
 
-TEST(ProtocolTest, parsed_command_owns_get_keys)
-{
+TEST(ProtocolTest, parsed_command_owns_get_keys) {
   using namespace sphinx::memcache;
   std::string msg = "get first second first\r\n";
   Parser parser;
@@ -97,8 +88,7 @@ TEST(ProtocolTest, parsed_command_owns_get_keys)
   EXPECT_EQ(command->keys[1], "second");
 }
 
-TEST(ProtocolTest, parse_get)
-{
+TEST(ProtocolTest, parse_get) {
   using namespace sphinx::memcache;
   std::string msg = "get foo\r\n";
   Parser parser;
@@ -107,8 +97,7 @@ TEST(ProtocolTest, parse_get)
   ASSERT_TRUE(has_command<GetCommand>(parser));
 }
 
-TEST(ProtocolTest, parse_many)
-{
+TEST(ProtocolTest, parse_many) {
   using namespace sphinx::memcache;
   std::string raw_msg = "set foo 0 0 3\r\nbar\r\nget foo\r\n";
   std::string_view msg = raw_msg;
@@ -134,8 +123,7 @@ TEST(ProtocolTest, parse_many)
   }
 }
 
-TEST(ProtocolTest, parse_pipelined_headers_without_consuming_next_command)
-{
+TEST(ProtocolTest, parse_pipelined_headers_without_consuming_next_command) {
   using namespace sphinx::memcache;
   std::string_view msg = "get first\r\nget second\r\n";
   Parser first;
@@ -154,8 +142,7 @@ TEST(ProtocolTest, parse_pipelined_headers_without_consuming_next_command)
   ASSERT_EQ(second_command->keys, (std::vector<std::string>{"second"}));
 }
 
-TEST(ProtocolTest, parse_multi_get_preserves_order_and_owns_keys)
-{
+TEST(ProtocolTest, parse_multi_get_preserves_order_and_owns_keys) {
   using namespace sphinx::memcache;
   std::string msg = "get first second first\r\nget after\r\n";
   Parser parser;
@@ -173,8 +160,7 @@ TEST(ProtocolTest, parse_multi_get_preserves_order_and_owns_keys)
   ASSERT_EQ(command->keys[2], "first");
 }
 
-TEST(ProtocolTest, parse_delete)
-{
+TEST(ProtocolTest, parse_delete) {
   using namespace sphinx::memcache;
   Parser parser;
   auto msg = std::string{"delete gone\r\n"};
@@ -184,8 +170,7 @@ TEST(ProtocolTest, parse_delete)
   ASSERT_EQ(command->key, "gone");
 }
 
-TEST(ProtocolTest, parse_incr_and_decr_delta)
-{
+TEST(ProtocolTest, parse_incr_and_decr_delta) {
   using namespace sphinx::memcache;
   {
     Parser parser;
@@ -207,8 +192,7 @@ TEST(ProtocolTest, parse_incr_and_decr_delta)
   }
 }
 
-TEST(ProtocolTest, parse_delta_overflow_is_reported_without_losing_opcode)
-{
+TEST(ProtocolTest, parse_delta_overflow_is_reported_without_losing_opcode) {
   using namespace sphinx::memcache;
   Parser parser;
   auto msg = std::string{"incr counter 18446744073709551616\r\n"};
@@ -220,8 +204,7 @@ TEST(ProtocolTest, parse_delta_overflow_is_reported_without_losing_opcode)
   EXPECT_EQ(command->key, "counter");
 }
 
-TEST(ProtocolTest, parse_status_distinguishes_incomplete_and_invalid_headers)
-{
+TEST(ProtocolTest, parse_status_distinguishes_incomplete_and_invalid_headers) {
   using namespace sphinx::memcache;
   Parser parser;
   EXPECT_EQ(parser.status(), ParseStatus::Incomplete);
@@ -234,8 +217,7 @@ TEST(ProtocolTest, parse_status_distinguishes_incomplete_and_invalid_headers)
   EXPECT_FALSE(parser.command().has_value());
 }
 
-TEST(ProtocolTest, storage_body_view_preserves_incomplete_and_bad_terminator_boundaries)
-{
+TEST(ProtocolTest, storage_body_view_preserves_incomplete_and_bad_terminator_boundaries) {
   using namespace sphinx::memcache;
   Parser parser;
   const auto header = std::string{"set foo 0 0 3\r\n"};
@@ -251,8 +233,7 @@ TEST(ProtocolTest, storage_body_view_preserves_incomplete_and_bad_terminator_bou
   EXPECT_FALSE(command->body.view(malformed).has_value());
 }
 
-TEST(ProtocolTest, storage_body_size_overflow_is_safe)
-{
+TEST(ProtocolTest, storage_body_size_overflow_is_safe) {
   using namespace sphinx::memcache;
   Parser parser;
   const auto msg = std::string{"set foo 0 0 18446744073709551615\r\n"};
@@ -263,8 +244,7 @@ TEST(ProtocolTest, storage_body_size_overflow_is_safe)
   EXPECT_FALSE(command->body.available(msg));
 }
 
-TEST(ProtocolTest, incomplete_header_requests_more_data)
-{
+TEST(ProtocolTest, incomplete_header_requests_more_data) {
   using namespace sphinx::memcache;
   for (const auto& msg :
        {std::string{"get first"}, std::string{"delete first\r"}, std::string{"incr first 1"}}) {
@@ -275,8 +255,7 @@ TEST(ProtocolTest, incomplete_header_requests_more_data)
   }
 }
 
-TEST(ProtocolTest, parse_mixed_pipeline_one_header_at_a_time)
-{
+TEST(ProtocolTest, parse_mixed_pipeline_one_header_at_a_time) {
   using namespace sphinx::memcache;
   std::string_view msg = "get first second\r\ndelete old\r\nincr count 7\r\ndecr count 2\r\n";
 
@@ -311,8 +290,7 @@ TEST(ProtocolTest, parse_mixed_pipeline_one_header_at_a_time)
   ASSERT_EQ(decr_command->delta, 2U);
 }
 
-TEST(ProtocolTest, invalid_complete_command_does_not_consume_next_command)
-{
+TEST(ProtocolTest, invalid_complete_command_does_not_consume_next_command) {
   using namespace sphinx::memcache;
   std::string_view msg = "delete first second\r\nget valid\r\n";
 
@@ -330,8 +308,7 @@ TEST(ProtocolTest, invalid_complete_command_does_not_consume_next_command)
   ASSERT_EQ(valid_command->keys, (std::vector<std::string>{"valid"}));
 }
 
-TEST(ProtocolTest, parse_stats)
-{
+TEST(ProtocolTest, parse_stats) {
   using namespace sphinx::memcache;
   Parser parser;
   auto msg = std::string{"stats\r\n"};
@@ -339,8 +316,7 @@ TEST(ProtocolTest, parse_stats)
   ASSERT_TRUE(has_command<StatsCommand>(parser));
 }
 
-TEST(ProtocolTest, parse_stats_header_in_fragments)
-{
+TEST(ProtocolTest, parse_stats_header_in_fragments) {
   using namespace sphinx::memcache;
   Parser parser;
   ASSERT_EQ(parser.parse("sta"), 0U);
@@ -355,8 +331,7 @@ TEST(ProtocolTest, parse_stats_header_in_fragments)
   ASSERT_TRUE(has_command<StatsCommand>(parser));
 }
 
-TEST(ProtocolTest, parse_stats_in_pipeline)
-{
+TEST(ProtocolTest, parse_stats_in_pipeline) {
   using namespace sphinx::memcache;
   std::string_view msg = "version\r\nstats\r\nget key\r\n";
 

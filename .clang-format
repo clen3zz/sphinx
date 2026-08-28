@@ -1,21 +1,8 @@
-BasedOnStyle: Mozilla
+BasedOnStyle: Google
 Language: Cpp
 Standard: c++17
-Cpp11BracedListStyle: AlignFirstComment
 ColumnLimit: 100
+IndentWidth: 2
 AllowShortFunctionsOnASingleLine: None
 FixNamespaceComments: true
-BreakBeforeBraces: Custom
-BraceWrapping:
-  AfterClass: true
-  AfterControlStatement: Never
-  AfterEnum: true
-  AfterFunction: true
-  AfterNamespace: false
-  AfterStruct: true
-  AfterUnion: true
-  BeforeCatch: false
-  BeforeElse: false
-  SplitEmptyFunction: true
-  SplitEmptyNamespace: true
-  SplitEmptyRecord: true
+PointerAlignment: Left

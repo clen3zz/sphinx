@@ -44,15 +44,14 @@ using Key = std::string_view;
 using Blob = std::string_view;
 
 /// An object in a segment of a log.
-class Object final
-{
+class Object final {
   uint32_t _key_size;
   uint32_t _blob_size;
   uint32_t _flags;
   uint32_t _expiration;
   uint32_t _expired;
 
-public:
+ public:
   /// \brief Return the size of an object of \ref key and \ref blob.
   static size_t size_of(const Key& key, const Blob& blob);
   /// \brief Return the size of an object of \ref key_size and \ref blob_size.
@@ -76,18 +75,17 @@ public:
   /// \brief 返回对象数据。
   Blob blob() const;
 
-private:
+ private:
   const char* key_start() const;
   const char* blob_start() const;
 };
 
 /// A segment in a log.
-class Segment
-{
+class Segment {
   char* _pos;
   char* _end;
 
-public:
+ public:
   /// \brief Construct a \ref Segment instance.
   Segment(size_t size);
   /// \brief Return true if segment has no objects; otherwise return false;
@@ -103,29 +101,26 @@ public:
   /// \brief Return a pointer to the next object immediatelly following \ref object.
   Object* next_object(Object* object);
 
-private:
+ private:
   char* start();
   const char* start() const;
 };
 
-struct LogConfig
-{
+struct LogConfig {
   char* memory_ptr;
   size_t memory_size;
   size_t segment_size;
 };
 
 /// 一个值及其 Memcached 元数据。
-struct Value
-{
+struct Value {
   Blob blob;
   uint32_t flags;
   uint64_t expiration;
 };
 
 /// 原子计数器更新的结果状态。
-enum class ArithmeticStatus
-{
+enum class ArithmeticStatus {
   Success,
   NotFound,
   NonNumeric,
@@ -133,22 +128,20 @@ enum class ArithmeticStatus
 };
 
 /// 原子计数器更新的结果。
-struct ArithmeticResult
-{
+struct ArithmeticResult {
   ArithmeticStatus status;
   uint64_t value;
 };
 
 /// A log of objects.
-class Log
-{
+class Log {
   sphinx::index::Index<Key, Object*> _index;
   std::vector<Segment*> _segment_ring;
   size_t _segment_ring_head = 0;
   size_t _segment_ring_tail = 0;
   LogConfig _config;
 
-public:
+ public:
   /// \brief Construct a \ref Log instance.
   Log(const LogConfig& config);
   /// \brief Find for a blob for a given \ref key from the log.
@@ -164,12 +157,9 @@ public:
   /// \brief 在保留元数据的同时递减十进制计数器。
   ArithmeticResult decr(const Key& key, uint64_t delta);
 
-private:
+ private:
   bool try_to_append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration);
-  bool try_to_append(Segment* segment,
-                     const Key& key,
-                     const Blob& blob,
-                     uint32_t flags,
+  bool try_to_append(Segment* segment, const Key& key, const Blob& blob, uint32_t flags,
                      uint64_t expiration);
   size_t expire(size_t reclaim_target);
   size_t expire(Segment* segment);
@@ -177,4 +167,4 @@ private:
 };
 
 /// @}
-} // namespace sphinx::logmem
+}  // namespace sphinx::logmem

@@ -3,8 +3,6 @@
 
 #include "sphinx/cluster.h"
 
-#include "MurmurHash3.h"
-
 #include <algorithm>
 #include <cctype>
 #include <limits>
@@ -13,22 +11,20 @@
 #include <unordered_set>
 #include <utility>
 
+#include "MurmurHash3.h"
+
 namespace sphinx::cluster {
 namespace {
 
 constexpr uint32_t kMurmurSeed = 1;
 
-uint32_t
-hash_string(std::string_view value)
-{
+uint32_t hash_string(std::string_view value) {
   uint32_t hash = 0;
   MurmurHash3_x86_32(value.data(), static_cast<int>(value.size()), kMurmurSeed, &hash);
   return hash;
 }
 
-bool
-contains_whitespace(std::string_view value)
-{
+bool contains_whitespace(std::string_view value) {
   for (const char character : value) {
     if (std::isspace(static_cast<unsigned char>(character)) != 0) {
       return true;
@@ -37,18 +33,14 @@ contains_whitespace(std::string_view value)
   return false;
 }
 
-void
-validate_node(const Node& node)
-{
+void validate_node(const Node& node) {
   if (node.host.empty() || node.host.find(':') != std::string::npos ||
       contains_whitespace(node.host) || node.port == 0) {
     throw std::invalid_argument("invalid cluster node");
   }
 }
 
-uint16_t
-parse_port(std::string_view port_text)
-{
+uint16_t parse_port(std::string_view port_text) {
   if (port_text.empty()) {
     throw std::invalid_argument("cluster node is missing a port");
   }
@@ -70,9 +62,7 @@ parse_port(std::string_view port_text)
   return static_cast<uint16_t>(port);
 }
 
-void
-validate_nodes(const std::vector<Node>& nodes)
-{
+void validate_nodes(const std::vector<Node>& nodes) {
   std::unordered_set<std::string> ids;
   ids.reserve(nodes.size());
   for (const auto& node : nodes) {
@@ -83,26 +73,20 @@ validate_nodes(const std::vector<Node>& nodes)
   }
 }
 
-} // namespace
+}  // namespace
 
-std::string
-Node::id() const
-{
+std::string Node::id() const {
   return host + ":" + std::to_string(port);
 }
 
-bool
-Node::operator==(const Node& other) const
-{
+bool Node::operator==(const Node& other) const {
   return host == other.host && port == other.port;
 }
 
-std::vector<Node>
-parse_nodes(std::string_view specification)
-{
+std::vector<Node> parse_nodes(std::string_view specification) {
   if (specification.empty() || contains_whitespace(specification)) {
     throw std::invalid_argument(
-      "cluster node configuration must be non-empty and contain no whitespace");
+        "cluster node configuration must be non-empty and contain no whitespace");
   }
 
   std::vector<Node> nodes;
@@ -111,7 +95,7 @@ parse_nodes(std::string_view specification)
   while (begin <= specification.size()) {
     const size_t end = specification.find(',', begin);
     const size_t length =
-      end == std::string_view::npos ? specification.size() - begin : end - begin;
+        end == std::string_view::npos ? specification.size() - begin : end - begin;
     const std::string_view endpoint = specification.substr(begin, length);
     if (endpoint.empty()) {
       throw std::invalid_argument("cluster node configuration contains an empty endpoint");
@@ -143,9 +127,7 @@ parse_nodes(std::string_view specification)
   return nodes;
 }
 
-ConsistentHashRing::ConsistentHashRing(std::vector<Node> nodes)
-  : _nodes(std::move(nodes))
-{
+ConsistentHashRing::ConsistentHashRing(std::vector<Node> nodes) : _nodes(std::move(nodes)) {
   validate_nodes(_nodes);
   _entries.reserve(_nodes.size() * kVirtualNodesPerNode);
   for (const auto& node : _nodes) {
@@ -168,35 +150,27 @@ ConsistentHashRing::ConsistentHashRing(std::vector<Node> nodes)
 }
 
 ConsistentHashRing::ConsistentHashRing(std::string_view specification)
-  : ConsistentHashRing(parse_nodes(specification))
-{
+    : ConsistentHashRing(parse_nodes(specification)) {
 }
 
-Node
-ConsistentHashRing::route(std::string_view key) const
-{
+Node ConsistentHashRing::route(std::string_view key) const {
   if (_entries.empty()) {
     throw std::runtime_error("cannot route a key with an empty cluster");
   }
 
   const uint32_t key_hash = hash_string(key);
-  const auto it = std::lower_bound(
-    _entries.begin(), _entries.end(), key_hash, [](const RingEntry& entry, uint32_t hash) {
-      return entry.hash < hash;
-    });
+  const auto it =
+      std::lower_bound(_entries.begin(), _entries.end(), key_hash,
+                       [](const RingEntry& entry, uint32_t hash) { return entry.hash < hash; });
   return (it == _entries.end() ? _entries.front() : *it).node;
 }
 
-const std::vector<Node>&
-ConsistentHashRing::nodes() const
-{
+const std::vector<Node>& ConsistentHashRing::nodes() const {
   return _nodes;
 }
 
-const std::vector<RingEntry>&
-ConsistentHashRing::entries() const
-{
+const std::vector<RingEntry>& ConsistentHashRing::entries() const {
   return _entries;
 }
 
-} // namespace sphinx::cluster
+}  // namespace sphinx::cluster

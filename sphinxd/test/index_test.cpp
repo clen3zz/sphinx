@@ -2,14 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
-
 #include <sphinx/index.h>
 
 #include <optional>
 #include <string>
 
-TEST(IndexTest, overwriteReturnsOldValueAndRebindsViewKey)
-{
+TEST(IndexTest, overwriteReturnsOldValueAndRebindsViewKey) {
   sphinx::index::Index<std::string_view, int> index;
   std::string first = "same";
   std::string second = "same";

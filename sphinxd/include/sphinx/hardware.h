@@ -7,8 +7,8 @@ namespace sphinx::hardware {
 
 static constexpr int cache_line_size =
 #ifdef __x86_64__
-  64;
+    64;
 #else
 #error "L1 cache line size is not defined for this architecture."
 #endif
-} // namespace sphinx::hardware
+}  // namespace sphinx::hardware

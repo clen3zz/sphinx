@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
-
-#include "MurmurHash3.h"
-
 #include <sphinx/cluster.h>
 
 #include <algorithm>
@@ -16,22 +13,21 @@
 #include <unordered_map>
 #include <vector>
 
+#include "MurmurHash3.h"
+
 namespace {
 
 using sphinx::cluster::ConsistentHashRing;
 using sphinx::cluster::Node;
 using sphinx::cluster::RingEntry;
 
-uint32_t
-murmur_hash(std::string_view value)
-{
+uint32_t murmur_hash(std::string_view value) {
   uint32_t hash = 0;
   MurmurHash3_x86_32(value.data(), static_cast<int>(value.size()), 1, &hash);
   return hash;
 }
 
-TEST(ClusterConfigTest, ParsesSingleAndMultipleNodes)
-{
+TEST(ClusterConfigTest, ParsesSingleAndMultipleNodes) {
   const auto single = sphinx::cluster::parse_nodes("127.0.0.1:11211");
   ASSERT_EQ(single.size(), 1U);
   EXPECT_EQ(single[0].host, "127.0.0.1");
@@ -44,8 +40,7 @@ TEST(ClusterConfigTest, ParsesSingleAndMultipleNodes)
   EXPECT_EQ(multiple[1], (Node{"cache-b", 65535}));
 }
 
-TEST(ClusterConfigTest, RejectsInvalidConfigurations)
-{
+TEST(ClusterConfigTest, RejectsInvalidConfigurations) {
   const std::vector<std::string> invalid = {"",
                                             ",cache-a:1",
                                             "cache-a:1,",
@@ -63,20 +58,18 @@ TEST(ClusterConfigTest, RejectsInvalidConfigurations)
                                             "[::1]:1"};
   for (const auto& configuration : invalid) {
     EXPECT_THROW(sphinx::cluster::parse_nodes(configuration), std::invalid_argument)
-      << configuration;
+        << configuration;
   }
 }
 
-TEST(ClusterConfigTest, NormalizesPortOnlyForTheNodeId)
-{
+TEST(ClusterConfigTest, NormalizesPortOnlyForTheNodeId) {
   const auto nodes = sphinx::cluster::parse_nodes("cache-a:00042");
   ASSERT_EQ(nodes.size(), 1U);
   EXPECT_EQ(nodes[0].port, 42);
   EXPECT_EQ(nodes[0].id(), "cache-a:42");
 }
 
-TEST(ClusterConfigTest, InputOrderDoesNotChangeTheRing)
-{
+TEST(ClusterConfigTest, InputOrderDoesNotChangeTheRing) {
   const ConsistentHashRing first("cache-a:1001,cache-b:1002,cache-c:1003");
   const ConsistentHashRing second("cache-c:1003,cache-a:1001,cache-b:1002");
   ASSERT_EQ(first.entries().size(), 3U * ConsistentHashRing::kVirtualNodesPerNode);
@@ -93,8 +86,7 @@ TEST(ClusterConfigTest, InputOrderDoesNotChangeTheRing)
   }
 }
 
-TEST(ConsistentHashRingTest, BuildsExactly64VirtualNodesPerNodeAndSortsDeterministically)
-{
+TEST(ConsistentHashRingTest, BuildsExactly64VirtualNodesPerNodeAndSortsDeterministically) {
   const ConsistentHashRing ring("cache-a:1001,cache-b:1002");
   ASSERT_EQ(ring.entries().size(), 2U * ConsistentHashRing::kVirtualNodesPerNode);
   for (size_t index = 1; index < ring.entries().size(); index++) {
@@ -106,23 +98,20 @@ TEST(ConsistentHashRingTest, BuildsExactly64VirtualNodesPerNodeAndSortsDetermini
 
   for (const auto& node : ring.nodes()) {
     const auto count =
-      std::count_if(ring.entries().begin(), ring.entries().end(), [&node](const RingEntry& entry) {
-        return entry.node == node;
-      });
+        std::count_if(ring.entries().begin(), ring.entries().end(),
+                      [&node](const RingEntry& entry) { return entry.node == node; });
     EXPECT_EQ(count, ConsistentHashRing::kVirtualNodesPerNode);
   }
 }
 
-TEST(ConsistentHashRingTest, SingleNodeOwnsEveryKey)
-{
+TEST(ConsistentHashRingTest, SingleNodeOwnsEveryKey) {
   const ConsistentHashRing ring("cache-a:1001");
   for (int index = 0; index < 1000; index++) {
     EXPECT_EQ(ring.route("key-" + std::to_string(index)), (Node{"cache-a", 1001}));
   }
 }
 
-TEST(ConsistentHashRingTest, ThreeNodesEachReceiveAKey)
-{
+TEST(ConsistentHashRingTest, ThreeNodesEachReceiveAKey) {
   const ConsistentHashRing ring("cache-a:1001,cache-b:1002,cache-c:1003");
   bool found_a = false;
   bool found_b = false;
@@ -138,8 +127,7 @@ TEST(ConsistentHashRingTest, ThreeNodesEachReceiveAKey)
   EXPECT_TRUE(found_c);
 }
 
-TEST(ConsistentHashRingTest, TailWrapsToTheFirstEntry)
-{
+TEST(ConsistentHashRingTest, TailWrapsToTheFirstEntry) {
   const ConsistentHashRing ring("cache-a:1001,cache-b:1002");
   ASSERT_FALSE(ring.entries().empty());
   const uint32_t tail_hash = ring.entries().back().hash;
@@ -155,14 +143,12 @@ TEST(ConsistentHashRingTest, TailWrapsToTheFirstEntry)
   EXPECT_EQ(ring.route(key), ring.entries().front().node);
 }
 
-TEST(ConsistentHashRingTest, EmptyRingReportsAnError)
-{
+TEST(ConsistentHashRingTest, EmptyRingReportsAnError) {
   const ConsistentHashRing ring(std::vector<Node>{});
   EXPECT_THROW(ring.route("key"), std::runtime_error);
 }
 
-TEST(ConsistentHashRingTest, HashCollisionsHaveStableTieBreaking)
-{
+TEST(ConsistentHashRingTest, HashCollisionsHaveStableTieBreaking) {
   std::unordered_map<uint32_t, Node> candidates;
   Node left{"", 0};
   Node right{"", 0};
@@ -190,8 +176,7 @@ TEST(ConsistentHashRingTest, HashCollisionsHaveStableTieBreaking)
   EXPECT_LT(collisions[0].node_id, collisions[1].node_id);
 }
 
-TEST(ConsistentHashRingTest, AddingNodeOnlyMovesKeysToTheNewNode)
-{
+TEST(ConsistentHashRingTest, AddingNodeOnlyMovesKeysToTheNewNode) {
   const ConsistentHashRing before("cache-a:1001,cache-b:1002");
   const ConsistentHashRing after("cache-a:1001,cache-b:1002,cache-c:1003");
   for (int index = 0; index < 10000; index++) {
@@ -204,8 +189,7 @@ TEST(ConsistentHashRingTest, AddingNodeOnlyMovesKeysToTheNewNode)
   }
 }
 
-TEST(ConsistentHashRingTest, RemovingNodeKeepsOtherAssignments)
-{
+TEST(ConsistentHashRingTest, RemovingNodeKeepsOtherAssignments) {
   const ConsistentHashRing before("cache-a:1001,cache-b:1002,cache-c:1003");
   const ConsistentHashRing after("cache-a:1001,cache-b:1002");
   for (int index = 0; index < 10000; index++) {
@@ -218,4 +202,4 @@ TEST(ConsistentHashRingTest, RemovingNodeKeepsOtherAssignments)
   }
 }
 
-} // namespace
+}  // namespace

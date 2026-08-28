@@ -3,12 +3,12 @@
 
 #pragma once
 
+#include <sphinx/hardware.h>
+
 #include <array>
 #include <atomic>
 #include <cstddef>
 #include <utility>
-
-#include <sphinx/hardware.h>
 
 /// \defgroup spsc-queue-module A bounded, single-producer/single-consumer (SPSC) wait-free and
 /// lock-free queue.
@@ -36,22 +36,19 @@ namespace sphinx::spsc {
 /// \addtogroup spsc-queue-module
 /// @{
 
-template<typename T, size_t N>
-class Queue
-{
+template <typename T, size_t N>
+class Queue {
   static_assert(N > 1, "SPSC queue capacity must be greater than one");
   alignas(hardware::cache_line_size) std::atomic<size_t> _head = 0;
   alignas(hardware::cache_line_size) std::atomic<size_t> _tail = 0;
   std::array<T, N> _data;
 
-public:
-  bool empty() noexcept
-  {
+ public:
+  bool empty() noexcept {
     return _head.load(std::memory_order_acquire) == _tail.load(std::memory_order_acquire);
   }
-  template<typename... Args>
-  bool try_to_emplace(Args&&... args) noexcept
-  {
+  template <typename... Args>
+  bool try_to_emplace(Args&&... args) noexcept {
     auto tail = _tail.load(std::memory_order_relaxed);
     auto next_tail = tail + 1;
     if (next_tail == N) {
@@ -65,16 +62,14 @@ public:
     _tail.store(next_tail, std::memory_order_release);
     return true;
   }
-  T* front() noexcept
-  {
+  T* front() noexcept {
     auto head = _head.load(std::memory_order_relaxed);
     if (_tail.load(std::memory_order_acquire) == head) {
       return nullptr;
     }
     return &_data[head];
   }
-  void pop() noexcept
-  {
+  void pop() noexcept {
     auto head = _head.load(std::memory_order_relaxed);
     auto next_head = head + 1;
     if (next_head == N) {
@@ -86,4 +81,4 @@ public:
 };
 
 /// @}
-} // namespace sphinx::spsc
+}  // namespace sphinx::spsc

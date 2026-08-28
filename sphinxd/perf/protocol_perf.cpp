@@ -2,14 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <benchmark/benchmark.h>
-
 #include <sphinx/protocol.h>
 
 #include <string>
 
-static void
-Protocol_parse(benchmark::State& state)
-{
+static void Protocol_parse(benchmark::State& state) {
   using namespace sphinx::memcache;
   std::string msg = "get QeYm4XMK\r\n";
   for (auto _ : state) {

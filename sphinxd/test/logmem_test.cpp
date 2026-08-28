@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
-
 #include <sphinx/logmem.h>
 
 #include <algorithm>
@@ -15,9 +14,7 @@
 #include <string>
 #include <string_view>
 
-static std::string
-make_random(size_t len)
-{
+static std::string make_random(size_t len) {
   auto make_random_char = []() {
     static const char chars[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     const size_t nr_chars = sizeof(chars) - 1;
@@ -28,8 +25,7 @@ make_random(size_t len)
   return str;
 }
 
-TEST(LogTest, append)
-{
+TEST(LogTest, append) {
   using namespace sphinx::logmem;
   std::array<char, 128> memory;
   LogConfig cfg;
@@ -45,8 +41,7 @@ TEST(LogTest, append)
   ASSERT_EQ(blob_opt.value(), blob);
 }
 
-TEST(LogTest, append_expires)
-{
+TEST(LogTest, append_expires) {
   using namespace sphinx::logmem;
   std::array<char, 1024> memory;
   LogConfig cfg;
@@ -63,8 +58,7 @@ TEST(LogTest, append_expires)
   }
 }
 
-TEST(LogTest, overwrite_rebinds_index_before_segment_reclamation)
-{
+TEST(LogTest, overwrite_rebinds_index_before_segment_reclamation) {
   using namespace sphinx::logmem;
   alignas(std::max_align_t) std::array<char, 4 * 64> memory;
   LogConfig cfg{memory.data(), memory.size(), 64};
@@ -80,15 +74,14 @@ TEST(LogTest, overwrite_rebinds_index_before_segment_reclamation)
   }
 }
 
-TEST(LogTest, stores_flags_and_expiration)
-{
+TEST(LogTest, stores_flags_and_expiration) {
   using namespace sphinx::logmem;
   alignas(std::max_align_t) std::array<char, 128> memory;
   LogConfig cfg{memory.data(), memory.size(), 64};
   Log log{cfg};
   auto now = uint64_t(std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::system_clock::now().time_since_epoch())
-                        .count());
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count());
 
   ASSERT_TRUE(log.append("metadata", "payload", 123, now + 3600));
   auto value = log.find_value("metadata");
@@ -101,8 +94,7 @@ TEST(LogTest, stores_flags_and_expiration)
   ASSERT_FALSE(log.find_value("expired").has_value());
 }
 
-TEST(LogTest, remove_handles_missing_expired_and_overwritten_values)
-{
+TEST(LogTest, remove_handles_missing_expired_and_overwritten_values) {
   using namespace sphinx::logmem;
   alignas(std::max_align_t) std::array<char, 2048> memory;
   Log log{LogConfig{memory.data(), memory.size(), 128}};
@@ -121,14 +113,13 @@ TEST(LogTest, remove_handles_missing_expired_and_overwritten_values)
   ASSERT_FALSE(log.find_value("expired").has_value());
 }
 
-TEST(LogTest, incr_and_decr_update_decimal_value_and_preserve_metadata)
-{
+TEST(LogTest, incr_and_decr_update_decimal_value_and_preserve_metadata) {
   using namespace sphinx::logmem;
   alignas(std::max_align_t) std::array<char, 4096> memory;
   Log log{LogConfig{memory.data(), memory.size(), 128}};
   auto now = uint64_t(std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::system_clock::now().time_since_epoch())
-                        .count());
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count());
 
   ASSERT_TRUE(log.append("counter", "0041", 7, now + 3600));
   auto incremented = log.incr("counter", 1);
@@ -146,8 +137,7 @@ TEST(LogTest, incr_and_decr_update_decimal_value_and_preserve_metadata)
   ASSERT_EQ(log.find("counter").value(), "0");
 }
 
-TEST(LogTest, incr_wraps_and_decr_saturates)
-{
+TEST(LogTest, incr_wraps_and_decr_saturates) {
   using namespace sphinx::logmem;
   alignas(std::max_align_t) std::array<char, 4096> memory;
   Log log{LogConfig{memory.data(), memory.size(), 128}};
@@ -165,8 +155,7 @@ TEST(LogTest, incr_wraps_and_decr_saturates)
   ASSERT_EQ(log.find("counter").value(), "0");
 }
 
-TEST(LogTest, arithmetic_rejects_missing_expired_and_non_numeric_values)
-{
+TEST(LogTest, arithmetic_rejects_missing_expired_and_non_numeric_values) {
   using namespace sphinx::logmem;
   alignas(std::max_align_t) std::array<char, 4096> memory;
   Log log{LogConfig{memory.data(), memory.size(), 128}};
@@ -188,26 +177,18 @@ TEST(LogTest, arithmetic_rejects_missing_expired_and_non_numeric_values)
   ASSERT_EQ(log.decr("expired", 1).status, ArithmeticStatus::NotFound);
 }
 
-TEST(LogTest, arithmetic_rejects_non_decimal_values_without_mutating_metadata)
-{
+TEST(LogTest, arithmetic_rejects_non_decimal_values_without_mutating_metadata) {
   using namespace sphinx::logmem;
   alignas(std::max_align_t) std::array<char, 8192> memory;
   Log log{LogConfig{memory.data(), memory.size(), 128}};
   auto now = uint64_t(std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::system_clock::now().time_since_epoch())
-                        .count());
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count());
 
   // 计数器只接受非空 ASCII 十进制数字序列。
   // 特别是，符号、空白和十进制表示法不能在 incr/decr 中被静默规范化。
   const std::array<std::string_view, 8> invalid_values = {
-    "-1",
-    "+1",
-    " 1",
-    "1 ",
-    "\t1",
-    "1\n",
-    "1.0",
-    "0x10",
+      "-1", "+1", " 1", "1 ", "\t1", "1\n", "1.0", "0x10",
   };
   for (size_t i = 0; i < invalid_values.size(); i++) {
     auto key = std::string{"invalid-decimal-"} + std::to_string(i);

@@ -17,18 +17,15 @@ namespace sphinx::stats {
  * 每个工作线程都应共享同一个 ServerStats 实例。计数器更新有意采用 relaxed
  * 顺序：stats 是弱一致性观察，不参与请求同步。
  */
-class ServerStats
-{
-public:
-  struct Config
-  {
+class ServerStats {
+ public:
+  struct Config {
     std::string version;
     uint64_t threads = 0;
     uint64_t limit_maxbytes = 0;
   };
 
-  enum class Counter : uint8_t
-  {
+  enum class Counter : uint8_t {
     CmdGet,
     GetHits,
     GetMisses,
@@ -56,7 +53,7 @@ public:
   // 返回固定顺序的 Memcached ASCII stats 响应。
   std::string render() const;
 
-private:
+ private:
   std::string _version;
   uint64_t _threads;
   uint64_t _limit_maxbytes;
@@ -65,7 +62,7 @@ private:
   std::array<std::atomic<uint64_t>, counter_count> _counters{};
 };
 
-} // namespace sphinx::stats
+}  // namespace sphinx::stats
 
 namespace sphinx {
 using ServerStats = stats::ServerStats;

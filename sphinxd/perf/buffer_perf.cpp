@@ -2,16 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <benchmark/benchmark.h>
-
 #include <sphinx/buffer.h>
 
 #include <algorithm>
 #include <cstdlib>
 #include <string>
 
-static std::string
-make_random(size_t len)
-{
+static std::string make_random(size_t len) {
   auto make_random_char = []() {
     static const char chars[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     const size_t nr_chars = sizeof(chars) - 1;
@@ -22,9 +19,7 @@ make_random(size_t len)
   return str;
 }
 
-static void
-Buffer_append(benchmark::State& state)
-{
+static void Buffer_append(benchmark::State& state) {
   using namespace sphinx::buffer;
   Buffer buf;
   std::string value = make_random(state.range(0));

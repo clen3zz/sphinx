@@ -2,12 +2,11 @@
 #include "command_executor.h"
 
 #include <sphinx/string.h>
+
 #include <utility>
 namespace sphinx::server {
 namespace {
-ExecutionResult
-execute_storage(sphinx::logmem::Log& log, const Command& command)
-{
+ExecutionResult execute_storage(sphinx::logmem::Log& log, const Command& command) {
   using sphinx::memcache::Opcode;
   switch (command.op) {
     case Opcode::Set:
@@ -20,8 +19,8 @@ execute_storage(sphinx::logmem::Log& log, const Command& command)
         }
       }
       return log.append(command.key, command.blob, command.flags, command.expiration)
-               ? ExecutionResult{"STORED\r\n"}
-               : ExecutionResult{"SERVER_ERROR out of memory storing object\r\n"};
+                 ? ExecutionResult{"STORED\r\n"}
+                 : ExecutionResult{"SERVER_ERROR out of memory storing object\r\n"};
     }
 
     case Opcode::Delete:
@@ -51,9 +50,8 @@ execute_storage(sphinx::logmem::Log& log, const Command& command)
   }
   return {};
 }
-ExecutionResult
-execute_get(sphinx::logmem::Log& log, sphinx::stats::ServerStats& stats, const Command& command)
-{
+ExecutionResult execute_get(sphinx::logmem::Log& log, sphinx::stats::ServerStats& stats,
+                            const Command& command) {
   std::string response;
   auto search = log.find_value(command.key);
   if (search) {
@@ -78,10 +76,9 @@ execute_get(sphinx::logmem::Log& log, sphinx::stats::ServerStats& stats, const C
   response += "END\r\n";
   return {std::move(response)};
 }
-} // namespace
-ExecutionResult
-execute_command(sphinx::logmem::Log& log, sphinx::stats::ServerStats& stats, const Command& command)
-{
+}  // namespace
+ExecutionResult execute_command(sphinx::logmem::Log& log, sphinx::stats::ServerStats& stats,
+                                const Command& command) {
   using sphinx::memcache::Opcode;
   switch (command.op) {
     case Opcode::Version:
@@ -100,4 +97,4 @@ execute_command(sphinx::logmem::Log& log, sphinx::stats::ServerStats& stats, con
   }
   return {};
 }
-} // namespace sphinx::server
+}  // namespace sphinx::server
