@@ -24,9 +24,7 @@ class TestReactor final : public sphinx::reactor::EpollReactor {
       : EpollReactor{thread_id, std::move(group), std::move(on_message_fn)} {
   }
 
-  bool poll_messages() {
-    return EpollReactor::poll_messages();
-  }
+  using EpollReactor::poll_messages;
 };
 
 }  // namespace

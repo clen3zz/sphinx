@@ -159,7 +159,7 @@ Object* Segment::first_object() {
   return reinterpret_cast<Object*>(start());
 }
 
-Object* Segment::next_object(Object* object) {
+Object* Segment::next_object(Object* object) const {
   if (object == nullptr) {
     return nullptr;
   }
@@ -327,11 +327,7 @@ ArithmeticResult Log::update_counter(const Key& key, uint64_t delta, bool increm
 
 size_t Log::expire(size_t reclaim_target) {
   size_t nr_reclaimed = 0;
-  for (;;) {
-    if (_segment_ring_head == _segment_ring_tail) {
-      /* No more segments to expire */
-      break;
-    }
+  while (_segment_ring_head != _segment_ring_tail) {
     nr_reclaimed += expire(_segment_ring[_segment_ring_head]);
     _segment_ring_head = (_segment_ring_head + 1) % _segment_ring.size();
     if (nr_reclaimed >= reclaim_target) {
@@ -341,17 +337,17 @@ size_t Log::expire(size_t reclaim_target) {
   return nr_reclaimed;
 }
 
-size_t Log::expire(Segment* seg) {
-  Object* obj = seg->first_object();
+size_t Log::expire(Segment* segment) {
+  Object* obj = segment->first_object();
   while (obj) {
     const auto current = _index.find(obj->key());
     if (current && current.value() == obj) {
       _index.erase(obj->key());
     }
-    obj = seg->next_object(obj);
+    obj = segment->next_object(obj);
   }
-  size_t nr_reclaimed = seg->size();
-  seg->reset();
+  size_t nr_reclaimed = segment->size();
+  segment->reset();
   return nr_reclaimed;
 }
 

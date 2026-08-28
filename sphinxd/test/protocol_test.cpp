@@ -131,7 +131,7 @@ TEST(ProtocolTest, parse_pipelined_headers_without_consuming_next_command) {
   ASSERT_EQ(first_consumed, 11U);
   const auto* first_command = command_as<GetCommand>(first);
   ASSERT_NE(first_command, nullptr);
-  ASSERT_EQ(first_command->keys, (std::vector<std::string>{"first"}));
+  ASSERT_EQ(first_command->keys, std::vector<std::string>{"first"});
 
   msg.remove_prefix(first_consumed);
   Parser second;
@@ -139,7 +139,7 @@ TEST(ProtocolTest, parse_pipelined_headers_without_consuming_next_command) {
   ASSERT_EQ(second_consumed, 12U);
   const auto* second_command = command_as<GetCommand>(second);
   ASSERT_NE(second_command, nullptr);
-  ASSERT_EQ(second_command->keys, (std::vector<std::string>{"second"}));
+  ASSERT_EQ(second_command->keys, std::vector<std::string>{"second"});
 }
 
 TEST(ProtocolTest, parse_multi_get_preserves_order_and_owns_keys) {
@@ -305,7 +305,7 @@ TEST(ProtocolTest, invalid_complete_command_does_not_consume_next_command) {
   ASSERT_EQ(valid.parse(msg), 11U);
   const auto* valid_command = command_as<GetCommand>(valid);
   ASSERT_NE(valid_command, nullptr);
-  ASSERT_EQ(valid_command->keys, (std::vector<std::string>{"valid"}));
+  ASSERT_EQ(valid_command->keys, std::vector<std::string>{"valid"});
 }
 
 TEST(ProtocolTest, parse_stats) {
@@ -351,5 +351,5 @@ TEST(ProtocolTest, parse_stats_in_pipeline) {
   ASSERT_EQ(get.parse(msg), 9U);
   const auto* get_command = command_as<GetCommand>(get);
   ASSERT_NE(get_command, nullptr);
-  ASSERT_EQ(get_command->keys, (std::vector<std::string>{"key"}));
+  ASSERT_EQ(get_command->keys, std::vector<std::string>{"key"});
 }

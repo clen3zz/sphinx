@@ -362,7 +362,7 @@ size_t Server::find_target(const sphinx::logmem::Hash& hash) const {
   return hash % nr_threads;
 }
 
-bool Server::force_mget_queue_failure_once() {
+bool Server::force_mget_queue_failure_once() const {
   // NOLINTNEXTLINE(concurrency-mt-unsafe)
   if (std::getenv("SPHINXD_TEST_FAIL_MGET_QUEUE_ONCE") == nullptr || !_mget_queue_failure_used) {
     return false;

@@ -75,8 +75,7 @@ int TcpListener::fd() const {
 }
 
 static addrinfo* lookup_addresses(const std::string& iface, int port, int sock_type) {
-  addrinfo hints;
-  memset(&hints, 0, sizeof(hints));
+  addrinfo hints = {};
   hints.ai_family = AF_INET;
   hints.ai_socktype = sock_type;
   hints.ai_protocol = 0;
@@ -152,11 +151,11 @@ bool TcpSocket::send(const char* msg, size_t len) {
   do {
     nr = ::send(_sockfd, msg, len, MSG_NOSIGNAL | MSG_DONTWAIT);
   } while (nr < 0 && errno == EINTR);
-  if ((nr < 0) && (errno == ECONNRESET || errno == EPIPE || errno == ENOTCONN || errno == EBADF)) {
+  if (nr < 0 && (errno == ECONNRESET || errno == EPIPE || errno == ENOTCONN || errno == EBADF)) {
     _closed = true;
     return true;
   }
-  if ((nr < 0) && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+  if (nr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
     _tx_buf.insert(_tx_buf.end(), msg, msg + len);
     return false;
   }
@@ -208,11 +207,11 @@ bool TcpSocket::on_pollout() {
   do {
     nr = ::send(_sockfd, _tx_buf.data(), _tx_buf.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
   } while (nr < 0 && errno == EINTR);
-  if ((nr < 0) && (errno == ECONNRESET || errno == EPIPE || errno == ENOTCONN || errno == EBADF)) {
+  if (nr < 0 && (errno == ECONNRESET || errno == EPIPE || errno == ENOTCONN || errno == EBADF)) {
     _closed = true;
     return true;
   }
-  if ((nr < 0) && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+  if (nr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
     return false;
   }
   if (nr < 0) {
@@ -274,7 +273,7 @@ ReactorGroup::Channel& ReactorGroup::channel(size_t destination, size_t source) 
   if (destination >= _nr_threads || source >= _nr_threads) {
     throw std::invalid_argument("invalid reactor message target");
   }
-  auto& slot = _channels[(destination * _nr_threads) + source];
+  auto& slot = _channels[destination * _nr_threads + source];
   if (!slot) {
     throw std::logic_error("reactor channel is not initialized");
   }
@@ -290,11 +289,11 @@ void ReactorGroup::initialize_thread(size_t thread_id) {
     if (peer == thread_id) {
       continue;
     }
-    auto& outgoing = _channels[(peer * _nr_threads) + thread_id];
+    auto& outgoing = _channels[peer * _nr_threads + thread_id];
     if (!outgoing) {
       outgoing = std::make_unique<Channel>();
     }
-    auto& incoming = _channels[(thread_id * _nr_threads) + peer];
+    auto& incoming = _channels[thread_id * _nr_threads + peer];
     if (!incoming) {
       incoming = std::make_unique<Channel>();
     }

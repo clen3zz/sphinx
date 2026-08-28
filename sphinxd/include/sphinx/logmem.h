@@ -87,7 +87,7 @@ class Segment {
 
  public:
   /// \brief Construct a \ref Segment instance.
-  Segment(size_t size);
+  explicit Segment(size_t size);
   /// \brief Return true if segment has no objects; otherwise return false;
   bool is_empty() const;
   /// \brief Returns the number of bytes allocated for objects in this segment.
@@ -99,7 +99,7 @@ class Segment {
   /// \brief Return a pointer to the first object in the segment.
   Object* first_object();
   /// \brief Return a pointer to the next object immediatelly following \ref object.
-  Object* next_object(Object* object);
+  Object* next_object(Object* object) const;
 
  private:
   char* start();
@@ -143,7 +143,7 @@ class Log {
 
  public:
   /// \brief Construct a \ref Log instance.
-  Log(const LogConfig& config);
+  explicit Log(const LogConfig& config);
   /// \brief Find for a blob for a given \ref key from the log.
   std::optional<Blob> find(const Key& key) const;
   /// \brief 查找值及其 Memcached 元数据。

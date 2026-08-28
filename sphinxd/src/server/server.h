@@ -58,6 +58,6 @@ class Server final {
 
   size_t find_target(const sphinx::logmem::Hash& hash) const;
   static uint64_t normalize_expiration(uint64_t expiration);
-  bool force_mget_queue_failure_once();
+  bool force_mget_queue_failure_once() const;
 };
 }  // namespace sphinx::server

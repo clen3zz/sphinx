@@ -20,10 +20,7 @@ TEST(QueueTest, producer_consumer) {
   Queue<int, 128> queue;
   std::thread producer{[&queue]() {
     for (int i = 0; i < nr_iterations; i++) {
-      for (;;) {
-        if (queue.try_to_emplace(i)) {
-          break;
-        }
+      while (!queue.try_to_emplace(i)) {
       }
     }
   }};

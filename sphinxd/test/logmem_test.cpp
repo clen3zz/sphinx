@@ -16,9 +16,10 @@
 static std::string make_random(size_t len) {
   auto make_random_char = []() {
     thread_local std::minstd_rand rng{1337};
-    static const char chars[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    static constexpr char chars[] =
+        "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     constexpr size_t nr_chars = sizeof(chars) - 1;
-    return chars[static_cast<size_t>(rng()) % nr_chars];
+    return chars[rng() % nr_chars];
   };
   std::string str(len, 0);
   std::generate_n(str.begin(), len, make_random_char);
@@ -187,7 +188,7 @@ TEST(LogTest, arithmetic_rejects_non_decimal_values_without_mutating_metadata) {
 
   // 计数器只接受非空 ASCII 十进制数字序列。
   // 特别是，符号、空白和十进制表示法不能在 incr/decr 中被静默规范化。
-  const std::array<std::string_view, 8> invalid_values = {
+  static constexpr std::array<std::string_view, 8> invalid_values = {
       "-1", "+1", " 1", "1 ", "\t1", "1\n", "1.0", "0x10",
   };
   for (size_t i = 0; i < invalid_values.size(); i++) {

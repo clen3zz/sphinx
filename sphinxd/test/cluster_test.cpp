@@ -165,7 +165,7 @@ TEST(ConsistentHashRingTest, HashCollisionsHaveStableTieBreaking) {
     }
   }
   ASSERT_NE(left.host, "");
-  const ConsistentHashRing ring(std::vector<Node>{right, left});
+  const ConsistentHashRing ring(std::vector{right, left});
   std::vector<RingEntry> collisions;
   for (const auto& entry : ring.entries()) {
     if (entry.hash == collision_hash && entry.virtual_index == 0) {

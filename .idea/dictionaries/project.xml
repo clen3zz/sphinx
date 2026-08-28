@@ -6,12 +6,15 @@
       <w>asan</w>
       <w>ccache</w>
       <w>cerrno</w>
+      <w>connfd</w>
       <w>cpuset</w>
       <w>cstddef</w>
       <w>cstdint</w>
       <w>cstring</w>
       <w>decr</w>
       <w>epoll</w>
+      <w>epollfd</w>
+      <w>eventfd</w>
       <w>exptime</w>
       <w>getopt</w>
       <w>gtest</w>
@@ -24,6 +27,7 @@
       <w>mget</w>
       <w>mmap</w>
       <w>murmur</w>
+      <w>murmurhash</w>
       <w>opcode</w>
       <w>optarg</w>
       <w>opterr</w>
@@ -39,6 +43,7 @@
       <w>sockfd</w>
       <w>sphinxd</w>
       <w>spsc</w>
+      <w>spscqueue</w>
       <w>valgrind</w>
     </words>
   </dictionary>

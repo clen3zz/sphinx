@@ -19,7 +19,7 @@ Memory Memory::mmap(size_t size) {
   return Memory{addr, size};
 }
 
-Memory::Memory(void* addr, size_t size) : _addr{addr}, _size{size} {
+Memory::Memory(void* ptr, size_t size) : _addr{ptr}, _size{size} {
 }
 
 Memory::Memory(Memory&& other) noexcept

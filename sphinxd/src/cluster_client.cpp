@@ -20,7 +20,7 @@ namespace {
 
 constexpr size_t kMaxResponseLine = size_t{64} * 1024;
 
-inline std::string errno_message(int err) {
+std::string errno_message(int err) {
   return std::generic_category().message(err);
 }
 
@@ -182,7 +182,7 @@ class TcpTransport final {
     return fd;
   }
 
-  void wait_for(int fd, short events) {
+  void wait_for(int fd, short events) const {
     pollfd descriptor = {fd, events, 0};
     const auto timeout =
         std::clamp<int64_t>(_timeout.count(), int64_t{1}, std::numeric_limits<int>::max());

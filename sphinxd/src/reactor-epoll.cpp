@@ -12,6 +12,7 @@
 #include <system_error>
 
 namespace sphinx::reactor {
+namespace {
 
 class Eventfd : public Pollable {
   int _efd;
@@ -34,6 +35,8 @@ class Eventfd : public Pollable {
     return false;
   }
 };
+
+}  // namespace
 
 EpollReactor::EpollReactor(size_t thread_id, std::shared_ptr<ReactorGroup> group,
                            OnMessageFn&& on_message_fn)

@@ -174,7 +174,7 @@ bool read_until(int fd, std::string* buffer, std::string_view delimiter) {
 void send_chunks(int fd, std::string_view value) {
   for (const auto chunk :
        {value.substr(0, value.size() / 3), value.substr(value.size() / 3, value.size() / 3),
-        value.substr((value.size() / 3) * 2)}) {
+        value.substr(value.size() / 3 * 2)}) {
     if (!chunk.empty()) {
       const auto count = ::send(fd, chunk.data(), chunk.size(), MSG_NOSIGNAL);
       if (count != static_cast<ssize_t>(chunk.size())) {
@@ -237,7 +237,7 @@ TEST(ClusterClientTest, HandlesPartialResponsesAndBinaryValues) {
   const auto value = client.get("key");
   ASSERT_TRUE(value.has_value());
   const std::string expected{"\0x\r\n", 4};
-  EXPECT_EQ(value, std::optional<std::string>{expected});
+  EXPECT_EQ(value, std::optional{expected});
 }
 
 TEST(ClusterClientTest, GetMissReturnsNullopt) {
