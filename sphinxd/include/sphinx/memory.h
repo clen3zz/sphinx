@@ -39,4 +39,4 @@ public:
 private:
   void release() noexcept;
 };
-}
+} // namespace sphinx::memory

@@ -1,12 +1,14 @@
 BasedOnStyle: Mozilla
-Standard: Cpp11
-Cpp11BracedListStyle: true
+Language: Cpp
+Standard: c++17
+Cpp11BracedListStyle: AlignFirstComment
 ColumnLimit: 100
-AllowShortFunctionsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+FixNamespaceComments: true
 BreakBeforeBraces: Custom
 BraceWrapping:
   AfterClass: true
-  AfterControlStatement: false
+  AfterControlStatement: Never
   AfterEnum: true
   AfterFunction: true
   AfterNamespace: false

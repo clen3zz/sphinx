@@ -83,4 +83,4 @@ Memory::release() noexcept
   _addr = nullptr;
   _size = 0;
 }
-}
+} // namespace sphinx::memory

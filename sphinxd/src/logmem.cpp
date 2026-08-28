@@ -447,4 +447,4 @@ Log::expire(Segment* seg)
   return nr_reclaimed;
 }
 
-}
+} // namespace sphinx::logmem

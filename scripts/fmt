@@ -1,3 +1,5 @@
 #!/bin/sh
+set -eu
 
-find sphinxd/ -name "*.h" -o -name "*.cpp" | grep -v MurmurHash3 | xargs -n 1 clang-format -i
+find sphinxd -type f \( -name "*.h" -o -name "*.cpp" \) ! -name "MurmurHash3.*" -print0 |
+  xargs -0 -r clang-format -i --style=file

@@ -101,4 +101,4 @@ public:
 };
 
 /// @}
-}
+} // namespace sphinx::spsc

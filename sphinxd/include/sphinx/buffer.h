@@ -33,4 +33,4 @@ public:
   size_t size() const;
   std::string_view string_view() const;
 };
-}
+} // namespace sphinx::buffer

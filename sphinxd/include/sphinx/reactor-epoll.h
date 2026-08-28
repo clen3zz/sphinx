@@ -41,4 +41,4 @@ public:
 private:
   void update_epoll(Pollable* pollable, uint32_t events);
 };
-}
+} // namespace sphinx::reactor

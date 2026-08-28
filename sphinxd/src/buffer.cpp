@@ -61,4 +61,4 @@ Buffer::string_view() const
 {
   return std::string_view{_data.data(), _data.size()};
 }
-}
+} // namespace sphinx::buffer

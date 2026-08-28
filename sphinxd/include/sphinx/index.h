@@ -56,4 +56,4 @@ public:
     _index.erase(key);
   }
 };
-}
+} // namespace sphinx::index

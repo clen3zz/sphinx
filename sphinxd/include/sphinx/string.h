@@ -37,4 +37,4 @@ to_string(unsigned long n)
     return "0";
   }
 }
-}
+} // namespace sphinx

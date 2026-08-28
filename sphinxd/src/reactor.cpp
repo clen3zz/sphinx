@@ -566,4 +566,4 @@ make_reactor(const std::string& backend,
   throw std::invalid_argument("unrecognized '" + backend + "' backend");
 }
 
-}
+} // namespace sphinx::reactor

@@ -190,4 +190,4 @@ private:
 };
 
 /// @}
-}
+} // namespace sphinx::logmem

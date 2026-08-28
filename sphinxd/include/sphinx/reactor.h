@@ -196,4 +196,4 @@ make_reactor(const std::string& backend,
              size_t thread_id,
              std::shared_ptr<ReactorGroup> group,
              OnMessageFn&& on_message_fn);
-}
+} // namespace sphinx::reactor

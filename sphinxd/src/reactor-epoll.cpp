@@ -207,4 +207,4 @@ EpollReactor::update_epoll(Pollable* pollable, uint32_t events)
   }
   _epoll_events.insert_or_assign(pollable->fd(), events);
 }
-}
+} // namespace sphinx::reactor
