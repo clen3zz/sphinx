@@ -16,7 +16,9 @@ limitations under the License.
 
 #pragma once
 
+#include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -50,6 +52,7 @@ public:
     CmdDelete,
     CmdIncr,
     CmdDecr,
+    Count,
   };
 
   explicit ServerStats(Config config);
@@ -62,16 +65,6 @@ public:
 
   void increment(Counter counter, uint64_t amount = 1) noexcept;
 
-  void record_get_command() noexcept;
-  void record_get_hit() noexcept;
-  void record_get_miss() noexcept;
-  void record_set_command() noexcept;
-  void record_add_command() noexcept;
-  void record_replace_command() noexcept;
-  void record_delete_command() noexcept;
-  void record_incr_command() noexcept;
-  void record_decr_command() noexcept;
-
   uint64_t counter(Counter counter) const noexcept;
 
   // Return the fixed-order Memcached ASCII stats response.
@@ -82,15 +75,8 @@ private:
   uint64_t _threads;
   uint64_t _limit_maxbytes;
 
-  std::atomic<uint64_t> _cmd_get{0};
-  std::atomic<uint64_t> _get_hits{0};
-  std::atomic<uint64_t> _get_misses{0};
-  std::atomic<uint64_t> _cmd_set{0};
-  std::atomic<uint64_t> _cmd_add{0};
-  std::atomic<uint64_t> _cmd_replace{0};
-  std::atomic<uint64_t> _cmd_delete{0};
-  std::atomic<uint64_t> _cmd_incr{0};
-  std::atomic<uint64_t> _cmd_decr{0};
+  static constexpr size_t counter_count = static_cast<size_t>(Counter::Count);
+  std::array<std::atomic<uint64_t>, counter_count> _counters{};
 };
 
 } // namespace sphinx::stats

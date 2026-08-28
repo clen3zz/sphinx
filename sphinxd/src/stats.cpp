@@ -16,9 +16,37 @@ limitations under the License.
 
 #include <sphinx/stats.h>
 
+#include <cstddef>
+#include <iterator>
 #include <utility>
 
 namespace sphinx::stats {
+
+namespace {
+
+using Counter = ServerStats::Counter;
+
+struct CounterInfo
+{
+  Counter counter;
+  const char* name;
+};
+
+constexpr CounterInfo kCounterNames[] = {
+  {Counter::CmdGet, "cmd_get"},
+  {Counter::GetHits, "get_hits"},
+  {Counter::GetMisses, "get_misses"},
+  {Counter::CmdSet, "cmd_set"},
+  {Counter::CmdAdd, "cmd_add"},
+  {Counter::CmdReplace, "cmd_replace"},
+  {Counter::CmdDelete, "cmd_delete"},
+  {Counter::CmdIncr, "cmd_incr"},
+  {Counter::CmdDecr, "cmd_decr"},
+};
+
+static_assert(std::size(kCounterNames) == static_cast<size_t>(Counter::Count));
+
+} // namespace
 
 ServerStats::ServerStats(Config config)
   : _version{std::move(config.version)}
@@ -35,113 +63,18 @@ ServerStats::ServerStats(std::string version, uint64_t threads, uint64_t limit_m
 void
 ServerStats::increment(Counter counter, uint64_t amount) noexcept
 {
-  switch (counter) {
-    case Counter::CmdGet:
-      _cmd_get.fetch_add(amount, std::memory_order_relaxed);
-      break;
-    case Counter::GetHits:
-      _get_hits.fetch_add(amount, std::memory_order_relaxed);
-      break;
-    case Counter::GetMisses:
-      _get_misses.fetch_add(amount, std::memory_order_relaxed);
-      break;
-    case Counter::CmdSet:
-      _cmd_set.fetch_add(amount, std::memory_order_relaxed);
-      break;
-    case Counter::CmdAdd:
-      _cmd_add.fetch_add(amount, std::memory_order_relaxed);
-      break;
-    case Counter::CmdReplace:
-      _cmd_replace.fetch_add(amount, std::memory_order_relaxed);
-      break;
-    case Counter::CmdDelete:
-      _cmd_delete.fetch_add(amount, std::memory_order_relaxed);
-      break;
-    case Counter::CmdIncr:
-      _cmd_incr.fetch_add(amount, std::memory_order_relaxed);
-      break;
-    case Counter::CmdDecr:
-      _cmd_decr.fetch_add(amount, std::memory_order_relaxed);
-      break;
+  const auto index = static_cast<size_t>(counter);
+  if (index < _counters.size()) {
+    _counters[index].fetch_add(amount, std::memory_order_relaxed);
   }
-}
-
-void
-ServerStats::record_get_command() noexcept
-{
-  increment(Counter::CmdGet);
-}
-
-void
-ServerStats::record_get_hit() noexcept
-{
-  increment(Counter::GetHits);
-}
-
-void
-ServerStats::record_get_miss() noexcept
-{
-  increment(Counter::GetMisses);
-}
-
-void
-ServerStats::record_set_command() noexcept
-{
-  increment(Counter::CmdSet);
-}
-
-void
-ServerStats::record_add_command() noexcept
-{
-  increment(Counter::CmdAdd);
-}
-
-void
-ServerStats::record_replace_command() noexcept
-{
-  increment(Counter::CmdReplace);
-}
-
-void
-ServerStats::record_delete_command() noexcept
-{
-  increment(Counter::CmdDelete);
-}
-
-void
-ServerStats::record_incr_command() noexcept
-{
-  increment(Counter::CmdIncr);
-}
-
-void
-ServerStats::record_decr_command() noexcept
-{
-  increment(Counter::CmdDecr);
 }
 
 uint64_t
 ServerStats::counter(Counter counter) const noexcept
 {
-  switch (counter) {
-    case Counter::CmdGet:
-      return _cmd_get.load(std::memory_order_relaxed);
-    case Counter::GetHits:
-      return _get_hits.load(std::memory_order_relaxed);
-    case Counter::GetMisses:
-      return _get_misses.load(std::memory_order_relaxed);
-    case Counter::CmdSet:
-      return _cmd_set.load(std::memory_order_relaxed);
-    case Counter::CmdAdd:
-      return _cmd_add.load(std::memory_order_relaxed);
-    case Counter::CmdReplace:
-      return _cmd_replace.load(std::memory_order_relaxed);
-    case Counter::CmdDelete:
-      return _cmd_delete.load(std::memory_order_relaxed);
-    case Counter::CmdIncr:
-      return _cmd_incr.load(std::memory_order_relaxed);
-    case Counter::CmdDecr:
-      return _cmd_decr.load(std::memory_order_relaxed);
+  const auto index = static_cast<size_t>(counter);
+  if (index < _counters.size()) {
+    return _counters[index].load(std::memory_order_relaxed);
   }
   return 0;
 }
@@ -151,13 +84,6 @@ ServerStats::render() const
 {
   std::string response;
   response.reserve(256);
-  auto append_counter = [&response, this](const char* name, Counter counter) {
-    response += "STAT ";
-    response += name;
-    response += " ";
-    response += std::to_string(this->counter(counter));
-    response += "\r\n";
-  };
 
   response += "STAT version ";
   response += _version;
@@ -168,15 +94,13 @@ ServerStats::render() const
   response += "STAT limit_maxbytes ";
   response += std::to_string(_limit_maxbytes);
   response += "\r\n";
-  append_counter("cmd_get", Counter::CmdGet);
-  append_counter("get_hits", Counter::GetHits);
-  append_counter("get_misses", Counter::GetMisses);
-  append_counter("cmd_set", Counter::CmdSet);
-  append_counter("cmd_add", Counter::CmdAdd);
-  append_counter("cmd_replace", Counter::CmdReplace);
-  append_counter("cmd_delete", Counter::CmdDelete);
-  append_counter("cmd_incr", Counter::CmdIncr);
-  append_counter("cmd_decr", Counter::CmdDecr);
+  for (const auto& info : kCounterNames) {
+    response += "STAT ";
+    response += info.name;
+    response += " ";
+    response += std::to_string(counter(info.counter));
+    response += "\r\n";
+  }
   response += "END\r\n";
   return response;
 }

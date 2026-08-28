@@ -35,5 +35,8 @@ public:
   ~Memory();
   void* addr() const;
   size_t size() const;
+
+private:
+  void release() noexcept;
 };
 }

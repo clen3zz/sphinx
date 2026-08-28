@@ -18,6 +18,8 @@ limitations under the License.
 
 #include <sphinx/reactor.h>
 
+#include <unordered_map>
+
 namespace sphinx::reactor {
 
 class EpollReactor : public Reactor
@@ -27,6 +29,7 @@ class EpollReactor : public Reactor
   int _epollfd;
 
 public:
+  EpollReactor(size_t thread_id, std::shared_ptr<ReactorGroup> group, OnMessageFn&& on_message_fn);
   EpollReactor(size_t thread_id, size_t nr_threads, OnMessageFn&& on_message_fn);
   ~EpollReactor();
   virtual void accept(std::shared_ptr<TcpListener>&& listener) override;

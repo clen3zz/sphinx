@@ -18,8 +18,10 @@ limitations under the License.
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <sphinx/protocol_types.h>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 %%{
@@ -29,61 +31,54 @@ machine memcache_protocol;
 access _fsm_;
 
 action key_start {
-    _key_start = p;
+    key_start_ = p;
 }
 
 action key_end {
-    _key_end = p;
-    _owned_keys.emplace_back(_key_start, static_cast<size_t>(_key_end - _key_start));
-}
-
-action blob_start {
-    _blob_start = p + 1;
+    keys_.emplace_back(key_start_, static_cast<size_t>(p - key_start_));
 }
 
 crlf = "\r\n";
 
 key = [^ \t\r\n]+ >key_start %key_end;
 
-number = digit+ >{ _number = 0; _current_number_overflow = false; } ${
-    if (!_current_number_overflow) {
+number = digit+ >{ number_ = 0; number_token_overflow_ = false; } ${
+    if (!number_token_overflow_) {
         auto digit_value = uint64_t(fc - '0');
-        if (_number > (std::numeric_limits<uint64_t>::max() - digit_value) / 10) {
-            _current_number_overflow = true;
-            _number_overflow = true;
+        if (number_ > (std::numeric_limits<uint64_t>::max() - digit_value) / 10) {
+            number_token_overflow_ = true;
+            number_overflow_ = true;
         } else {
-            _number = _number * 10 + digit_value;
+            number_ = number_ * 10 + digit_value;
         }
     }
 };
 
-flags = number %{ _flags = _number; };
+flags = number %{ flags_ = number_; };
 
-exptime = number %{ _expiration = _number; };
+exptime = number %{ expiration_ = number_; };
 
-bytes = number %{ _blob_size = _number; };
+bytes = number %{ body_size_ = number_; };
 
-storage_cmd = space key space flags space exptime space bytes space? crlf @blob_start;
+set = "set" space key space flags space exptime space bytes space? crlf @{ opcode_ = Opcode::Set; };
 
-set = "set" space key space flags space exptime space bytes space? crlf @blob_start @{ _op = Opcode::Set; };
+add = "add" space key space flags space exptime space bytes space? crlf @{ opcode_ = Opcode::Add; };
 
-add = "add" space key space flags space exptime space bytes space? crlf @blob_start @{ _op = Opcode::Add; };
+replace = "replace" space key space flags space exptime space bytes space? crlf @{ opcode_ = Opcode::Replace; };
 
-replace = "replace" space key space flags space exptime space bytes space? crlf @blob_start @{ _op = Opcode::Replace; };
+get = "get" space key (space key)* crlf @{ opcode_ = Opcode::Get; };
 
-get = "get" space key (space key)* crlf @{ _op = Opcode::Get; };
+delete = "delete" space key crlf @{ opcode_ = Opcode::Delete; };
 
-delete = "delete" space key crlf @{ _op = Opcode::Delete; };
+delta = number %{ delta_ = number_; };
 
-delta = number %{ _delta = _number; };
+incr = "incr" space key space delta crlf @{ opcode_ = Opcode::Incr; };
 
-incr = "incr" space key space delta crlf @{ _op = Opcode::Incr; };
+decr = "decr" space key space delta crlf @{ opcode_ = Opcode::Decr; };
 
-decr = "decr" space key space delta crlf @{ _op = Opcode::Decr; };
+version = "version" crlf @{ opcode_ = Opcode::Version; };
 
-version = "version" crlf @{ _op = Opcode::Version; };
-
-stats = "stats" crlf @{ _op = Opcode::Stats; };
+stats = "stats" crlf @{ opcode_ = Opcode::Stats; };
 
 main := (set | add | replace | get | delete | incr | decr | version | stats);
 
@@ -109,59 +104,55 @@ enum class Opcode
 class Parser
 {
   int _fsm_cs;
+  std::optional<ParsedCommand> _command;
+  ParseStatus _status = ParseStatus::Incomplete;
+  std::optional<Opcode> opcode_;
+  const char* key_start_ = nullptr;
+  std::vector<std::string> keys_;
+  uint64_t number_ = 0;
+  bool number_overflow_ = false;
+  bool number_token_overflow_ = false;
+  uint64_t flags_ = 0;
+  uint64_t expiration_ = 0;
+  uint64_t body_size_ = 0;
+  uint64_t delta_ = 0;
 
 public:
-  std::optional<Opcode> _op;
-  const char* _key_start = nullptr;
-  const char* _key_end = nullptr;
-  std::vector<std::string> _owned_keys;
-  uint64_t _number = 0;
-  bool _number_overflow = false;
-  bool _current_number_overflow = false;
-  uint64_t _flags = 0;
-  uint64_t _expiration = 0;
-  const char* _blob_start = nullptr;
-  uint64_t _blob_size = 0;
-  uint64_t _delta = 0;
+  const std::optional<ParsedCommand>& command() const noexcept
+  {
+    return _command;
+  }
+
+  ParseStatus status() const noexcept
+  {
+    return _status;
+  }
+
+  bool number_overflow() const noexcept
+  {
+    return number_overflow_;
+  }
 
   Parser()
   {
     %% write init;
   }
 
-  std::string_view key() const
-  {
-    if (_owned_keys.empty()) {
-      return {};
-    }
-    return std::string_view{_owned_keys.front().data(), _owned_keys.front().size()};
-  }
-
-  const std::vector<std::string>& keys() const
-  {
-    return _owned_keys;
-  }
-
-  uint64_t delta() const
-  {
-    return _delta;
-  }
-
   size_t parse(std::string_view msg)
   {
     _fsm_cs = start;
-    _op.reset();
-    _key_start = nullptr;
-    _key_end = nullptr;
-    _owned_keys.clear();
-    _number = 0;
-    _number_overflow = false;
-    _current_number_overflow = false;
-    _flags = 0;
-    _expiration = 0;
-    _blob_start = nullptr;
-    _blob_size = 0;
-    _delta = 0;
+    _command.reset();
+    _status = ParseStatus::Incomplete;
+    opcode_.reset();
+    key_start_ = nullptr;
+    keys_.clear();
+    number_ = 0;
+    number_overflow_ = false;
+    number_token_overflow_ = false;
+    flags_ = 0;
+    expiration_ = 0;
+    body_size_ = 0;
+    delta_ = 0;
     if (msg.empty()) {
       return 0;
     }
@@ -169,7 +160,7 @@ public:
     auto header_end = msg.find("\r\n");
     if (header_end == std::string_view::npos) {
       // A command header is not complete until CRLF arrives.  Leaving the
-      // operation unset tells the reactor to retain the receive buffer.
+      // command unset tells the reactor to retain the receive buffer.
       return 0;
     }
     auto* parse_end = start + header_end + 2;
@@ -177,10 +168,55 @@ public:
     // The parser is deliberately bounded by the first CRLF, so even a
     // complete invalid line consumes exactly that line and cannot eat the
     // following pipelined command.
-    return header_end + 2;
+    const auto header_size = header_end + 2;
+    if (opcode_) {
+      build_command(header_size);
+      _status = ParseStatus::Parsed;
+    } else {
+      _status = ParseStatus::Invalid;
+    }
+    return header_size;
   }
 
 private:
+  void build_command(size_t header_size)
+  {
+    const auto key_value = keys_.empty()
+                             ? std::string_view{}
+                             : std::string_view{keys_.front().data(), keys_.front().size()};
+    const StorageBody body{body_size_, header_size};
+    switch (opcode_.value()) {
+      case Opcode::Set:
+        _command = ParsedCommand{SetCommand{std::string{key_value}, flags_, expiration_, body}};
+        break;
+      case Opcode::Add:
+        _command = ParsedCommand{AddCommand{std::string{key_value}, flags_, expiration_, body}};
+        break;
+      case Opcode::Replace:
+        _command = ParsedCommand{ReplaceCommand{std::string{key_value}, flags_, expiration_, body}};
+        break;
+      case Opcode::Get:
+        _command = ParsedCommand{GetCommand{std::move(keys_)}};
+        break;
+      case Opcode::Delete:
+        _command = ParsedCommand{DeleteCommand{std::string{key_value}}};
+        break;
+      case Opcode::Incr:
+        _command = ParsedCommand{IncrCommand{std::string{key_value}, delta_}};
+        break;
+      case Opcode::Decr:
+        _command = ParsedCommand{DecrCommand{std::string{key_value}, delta_}};
+        break;
+      case Opcode::Version:
+        _command = ParsedCommand{VersionCommand{}};
+        break;
+      case Opcode::Stats:
+        _command = ParsedCommand{StatsCommand{}};
+        break;
+    }
+    keys_.clear();
+  }
+
   const char* parse(const char *p, const char *pe)
   {
     %% write exec;

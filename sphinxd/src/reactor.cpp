@@ -17,31 +17,24 @@ limitations under the License.
 #include <sphinx/reactor.h>
 
 #include <sphinx/reactor-epoll.h>
+#include <sphinx/spsc_queue.h>
 
 #include <netdb.h>
-#include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <pthread.h>
 #include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 #include <array>
-#include <chrono>
 #include <cstring>
+#include <deque>
+#include <mutex>
 #include <new>
 #include <stdexcept>
 #include <system_error>
-#include <thread>
 
 namespace sphinx::reactor {
-
-SockAddr::SockAddr(::sockaddr_storage addr, ::socklen_t len)
-  : addr{addr}
-  , len{len}
-{
-}
 
 Socket::Socket(int sockfd)
   : _sockfd{sockfd}
@@ -188,7 +181,7 @@ TcpSocket::closed() const
 }
 
 bool
-TcpSocket::send(const char* msg, size_t len, [[gnu::unused]] std::optional<SockAddr> dst)
+TcpSocket::send(const char* msg, size_t len)
 {
   if (_closed) {
     return true;
@@ -281,120 +274,119 @@ TcpSocket::on_pollout()
   return _tx_buf.empty();
 }
 
-UdpSocket::UdpSocket(int sockfd, UdpRecvFn&& recv_fn)
-  : Socket{sockfd}
-  , _recv_fn{recv_fn}
+struct ReactorGroup::Channel
 {
+  sphinx::spsc::Queue<MessagePtr, reactor_message_queue_size> queue;
+  std::mutex overflow_mutex;
+  std::deque<MessagePtr> overflow;
+};
+
+static size_t
+checked_thread_count(size_t nr_threads)
+{
+  if (nr_threads == 0 || nr_threads > max_nr_threads) {
+    throw std::invalid_argument("invalid reactor thread count");
+  }
+  return nr_threads;
 }
 
-UdpSocket::~UdpSocket()
+ReactorGroup::ReactorGroup(size_t nr_threads)
+  : _nr_threads{checked_thread_count(nr_threads)}
+  , _eventfds(_nr_threads, -1)
+  , _thread_is_sleeping{std::make_unique<std::atomic<bool>[]>(_nr_threads)}
+  , _channels(_nr_threads * _nr_threads)
 {
+  for (size_t id = 0; id < nr_threads; id++) {
+    _thread_is_sleeping[id].store(false, std::memory_order_relaxed);
+    _eventfds[id] = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (_eventfds[id] < 0) {
+      auto saved_errno = errno;
+      for (size_t close_id = 0; close_id < id; close_id++) {
+        ::close(_eventfds[close_id]);
+        _eventfds[close_id] = -1;
+      }
+      throw std::system_error(saved_errno, std::system_category(), "eventfd");
+    }
+  }
 }
 
-bool
-UdpSocket::send(const char* msg, size_t len, std::optional<SockAddr> dst)
+ReactorGroup::~ReactorGroup()
 {
-  if (!dst) {
-    throw std::invalid_argument("UDP send requires a destination");
+  for (auto& efd : _eventfds) {
+    if (efd >= 0) {
+      ::close(efd);
+      efd = -1;
+    }
   }
-  ssize_t nr;
-  do {
-    nr = ::sendto(_sockfd,
-                  msg,
-                  len,
-                  MSG_NOSIGNAL | MSG_DONTWAIT,
-                  reinterpret_cast<::sockaddr*>(&dst->addr),
-                  dst->len);
-  } while (nr < 0 && errno == EINTR);
-  if ((nr < 0) && (errno == ECONNRESET || errno == EPIPE)) {
-    return true;
+}
+
+size_t
+ReactorGroup::nr_threads() const noexcept
+{
+  return _nr_threads;
+}
+
+ReactorGroup::Channel&
+ReactorGroup::channel(size_t destination, size_t source)
+{
+  if (destination >= _nr_threads || source >= _nr_threads) {
+    throw std::invalid_argument("invalid reactor message target");
   }
-  if (nr < 0) {
-    throw std::system_error(errno, std::system_category(), "send");
+  auto& slot = _channels[destination * _nr_threads + source];
+  if (!slot) {
+    throw std::logic_error("reactor channel is not initialized");
   }
-  if (size_t(nr) != len) {
-    throw std::runtime_error("partial send");
-  }
-  return true;
+  return *slot;
 }
 
 void
-UdpSocket::on_pollin()
+ReactorGroup::initialize_thread(size_t thread_id)
 {
-  constexpr size_t rx_buf_size = 256 * 1024;
-  std::array<char, rx_buf_size> rx_buf;
-  ::sockaddr_storage src_addr;
-  ::socklen_t src_addr_len = sizeof(src_addr);
-  ssize_t nr = ::recvfrom(_sockfd,
-                          rx_buf.data(),
-                          rx_buf.size(),
-                          MSG_DONTWAIT,
-                          reinterpret_cast<::sockaddr*>(&src_addr),
-                          &src_addr_len);
-  if ((nr < 0 && (errno == ECONNRESET || errno == ENOTCONN))) {
-    _recv_fn(this->shared_from_this(), std::string_view{}, std::nullopt);
-    return;
+  if (thread_id >= _nr_threads) {
+    throw std::invalid_argument("invalid reactor thread id");
   }
-  if (nr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-    return;
+  std::lock_guard lock{_channels_mutex};
+  for (size_t peer = 0; peer < _nr_threads; peer++) {
+    if (peer == thread_id) {
+      continue;
+    }
+    auto& outgoing = _channels[peer * _nr_threads + thread_id];
+    if (!outgoing) {
+      outgoing = std::make_unique<Channel>();
+    }
+    auto& incoming = _channels[thread_id * _nr_threads + peer];
+    if (!incoming) {
+      incoming = std::make_unique<Channel>();
+    }
   }
-  if (nr < 0 && errno == EINTR) {
-    return;
+}
+
+int
+ReactorGroup::eventfd(size_t thread_id) const
+{
+  if (thread_id >= _nr_threads || _eventfds[thread_id] < 0) {
+    throw std::invalid_argument("invalid reactor wakeup target");
   }
-  if (nr < 0) {
-    throw std::system_error(errno, std::system_category(), "recvfrom");
-  }
-  SockAddr src{src_addr, src_addr_len};
-  _recv_fn(this->shared_from_this(),
-           std::string_view{rx_buf.data(), std::string_view::size_type(nr)},
-           src);
+  return _eventfds[thread_id];
 }
 
 bool
-UdpSocket::on_pollout()
+ReactorGroup::is_thread_sleeping(size_t thread_id) const
 {
-  return true;
-}
-
-std::shared_ptr<UdpSocket>
-make_udp_socket(const std::string& iface, int port, UdpRecvFn&& recv_fn)
-{
-  auto* addresses = lookup_addresses(iface, port, SOCK_DGRAM);
-  for (addrinfo* rp = addresses; rp != NULL; rp = rp->ai_next) {
-    int sockfd =
-      ::socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC, rp->ai_protocol);
-    if (sockfd < 0) {
-      continue;
-    }
-    int one = 1;
-    ::setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    ::setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
-    if (::bind(sockfd, rp->ai_addr, rp->ai_addrlen) < 0) {
-      ::close(sockfd);
-      continue;
-    }
-    freeaddrinfo(addresses);
-    try {
-      return std::make_shared<UdpSocket>(sockfd, std::move(recv_fn));
-    } catch (...) {
-      ::close(sockfd);
-      throw;
-    }
+  if (thread_id >= _nr_threads) {
+    throw std::invalid_argument("invalid reactor wakeup target");
   }
-  freeaddrinfo(addresses);
-  throw std::runtime_error("Failed to listen to interface: '" + iface + "'");
+  return _thread_is_sleeping[thread_id].load(std::memory_order_seq_cst);
 }
 
-int Reactor::_efds[max_nr_threads];
-pthread_t Reactor::_pthread_ids[max_nr_threads];
-std::atomic<bool> Reactor::_thread_is_sleeping[max_nr_threads];
-sphinx::spsc::Queue<void*, Reactor::_msg_queue_size> Reactor::_msg_queues[max_nr_threads]
-                                                                         [max_nr_threads];
-std::mutex Reactor::_state_mutex;
-std::mutex Reactor::_overflow_mutex;
-std::deque<void*> Reactor::_msg_overflow[max_nr_threads][max_nr_threads];
-size_t Reactor::_initialized_threads = 0;
-size_t Reactor::_active_reactors = 0;
+void
+ReactorGroup::set_thread_sleeping(size_t thread_id, bool sleeping)
+{
+  if (thread_id >= _nr_threads) {
+    throw std::invalid_argument("invalid reactor wakeup target");
+  }
+  _thread_is_sleeping[thread_id].store(sleeping, std::memory_order_seq_cst);
+}
 
 std::string
 Reactor::default_backend()
@@ -402,55 +394,21 @@ Reactor::default_backend()
   return "epoll";
 }
 
-Reactor::Reactor(size_t thread_id, size_t nr_threads, OnMessageFn&& on_message_fn)
-  : _thread_id{thread_id}
-  , _nr_threads{nr_threads}
-  , _on_message_fn{on_message_fn}
+Reactor::Reactor(size_t thread_id, std::shared_ptr<ReactorGroup> group, OnMessageFn&& on_message_fn)
+  : _group{std::move(group)}
+  , _thread_id{thread_id}
+  , _nr_threads{0}
+  , _on_message_fn{std::move(on_message_fn)}
 {
-  if (nr_threads == 0 || nr_threads > max_nr_threads || thread_id >= nr_threads) {
-    throw std::invalid_argument("invalid reactor thread count or thread id");
+  if (!_group) {
+    throw std::invalid_argument("reactor group cannot be null");
   }
-  std::lock_guard lock{_state_mutex};
-  if (_initialized_threads != 0 && _initialized_threads != nr_threads) {
-    throw std::invalid_argument("reactors must use one thread count per process");
+  _nr_threads = _group->nr_threads();
+  if (thread_id >= _nr_threads) {
+    throw std::invalid_argument("invalid reactor thread id");
   }
-  if (_initialized_threads == 0) {
-    for (size_t id = 0; id < nr_threads; id++) {
-      _efds[id] = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-      if (_efds[id] < 0) {
-        auto saved_errno = errno;
-        for (size_t close_id = 0; close_id < id; close_id++) {
-          ::close(_efds[close_id]);
-          _efds[close_id] = -1;
-        }
-        throw std::system_error(saved_errno, std::system_category(), "eventfd");
-      }
-      _thread_is_sleeping[id].store(false, std::memory_order_relaxed);
-    }
-    _initialized_threads = nr_threads;
-  }
-  _efd = _efds[_thread_id];
-  _pthread_ids[_thread_id] = pthread_self();
-  _active_reactors++;
-}
-
-Reactor::~Reactor()
-{
-  std::lock_guard lock{_state_mutex};
-  if (_active_reactors == 0) {
-    return;
-  }
-  _active_reactors--;
-  if (_active_reactors == 0) {
-    for (size_t id = 0; id < _initialized_threads; id++) {
-      if (_efds[id] >= 0) {
-        ::close(_efds[id]);
-        _efds[id] = -1;
-      }
-      _thread_is_sleeping[id].store(false, std::memory_order_relaxed);
-    }
-    _initialized_threads = 0;
-  }
+  _group->initialize_thread(_thread_id);
+  _efd = _group->eventfd(_thread_id);
 }
 
 size_t
@@ -466,55 +424,51 @@ Reactor::nr_threads() const
 }
 
 bool
-Reactor::send_msg(size_t remote_id, void* msg)
+Reactor::send_msg(size_t remote_id, const MessagePtr& message)
 {
-  return send_msg_impl(remote_id, msg, false);
+  return send_msg_impl(remote_id, message, false);
 }
 
 bool
-Reactor::send_msg_deferred(size_t remote_id, void* msg)
+Reactor::send_msg_deferred(size_t remote_id, const MessagePtr& message)
 {
-  return send_msg_impl(remote_id, msg, true);
+  return send_msg_impl(remote_id, message, true);
 }
 
 bool
-Reactor::send_msg_impl(size_t remote_id, void* msg, bool defer_if_full)
+Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool defer_if_full)
 {
   if (remote_id == _thread_id) {
     throw std::invalid_argument("Attempting to send message to self");
   }
-  if (remote_id >= _nr_threads || msg == nullptr) {
+  if (remote_id >= _nr_threads || !message) {
     throw std::invalid_argument("invalid reactor message target");
   }
-  auto& queue = _msg_queues[remote_id][_thread_id];
+  auto& channel = _group->channel(remote_id, _thread_id);
   {
-    std::lock_guard lock{_overflow_mutex};
-    auto& overflow = _msg_overflow[remote_id][_thread_id];
+    std::lock_guard lock{channel.overflow_mutex};
     // Once an overflow message exists, keep later messages there as well so
     // the destination observes the same FIFO order as the bounded ring.
-    if (!overflow.empty()) {
+    if (!channel.overflow.empty()) {
       if (!defer_if_full) {
         return false;
       }
       try {
-        overflow.emplace_back(msg);
+        channel.overflow.emplace_back(message);
       } catch (const std::bad_alloc&) {
         return false;
       }
-      _pending_wakeups.set(remote_id);
-      return true;
-    }
-    if (queue.try_to_emplace(msg)) {
-      _pending_wakeups.set(remote_id);
-      return true;
-    }
-    if (!defer_if_full) {
-      return false;
-    }
-    try {
-      overflow.emplace_back(msg);
-    } catch (const std::bad_alloc&) {
-      return false;
+    } else if (channel.queue.try_to_emplace(message)) {
+      // The bounded queue accepted the message.
+    } else {
+      if (!defer_if_full) {
+        return false;
+      }
+      try {
+        channel.overflow.emplace_back(message);
+      } catch (const std::bad_alloc&) {
+        return false;
+      }
     }
   }
   _pending_wakeups.set(remote_id);
@@ -525,11 +479,9 @@ void
 Reactor::wake_up_pending()
 {
   for (size_t id = 0; id < _pending_wakeups.size(); id++) {
-    if (_pending_wakeups.test(id)) {
-      if (_thread_is_sleeping[id].load(std::memory_order_seq_cst)) {
-        _thread_is_sleeping[id].store(false, std::memory_order_seq_cst);
-        wake_up(id);
-      }
+    if (_pending_wakeups.test(id) && _group->is_thread_sleeping(id)) {
+      _group->set_thread_sleeping(id, false);
+      wake_up(id);
     }
   }
   _pending_wakeups.reset();
@@ -538,10 +490,8 @@ Reactor::wake_up_pending()
 void
 Reactor::wake_up(size_t thread_id)
 {
-  if (thread_id >= _nr_threads || _efds[thread_id] < 0) {
-    throw std::invalid_argument("invalid reactor wakeup target");
-  }
-  if (::eventfd_write(_efds[thread_id], 1) < 0) {
+  auto efd = _group->eventfd(thread_id);
+  if (::eventfd_write(efd, 1) < 0) {
     if (errno == EAGAIN) {
       return;
     }
@@ -550,25 +500,19 @@ Reactor::wake_up(size_t thread_id)
 }
 
 bool
-Reactor::has_messages() const
+Reactor::has_messages()
 {
   for (size_t other = 0; other < _nr_threads; other++) {
     if (other == _thread_id) {
       continue;
     }
-    auto& queue = _msg_queues[_thread_id][other];
-    for (;;) {
-      auto* msg = queue.front();
-      if (!msg) {
-        break;
-      }
+    auto& channel = _group->channel(_thread_id, other);
+    if (channel.queue.front() != nullptr) {
       return true;
     }
-    {
-      std::lock_guard lock{_overflow_mutex};
-      if (!_msg_overflow[_thread_id][other].empty()) {
-        return true;
-      }
+    std::lock_guard lock{channel.overflow_mutex};
+    if (!channel.overflow.empty()) {
+      return true;
     }
   }
   return false;
@@ -577,48 +521,49 @@ Reactor::has_messages() const
 bool
 Reactor::poll_messages()
 {
-  bool has_messages = false;
+  bool received = false;
   for (size_t other = 0; other < _nr_threads; other++) {
     if (other == _thread_id) {
       continue;
     }
-    auto& queue = _msg_queues[_thread_id][other];
+    auto& channel = _group->channel(_thread_id, other);
     for (;;) {
-      auto* msg = queue.front();
-      if (msg) {
-        has_messages |= true;
-        auto* data = *msg;
-        queue.pop();
-        _on_message_fn(data);
-        continue;
+      auto* queued = channel.queue.front();
+      if (!queued) {
+        break;
       }
-      void* data = nullptr;
+      MessagePtr message = std::move(*queued);
+      channel.queue.pop();
+      received = true;
+      _on_message_fn(std::move(message));
+    }
+    for (;;) {
+      MessagePtr message;
       {
-        std::lock_guard lock{_overflow_mutex};
-        auto& overflow = _msg_overflow[_thread_id][other];
-        if (overflow.empty()) {
+        std::lock_guard lock{channel.overflow_mutex};
+        if (channel.overflow.empty()) {
           break;
         }
-        data = overflow.front();
-        overflow.pop_front();
+        message = std::move(channel.overflow.front());
+        channel.overflow.pop_front();
       }
-      has_messages |= true;
-      _on_message_fn(data);
+      received = true;
+      _on_message_fn(std::move(message));
     }
   }
-  return has_messages;
+  return received;
 }
 
 std::unique_ptr<Reactor>
 make_reactor(const std::string& backend,
              size_t thread_id,
-             size_t nr_threads,
+             std::shared_ptr<ReactorGroup> group,
              OnMessageFn&& on_message_fn)
 {
   if (backend == "epoll") {
-    return std::make_unique<EpollReactor>(thread_id, nr_threads, std::move(on_message_fn));
-  } else {
-    throw std::invalid_argument("unrecognized '" + backend + "' backend");
+    return std::make_unique<EpollReactor>(thread_id, std::move(group), std::move(on_message_fn));
   }
+  throw std::invalid_argument("unrecognized '" + backend + "' backend");
 }
+
 }

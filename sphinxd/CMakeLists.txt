@@ -22,6 +22,10 @@ add_executable(sphinxd
     src/logmem.cpp
     src/memory.cpp
     src/reactor.cpp
+    src/server/command_executor.cpp
+    src/server/connection.cpp
+    src/server/options.cpp
+    src/server/server.cpp
     src/sphinxd.cpp
     ${SYSTEM_SOURCES}
     ${RAGEL_protocol_OUTPUTS}

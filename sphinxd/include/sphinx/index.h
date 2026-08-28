@@ -27,7 +27,7 @@ class Index
   std::unordered_map<Key, Value> _index;
 
 public:
-  std::optional<Value> find(Key key) const
+  std::optional<Value> find(const Key& key) const
   {
     auto it = _index.find(key);
     if (it != _index.end()) {
@@ -35,7 +35,7 @@ public:
     }
     return std::nullopt;
   }
-  std::optional<Value> insert_or_assign(Key key, Value value)
+  std::optional<Value> insert_or_assign(const Key& key, Value value)
   {
     auto it = _index.find(key);
     if (it == _index.end()) {
@@ -51,7 +51,7 @@ public:
     _index.emplace(key, value);
     return old;
   }
-  void erase(Key key)
+  void erase(const Key& key)
   {
     _index.erase(key);
   }

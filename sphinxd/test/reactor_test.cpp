@@ -25,11 +25,23 @@ limitations under the License.
 #include <string>
 namespace {
 
+struct IntMessage final : sphinx::reactor::Message
+{
+  explicit IntMessage(int value)
+    : value{value}
+  {
+  }
+
+  int value;
+};
+
 class TestReactor final : public sphinx::reactor::EpollReactor
 {
 public:
-  TestReactor(size_t thread_id, size_t nr_threads, sphinx::reactor::OnMessageFn&& on_message_fn)
-    : EpollReactor{thread_id, nr_threads, std::move(on_message_fn)}
+  TestReactor(size_t thread_id,
+              std::shared_ptr<sphinx::reactor::ReactorGroup> group,
+              sphinx::reactor::OnMessageFn&& on_message_fn)
+    : EpollReactor{thread_id, std::move(group), std::move(on_message_fn)}
   {
   }
 
@@ -41,11 +53,12 @@ public:
 TEST(ReactorTest, messageCanBeQueuedBeforeRemoteReactorStarts)
 {
   size_t received = 0;
-  TestReactor source{0, 2, [](void* message) { delete static_cast<int*>(message); }};
-  ASSERT_TRUE(source.send_msg(1, new int{1}));
-  TestReactor target{1, 2, [&received](void* message) {
+  auto group = std::make_shared<sphinx::reactor::ReactorGroup>(2);
+  TestReactor source{0, group, [](sphinx::reactor::MessagePtr) {}};
+  ASSERT_TRUE(source.send_msg(1, std::make_shared<IntMessage>(1)));
+  TestReactor target{1, group, [&received](sphinx::reactor::MessagePtr message) {
                        received++;
-                       delete static_cast<int*>(message);
+                       ASSERT_EQ(std::dynamic_pointer_cast<IntMessage>(message)->value, 1);
                      }};
   ASSERT_TRUE(target.poll_messages());
   ASSERT_EQ(received, 1U);
@@ -54,18 +67,15 @@ TEST(ReactorTest, messageCanBeQueuedBeforeRemoteReactorStarts)
 TEST(ReactorTest, fullBoundedQueueReturnsBackpressureAndDrains)
 {
   size_t received = 0;
-  TestReactor source{0, 2, [](void* message) { delete static_cast<int*>(message); }};
-  TestReactor target{1, 2, [&received](void* message) {
-                       received++;
-                       delete static_cast<int*>(message);
-                     }};
+  auto group = std::make_shared<sphinx::reactor::ReactorGroup>(2);
+  TestReactor source{0, group, [](sphinx::reactor::MessagePtr) {}};
+  TestReactor target{1, group, [&received](sphinx::reactor::MessagePtr) { received++; }};
 
   size_t sent = 0;
   bool rejected = false;
   for (;;) {
-    auto* message = new int{static_cast<int>(sent)};
+    auto message = std::make_shared<IntMessage>(static_cast<int>(sent));
     if (!source.send_msg(1, message)) {
-      delete message;
       rejected = true;
       break;
     }
@@ -73,15 +83,32 @@ TEST(ReactorTest, fullBoundedQueueReturnsBackpressureAndDrains)
   }
   ASSERT_TRUE(rejected);
   ASSERT_EQ(sent, 9999U); // Queue capacity is N-1 by design.
-  auto* deferred_message = new int{0};
+  auto deferred_message = std::make_shared<IntMessage>(0);
   ASSERT_TRUE(source.send_msg_deferred(1, deferred_message));
 
   ASSERT_TRUE(target.poll_messages());
   ASSERT_EQ(received, sent + 1);
-  auto* final_message = new int{0};
+  auto final_message = std::make_shared<IntMessage>(0);
   ASSERT_TRUE(source.send_msg(1, final_message));
   ASSERT_TRUE(target.poll_messages());
   ASSERT_EQ(received, sent + 2);
+}
+
+TEST(ReactorTest, groupsOwnIndependentMessageChannels)
+{
+  size_t received = 0;
+  auto first_group = std::make_shared<sphinx::reactor::ReactorGroup>(2);
+  auto second_group = std::make_shared<sphinx::reactor::ReactorGroup>(2);
+  TestReactor first_source{0, first_group, [](sphinx::reactor::MessagePtr) {}};
+  TestReactor first_target{
+    1, first_group, [&received](sphinx::reactor::MessagePtr) { received++; }};
+  TestReactor second_target{
+    1, second_group, [&received](sphinx::reactor::MessagePtr) { received += 100; }};
+
+  ASSERT_TRUE(first_source.send_msg(1, std::make_shared<IntMessage>(1)));
+  ASSERT_TRUE(first_target.poll_messages());
+  ASSERT_FALSE(second_target.poll_messages());
+  ASSERT_EQ(received, 1U);
 }
 
 TEST(ReactorTest, tcpSocketDrainsPartialNonblockingWrites)

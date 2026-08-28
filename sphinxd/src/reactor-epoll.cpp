@@ -18,8 +18,10 @@ limitations under the License.
 
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
+#include <array>
 #include <stdexcept>
 #include <system_error>
 
@@ -53,8 +55,10 @@ public:
   }
 };
 
-EpollReactor::EpollReactor(size_t thread_id, size_t nr_threads, OnMessageFn&& on_message_fn)
-  : Reactor{thread_id, nr_threads, std::move(on_message_fn)}
+EpollReactor::EpollReactor(size_t thread_id,
+                           std::shared_ptr<ReactorGroup> group,
+                           OnMessageFn&& on_message_fn)
+  : Reactor{thread_id, std::move(group), std::move(on_message_fn)}
   , _epollfd{::epoll_create1(0)}
 {
   if (_epollfd < 0) {
@@ -69,6 +73,11 @@ EpollReactor::EpollReactor(size_t thread_id, size_t nr_threads, OnMessageFn&& on
     _epollfd = -1;
     throw;
   }
+}
+
+EpollReactor::EpollReactor(size_t thread_id, size_t nr_threads, OnMessageFn&& on_message_fn)
+  : EpollReactor{thread_id, std::make_shared<ReactorGroup>(nr_threads), std::move(on_message_fn)}
+{
 }
 
 EpollReactor::~EpollReactor()
@@ -140,14 +149,14 @@ EpollReactor::run()
       nr_events = ::epoll_wait(_epollfd, events.data(), events.size(), 0);
     } else {
       // No messages, attempt to sleep:
-      _thread_is_sleeping[_thread_id].store(true, std::memory_order_seq_cst);
+      _group->set_thread_sleeping(_thread_id, true);
       if (has_messages()) {
         // Raced with producers, restart:
-        _thread_is_sleeping[_thread_id].store(false, std::memory_order_seq_cst);
+        _group->set_thread_sleeping(_thread_id, false);
         continue;
       }
       nr_events = ::epoll_wait(_epollfd, events.data(), events.size(), -1);
-      _thread_is_sleeping[_thread_id].store(false, std::memory_order_seq_cst);
+      _group->set_thread_sleeping(_thread_id, false);
     }
     if (nr_events == -1 && errno == EINTR) {
       continue;

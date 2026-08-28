@@ -19,7 +19,6 @@ limitations under the License.
 #include <chrono>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -54,11 +53,6 @@ parse_uint64_decimal(const Blob& blob)
     value = value * 10 + numeric_digit;
   }
   return value;
-}
-
-Object::Object(const Key& key, const Blob& blob)
-  : Object{key, blob, 0, 0}
-{
 }
 
 Object::Object(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration)
@@ -129,12 +123,6 @@ Object::expire()
 }
 
 bool
-Object::is_expired() const
-{
-  return _expired != 0;
-}
-
-bool
 Object::is_expired(uint64_t now) const
 {
   return _expired != 0 || (_expiration != 0 && _expiration <= now);
@@ -194,40 +182,16 @@ Segment::is_empty() const
   return _pos == start();
 }
 
-bool
-Segment::is_full() const
-{
-  return _pos == _end;
-}
-
 size_t
 Segment::size() const
 {
   return _end - start();
 }
 
-size_t
-Segment::occupancy() const
-{
-  return _pos - start();
-}
-
-size_t
-Segment::remaining() const
-{
-  return _end - _pos;
-}
-
 void
 Segment::reset()
 {
   _pos = start();
-}
-
-Object*
-Segment::append(const Key& key, const Blob& blob)
-{
-  return append(key, blob, 0, 0);
 }
 
 Object*
@@ -338,32 +302,20 @@ Log::find_value(const Key& key)
 }
 
 bool
-Log::append(const Key& key, const Blob& blob)
-{
-  return append(key, blob, 0, 0);
-}
-
-bool
 Log::append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration)
 {
   size_t object_size = Object::size_of(key, blob);
   if (object_size > _config.segment_size) {
     return false;
   }
-restart:
-  if (try_to_append(key, blob, flags, expiration)) {
-    return true;
+  for (;;) {
+    if (try_to_append(key, blob, flags, expiration)) {
+      return true;
+    }
+    if (expire(object_size) < object_size) {
+      return false;
+    }
   }
-  if (expire(object_size) >= object_size) {
-    goto restart;
-  }
-  return false;
-}
-
-bool
-Log::try_to_append(const Key& key, const Blob& blob)
-{
-  return try_to_append(key, blob, 0, 0);
 }
 
 bool
@@ -372,10 +324,7 @@ Log::try_to_append(const Key& key, const Blob& blob, uint32_t flags, uint64_t ex
   if (try_to_append(_segment_ring[_segment_ring_tail], key, blob, flags, expiration)) {
     return true;
   }
-  auto next_tail = _segment_ring_tail + 1;
-  if (next_tail == _segment_ring.size()) {
-    next_tail = 0;
-  }
+  const auto next_tail = (_segment_ring_tail + 1) % _segment_ring.size();
   if (next_tail == _segment_ring_head) {
     /* Out of clean segments */
     return false;
@@ -428,27 +377,17 @@ Log::remove(const Key& key)
 ArithmeticResult
 Log::incr(const Key& key, uint64_t delta)
 {
-  auto current = find_value(key);
-  if (!current) {
-    return {ArithmeticStatus::NotFound, 0};
-  }
-  auto parsed = parse_uint64_decimal(current->blob);
-  if (!parsed) {
-    return {ArithmeticStatus::NonNumeric, 0};
-  }
-
-  // Unsigned arithmetic is intentionally modulo 2^64, matching the protocol
-  // contract for increment overflow.
-  auto updated = parsed.value() + delta;
-  auto encoded = std::to_string(updated);
-  if (!append(key, encoded, current->flags, current->expiration)) {
-    return {ArithmeticStatus::StorageFull, 0};
-  }
-  return {ArithmeticStatus::Success, updated};
+  return update_counter(key, delta, true);
 }
 
 ArithmeticResult
 Log::decr(const Key& key, uint64_t delta)
+{
+  return update_counter(key, delta, false);
+}
+
+ArithmeticResult
+Log::update_counter(const Key& key, uint64_t delta, bool increment)
 {
   auto current = find_value(key);
   if (!current) {
@@ -459,7 +398,14 @@ Log::decr(const Key& key, uint64_t delta)
     return {ArithmeticStatus::NonNumeric, 0};
   }
 
-  auto updated = parsed.value() < delta ? 0 : parsed.value() - delta;
+  uint64_t updated;
+  if (increment) {
+    // Unsigned arithmetic is intentionally modulo 2^64, matching the protocol
+    // contract for increment overflow.
+    updated = parsed.value() + delta;
+  } else {
+    updated = parsed.value() < delta ? 0 : parsed.value() - delta;
+  }
   auto encoded = std::to_string(updated);
   if (!append(key, encoded, current->flags, current->expiration)) {
     return {ArithmeticStatus::StorageFull, 0};
@@ -477,10 +423,7 @@ Log::expire(size_t reclaim_target)
       break;
     }
     nr_reclaimed += expire(_segment_ring[_segment_ring_head]);
-    _segment_ring_head++;
-    if (_segment_ring_head == _segment_ring.size()) {
-      _segment_ring_head = 0;
-    }
+    _segment_ring_head = (_segment_ring_head + 1) % _segment_ring.size();
     if (nr_reclaimed >= reclaim_target) {
       break;
     }
@@ -504,23 +447,4 @@ Log::expire(Segment* seg)
   return nr_reclaimed;
 }
 
-template<typename T>
-static inline int
-fls(T x)
-{
-  if (x == 0) {
-    return 0;
-  }
-  if constexpr (sizeof(T) <= sizeof(unsigned int)) {
-    return std::numeric_limits<T>::digits - __builtin_clz(static_cast<unsigned int>(x));
-  } else {
-    return std::numeric_limits<T>::digits - __builtin_clzll(static_cast<unsigned long long>(x));
-  }
-}
-
-size_t
-Log::segment_index(size_t size)
-{
-  return fls(size);
-}
 }

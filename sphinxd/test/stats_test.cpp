@@ -68,15 +68,9 @@ TEST(ServerStatsTest, CountersStartAtZero)
 TEST(ServerStatsTest, RenderUsesFixedOrder)
 {
   ServerStats stats{ServerStats::Config{"v-fixed", 8, 123456789}};
-  stats.record_get_command();
-  stats.record_get_hit();
-  stats.record_get_miss();
-  stats.record_set_command();
-  stats.record_add_command();
-  stats.record_replace_command();
-  stats.record_delete_command();
-  stats.record_incr_command();
-  stats.record_decr_command();
+  for (auto counter : kCounters) {
+    stats.increment(counter);
+  }
 
   EXPECT_EQ(stats.render(),
             "STAT version v-fixed\r\n"

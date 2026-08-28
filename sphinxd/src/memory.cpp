@@ -17,6 +17,7 @@ limitations under the License.
 #include <sphinx/memory.h>
 
 #include <system_error>
+#include <utility>
 
 #include <sys/mman.h>
 
@@ -40,24 +41,18 @@ Memory::Memory(void* addr, size_t size)
 }
 
 Memory::Memory(Memory&& other) noexcept
-  : _addr{other._addr}
-  , _size{other._size}
+  : _addr{std::exchange(other._addr, nullptr)}
+  , _size{std::exchange(other._size, 0)}
 {
-  other._addr = nullptr;
-  other._size = 0;
 }
 
 Memory&
 Memory::operator=(Memory&& other) noexcept
 {
   if (this != &other) {
-    if (_addr != nullptr && _size != 0) {
-      ::munmap(_addr, _size);
-    }
-    _addr = other._addr;
-    _size = other._size;
-    other._addr = nullptr;
-    other._size = 0;
+    release();
+    _addr = std::exchange(other._addr, nullptr);
+    _size = std::exchange(other._size, 0);
   }
   return *this;
 }
@@ -76,8 +71,16 @@ Memory::size() const
 
 Memory::~Memory()
 {
+  release();
+}
+
+void
+Memory::release() noexcept
+{
   if (_addr != nullptr && _size != 0) {
     ::munmap(_addr, _size);
   }
+  _addr = nullptr;
+  _size = 0;
 }
 }

@@ -20,12 +20,8 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
-#include <limits>
-#include <list>
 #include <optional>
-#include <set>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 /// \defgroup logmem-module Log-structured memory allocator.
@@ -76,14 +72,10 @@ public:
   static size_t size_of(size_t key_size, size_t blob_size);
   /// \brief Return the hash of \ref key.
   static Hash hash_of(const Key& key);
-  /// \brief Construct a \ref Object instance.
-  Object(const Key& key, const Blob& blob);
-  /// \brief Construct an object with Memcached metadata.
-  Object(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration);
+  /// \brief Construct an object with optional Memcached metadata.
+  Object(const Key& key, const Blob& blob, uint32_t flags = 0, uint64_t expiration = 0);
   /// \brief Expire object.
   void expire();
-  /// \brief Return true if object is expired; otherwise return false.
-  bool is_expired() const;
   /// \brief Return true if the object has reached its wall-clock expiration.
   bool is_expired(uint64_t now) const;
   /// \brief Return the flags stored with this object.
@@ -113,20 +105,12 @@ public:
   Segment(size_t size);
   /// \brief Return true if segment has no objects; otherwise return false;
   bool is_empty() const;
-  /// \brief Return true if segment is full of objects; otherwise return false;
-  bool is_full() const;
   /// \brief Returns the number of bytes allocated for objects in this segment.
   size_t size() const;
-  /// \brief Returns the number of bytes occupying the segment.
-  size_t occupancy() const;
-  /// \brief Returns the number of bytes available in the segment.
-  size_t remaining() const;
   /// \brief Reset the segment into a clean segment.
   void reset();
-  /// \brief Append an object represented by \ref key and \ref blob to the log.
-  Object* append(const Key& key, const Blob& blob);
-  /// \brief Append an object with Memcached metadata.
-  Object* append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration);
+  /// \brief Append an object with optional Memcached metadata.
+  Object* append(const Key& key, const Blob& blob, uint32_t flags = 0, uint64_t expiration = 0);
   /// \brief Return a pointer to the first object in the segment.
   Object* first_object();
   /// \brief Return a pointer to the next object immediatelly following \ref object.
@@ -184,10 +168,8 @@ public:
   std::optional<Blob> find(const Key& key) const;
   /// \brief Find a value and its Memcached metadata.
   std::optional<Value> find_value(const Key& key);
-  /// \brief Append a key-blob pair to the log.
-  bool append(const Key& key, const Blob& blob);
-  /// \brief Append a key-blob pair with Memcached metadata.
-  bool append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration);
+  /// \brief Append a key-blob pair with optional Memcached metadata.
+  bool append(const Key& key, const Blob& blob, uint32_t flags = 0, uint64_t expiration = 0);
   /// \brief Remove the given \ref key from the log.
   bool remove(const Key& key);
   /// \brief Increment a decimal counter while preserving its metadata.
@@ -196,7 +178,6 @@ public:
   ArithmeticResult decr(const Key& key, uint64_t delta);
 
 private:
-  bool try_to_append(const Key& key, const Blob& blob);
   bool try_to_append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration);
   bool try_to_append(Segment* segment,
                      const Key& key,
@@ -205,7 +186,7 @@ private:
                      uint64_t expiration);
   size_t expire(size_t reclaim_target);
   size_t expire(Segment* segment);
-  size_t segment_index(size_t size);
+  ArithmeticResult update_counter(const Key& key, uint64_t delta, bool increment);
 };
 
 /// @}

@@ -16,37 +16,34 @@ limitations under the License.
 
 #pragma once
 
-#include <sphinx/spsc_queue.h>
-
 #include <atomic>
 #include <bitset>
+#include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <optional>
-#include <set>
 #include <string>
-#include <unordered_map>
+#include <string_view>
 #include <vector>
-
-#include <sys/socket.h>
 
 namespace sphinx::reactor {
 
-struct SockAddr
+class Message
 {
-  ::sockaddr_storage addr;
-  ::socklen_t len;
-
-  SockAddr(::sockaddr_storage addr, ::socklen_t len);
-  SockAddr(const SockAddr&) = default;
-  SockAddr(SockAddr&&) = default;
-  SockAddr& operator=(const SockAddr&) = default;
+public:
+  virtual ~Message() = default;
 };
 
+// Messages are reference-counted so a failed non-deferred send leaves the
+// caller's object untouched.  The callback receives the same owning handle,
+// and no raw pointer crosses a reactor boundary.
+using MessagePtr = std::shared_ptr<Message>;
+using OnMessageFn = std::function<void(MessagePtr)>;
+
 using TcpAcceptFn = std::function<void(int sockfd)>;
+
+class EpollReactor;
 
 struct Pollable
 {
@@ -72,7 +69,7 @@ public:
   virtual ~Socket();
 
   int fd() const;
-  virtual bool send(const char* msg, size_t len, std::optional<SockAddr> dst = std::nullopt) = 0;
+  virtual bool send(const char* msg, size_t len) = 0;
 };
 
 class TcpListener : public Pollable
@@ -113,56 +110,54 @@ public:
   explicit TcpSocket(int sockfd, TcpRecvFn&& recv_fn);
   ~TcpSocket();
   void set_tcp_nodelay(bool nodelay);
-  bool send(const char* msg, size_t len, std::optional<SockAddr> dst = std::nullopt) override;
+  bool send(const char* msg, size_t len) override;
   bool closed() const;
   void on_pollin() override;
   bool on_pollout() override;
 
 private:
-  void recv();
   bool _closed = false;
 };
 
-class UdpSocket;
+constexpr int max_nr_threads = 64;
+constexpr size_t reactor_message_queue_size = 10000;
 
-using UdpRecvFn =
-  std::function<void(std::shared_ptr<UdpSocket>, std::string_view, std::optional<SockAddr>)>;
-
-class UdpSocket
-  : public Socket
-  , public std::enable_shared_from_this<UdpSocket>
+// Owns all state shared by a set of reactors.  A group is deliberately
+// explicit: eventfds, bounded channels and overflow mailboxes live exactly as
+// long as the group, rather than in process-global Reactor statics.
+class ReactorGroup
 {
-  UdpRecvFn _recv_fn;
+  struct Channel;
+
+  size_t _nr_threads;
+  std::vector<int> _eventfds;
+  std::unique_ptr<std::atomic<bool>[]> _thread_is_sleeping;
+  std::vector<std::unique_ptr<Channel>> _channels;
+  std::mutex _channels_mutex;
+
+  Channel& channel(size_t destination, size_t source);
+  void initialize_thread(size_t thread_id);
+  int eventfd(size_t thread_id) const;
+  bool is_thread_sleeping(size_t thread_id) const;
+  void set_thread_sleeping(size_t thread_id, bool sleeping);
+
+  friend class Reactor;
+  friend class EpollReactor;
 
 public:
-  explicit UdpSocket(int sockfd, UdpRecvFn&& recv_fn);
-  ~UdpSocket();
-  bool send(const char* msg, size_t len, std::optional<SockAddr> dst) override;
-  void on_pollin() override;
-  bool on_pollout() override;
+  explicit ReactorGroup(size_t nr_threads);
+  ~ReactorGroup();
+
+  ReactorGroup(const ReactorGroup&) = delete;
+  ReactorGroup& operator=(const ReactorGroup&) = delete;
+
+  size_t nr_threads() const noexcept;
 };
-
-std::shared_ptr<UdpSocket>
-make_udp_socket(const std::string& iface, int port, UdpRecvFn&& recv_fn);
-
-using OnMessageFn = std::function<void(void*)>;
-
-constexpr int max_nr_threads = 64;
 
 class Reactor
 {
 protected:
-  static int _efds[max_nr_threads];
-  static pthread_t _pthread_ids[max_nr_threads];
-  static std::atomic<bool> _thread_is_sleeping[max_nr_threads];
-  static constexpr int _msg_queue_size = 10000;
-  static sphinx::spsc::Queue<void*, _msg_queue_size> _msg_queues[max_nr_threads][max_nr_threads];
-  static std::mutex _state_mutex;
-  static std::mutex _overflow_mutex;
-  static std::deque<void*> _msg_overflow[max_nr_threads][max_nr_threads];
-  static size_t _initialized_threads;
-  static size_t _active_reactors;
-
+  std::shared_ptr<ReactorGroup> _group;
   int _efd = -1;
   size_t _thread_id;
   size_t _nr_threads;
@@ -172,12 +167,16 @@ protected:
 public:
   static std::string default_backend();
 
-  Reactor(size_t thread_id, size_t nr_threads, OnMessageFn&& on_message_fn);
-  virtual ~Reactor();
+  Reactor(size_t thread_id, std::shared_ptr<ReactorGroup> group, OnMessageFn&& on_message_fn);
+  virtual ~Reactor() = default;
   size_t thread_id() const;
   size_t nr_threads() const;
-  bool send_msg(size_t thread, void* data);
-  bool send_msg_deferred(size_t thread, void* data);
+  // A false return means that the message was not accepted and remains owned
+  // by the caller.  send_msg reports bounded-queue backpressure; the deferred
+  // variant additionally reports overflow-mailbox allocation failure.  The
+  // caller must complete or retry a request when the deferred send fails.
+  bool send_msg(size_t thread, const MessagePtr& message);
+  bool send_msg_deferred(size_t thread, const MessagePtr& message);
   virtual void accept(std::shared_ptr<TcpListener>&& listener) = 0;
   virtual void recv(std::shared_ptr<Socket>&& socket) = 0;
   virtual void send(std::shared_ptr<Socket> socket) = 0;
@@ -187,14 +186,14 @@ public:
 protected:
   void wake_up_pending();
   void wake_up(size_t thread_id);
-  bool send_msg_impl(size_t thread, void* data, bool defer_if_full);
-  bool has_messages() const;
+  bool send_msg_impl(size_t thread, const MessagePtr& message, bool defer_if_full);
+  bool has_messages();
   bool poll_messages();
 };
 
 std::unique_ptr<Reactor>
 make_reactor(const std::string& backend,
              size_t thread_id,
-             size_t nr_threads,
+             std::shared_ptr<ReactorGroup> group,
              OnMessageFn&& on_message_fn);
 }
