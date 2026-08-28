@@ -257,7 +257,7 @@ TEST(ClusterClientTest, ConnectionReuseAvoidsASecondAccept) {
   std::atomic<int> accepts = 0;
   FakeServer server{[&](int client) {
     accepts.fetch_add(1);
-    for (;;) {
+    while (true) {
       auto request = read_request(client);
       if (request.rfind("set ", 0) == 0) {
         send_chunks(client, "STORED\r\n");

@@ -111,7 +111,7 @@ void Server::recv(const std::shared_ptr<Connection>& connection,
   connection->receive_buffer().append(data);
 
   // 4. 循环解析并处理所有完整的命令帧
-  for (;;) {
+  while (true) {
     auto view = connection->receive_buffer().string_view();
     auto line_end = view.find('\n');
     if (line_end == std::string_view::npos) {

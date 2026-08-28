@@ -17,10 +17,7 @@ std::optional<std::string> Connection::add_multi_get_piece(uint64_t sequence, ui
     return std::nullopt;
   }
 
-  [[maybe_unused]] auto& [_, state] = *it;
-  if (state.pending == 0) {
-    return std::nullopt;
-  }
+  auto& state = it->second;
 
   // 2. 记录分片或标记失败
   if (failed || key_index >= state.pieces.size()) {
@@ -64,7 +61,7 @@ Connection::WriteStatus Connection::enqueue_response(uint64_t sequence, std::str
   _pending_responses.emplace(sequence, std::string{payload});
 
   // 3. 循环按 sequence 严格单调递增顺序写出就绪响应
-  for (;;) {
+  while (true) {
     auto it = _pending_responses.find(_next_response_sequence);
     if (it == _pending_responses.end()) {
       // 下一期望序号尚未到达，保持等待

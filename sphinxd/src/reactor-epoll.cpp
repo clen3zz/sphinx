@@ -133,7 +133,7 @@ void EpollReactor::close(std::shared_ptr<Socket> socket) {
 void EpollReactor::run() {
   std::array<epoll_event, 128> events;
 
-  for (;;) {
+  while (true) {
     // 1. 唤醒其他处于睡眠状态的 Reactor 线程
     wake_up_pending();
 

@@ -107,7 +107,7 @@ class TcpTransport final {
 
   // 从接收流中读取单行以 \r\n 结尾的协议文本
   std::string read_line() {
-    for (;;) {
+    while (true) {
       // 1. 尝试在当前接收缓冲区中寻找行终结符
       if (const auto separator = _read_buffer.find("\r\n"); separator != std::string::npos) {
         const auto line_end = separator + 2;
@@ -230,7 +230,7 @@ class TcpTransport final {
     const auto timeout =
         std::clamp<int64_t>(_timeout.count(), int64_t{1}, std::numeric_limits<int>::max());
 
-    for (;;) {
+    while (true) {
       const auto result = ::poll(&descriptor, 1, static_cast<int>(timeout));
 
       if (result <= 0) {

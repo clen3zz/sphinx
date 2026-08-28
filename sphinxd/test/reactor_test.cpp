@@ -50,7 +50,7 @@ TEST(ReactorTest, fullBoundedQueueReturnsBackpressureAndDrains) {
 
   size_t sent = 0;
   bool rejected = false;
-  for (;;) {
+  while (true) {
     auto message = std::make_shared<IntMessage>(static_cast<int>(sent));
     if (!source.send_msg(1, message)) {
       rejected = true;
@@ -104,7 +104,7 @@ TEST(ReactorTest, tcpSocketDrainsPartialNonblockingWrites) {
   received.reserve(payload.size());
   for (size_t attempt = 0; attempt < 10000 && received.size() < payload.size(); attempt++) {
     char buf[8192];
-    for (;;) {
+    while (true) {
       auto nr = ::recv(fds[1], buf, sizeof(buf), MSG_DONTWAIT);
       if (nr > 0) {
         received.append(buf, static_cast<size_t>(nr));

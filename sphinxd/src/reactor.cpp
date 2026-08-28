@@ -57,7 +57,7 @@ bool TcpListener::on_pollout() {
 
 // 非阻塞循环 accept 所有挂起的新连接
 void TcpListener::accept() {
-  for (;;) {
+  while (true) {
     // 采用 accept4 原子创建非阻塞与进程退出自动关闭的连接套接字
     int connfd = ::accept4(_sockfd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
 
@@ -221,7 +221,7 @@ void TcpSocket::on_pollin() {
   constexpr size_t rx_buf_size = size_t{256} * 1024;
   std::array<char, rx_buf_size> rx_buf;
 
-  for (;;) {
+  while (true) {
     ssize_t nr = ::recv(_sockfd, rx_buf.data(), rx_buf.size(), MSG_DONTWAIT);
 
     // 成功读取到有效数据
@@ -535,7 +535,7 @@ bool Reactor::poll_messages() {
     auto& channel = _group->channel(_thread_id, other);
 
     // 1. 优先消费无锁 SPSC 环形队列中的消息
-    for (;;) {
+    while (true) {
       auto* queued = channel.queue.front();
       if (!queued) {
         break;
@@ -548,7 +548,7 @@ bool Reactor::poll_messages() {
     }
 
     // 2. 消费溢出队列中的积压消息
-    for (;;) {
+    while (true) {
       MessagePtr message;
       {
         std::scoped_lock lock{channel.overflow_mutex};

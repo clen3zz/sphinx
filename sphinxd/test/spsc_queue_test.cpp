@@ -24,7 +24,7 @@ TEST(QueueTest, producer_consumer) {
   }};
   std::thread consumer{[&queue]() {
     for (int i = 0; i < nr_iterations; i++) {
-      for (;;) {
+      while (true) {
         auto* item = queue.front();
         if (item) {
           ASSERT_EQ(i, *item);

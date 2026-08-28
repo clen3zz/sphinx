@@ -290,7 +290,7 @@ bool Log::append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expi
   }
 
   // 循环尝试追加写入；若空间不足则触发段淘汰回收
-  for (;;) {
+  while (true) {
     if (try_to_append(key, blob, flags, expiration)) {
       return true;
     }
