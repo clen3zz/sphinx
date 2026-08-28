@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #include <sphinx/reactor-epoll.h>
 
@@ -165,7 +152,7 @@ EpollReactor::run()
       throw std::system_error(errno, std::system_category(), "epoll_wait");
     }
     for (int i = 0; i < nr_events; i++) {
-      epoll_event* event = &events[i];
+      epoll_event* event = &events[static_cast<size_t>(i)];
       auto fd = event->data.fd;
       auto it = _pollables.find(fd);
       if (it == _pollables.end()) {
@@ -173,13 +160,13 @@ EpollReactor::run()
         continue;
       }
       auto pollable = it->second;
-      if (event->events & (EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP)) {
+      if ((event->events & (EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP)) != 0) {
         pollable->on_pollin();
       }
       if (_pollables.find(fd) == _pollables.end()) {
         continue;
       }
-      if (event->events & EPOLLOUT) {
+      if ((event->events & EPOLLOUT) != 0) {
         if (pollable->on_pollout()) {
           update_epoll(pollable.get(), EPOLLIN);
         }

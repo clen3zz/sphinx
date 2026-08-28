@@ -11,7 +11,7 @@
 #include <variant>
 namespace sphinx::server {
 
-// Owning commands can cross the reactor queue without borrowing parser data.
+// 命令自行持有数据，因此跨越反应器队列时无需借用解析器数据。
 struct Command
 {
   uint64_t connection_id = 0;
@@ -25,7 +25,7 @@ struct Command
   uint64_t delta = 0;
   bool multi_get = false;
   uint32_t key_index = 0;
-  Command(uint64_t id,
+  Command(uint64_t id, // NOLINT(bugprone-easily-swappable-parameters)：构造点使用明确的字段顺序
           uint64_t request,
           size_t thread,
           sphinx::memcache::Opcode opcode,
@@ -38,7 +38,7 @@ struct Command
   {
   }
 };
-// One response type covers complete replies and multi-key pieces.
+// 同一种响应类型同时表示完整回复和多键回复片段。
 struct Response
 {
   uint64_t connection_id = 0;
@@ -48,7 +48,7 @@ struct Response
   uint32_t key_index = 0;
 };
 using MessagePayload = std::variant<Command, Response>;
-// Keep legal payload types explicit at the reactor boundary.
+// 在反应器边界明确限定合法的载荷类型。
 struct Message : sphinx::reactor::Message
 {
   MessagePayload payload;

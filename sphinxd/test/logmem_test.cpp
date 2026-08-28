@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
 
@@ -23,8 +10,10 @@ limitations under the License.
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <string>
+#include <string_view>
 
 static std::string
 make_random(size_t len)
@@ -32,7 +21,7 @@ make_random(size_t len)
   auto make_random_char = []() {
     static const char chars[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     const size_t nr_chars = sizeof(chars) - 1;
-    return chars[rand() % nr_chars];
+    return chars[static_cast<size_t>(rand()) % nr_chars];
   };
   std::string str(len, 0);
   std::generate_n(str.begin(), len, make_random_char);
@@ -81,8 +70,7 @@ TEST(LogTest, overwrite_rebinds_index_before_segment_reclamation)
   LogConfig cfg{memory.data(), memory.size(), 64};
   Log log{cfg};
 
-  // Each object occupies one segment.  Repeatedly overwriting the same key
-  // therefore exercises both index-key rebinding and old-segment reclamation.
+  // 每个对象占用一个段。反复覆盖同一个键可同时验证索引键重绑定和旧段回收。
   for (int i = 0; i < 12; i++) {
     auto value = std::string{"value-"} + std::to_string(i);
     ASSERT_TRUE(log.append("same-key", value));
@@ -209,9 +197,8 @@ TEST(LogTest, arithmetic_rejects_non_decimal_values_without_mutating_metadata)
                         std::chrono::system_clock::now().time_since_epoch())
                         .count());
 
-  // Counters accept only a non-empty sequence of ASCII decimal digits.  In
-  // particular, signs, whitespace, and decimal notation must not be silently
-  // normalized by incr/decr.
+  // 计数器只接受非空 ASCII 十进制数字序列。
+  // 特别是，符号、空白和十进制表示法不能在 incr/decr 中被静默规范化。
   const std::array<std::string_view, 8> invalid_values = {
     "-1",
     "+1",
@@ -240,8 +227,7 @@ TEST(LogTest, arithmetic_rejects_non_decimal_values_without_mutating_metadata)
     EXPECT_EQ(unchanged->expiration, expiration);
   }
 
-  // Rejecting an invalid value must not make an already expired object
-  // visible; both operations remain ordinary misses.
+  // 拒绝无效值不应让已过期对象重新可见；两种操作仍应视为普通未命中。
   ASSERT_TRUE(log.append("expired-invalid", "-1", 77, 1));
   ASSERT_FALSE(log.find_value("expired-invalid").has_value());
   ASSERT_EQ(log.incr("expired-invalid", 1).status, ArithmeticStatus::NotFound);

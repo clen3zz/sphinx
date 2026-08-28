@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+build_dir=${1:-build}
+
+if ! command -v clang-tidy >/dev/null 2>&1; then
+  echo "clang-tidy was not found" >&2
+  exit 1
+fi
+
+if [ ! -f "$build_dir/compile_commands.json" ]; then
+  echo "missing $build_dir/compile_commands.json; configure the project first" >&2
+  exit 1
+fi
+
+jobs=$(nproc 2>/dev/null || echo 4)
+
+find sphinxd/src -type f -name "*.cpp" -print0 |
+  xargs -0 -r -P "$jobs" -n 1 clang-tidy --quiet --config-file=.clang-tidy -p "$build_dir"

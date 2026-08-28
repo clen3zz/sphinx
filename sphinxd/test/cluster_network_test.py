@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Three-node smoke test for the static client-side cluster split."""
+# SPDX-License-Identifier: Apache-2.0
+"""静态客户端集群分片的三节点冒烟测试。"""
 
 from __future__ import annotations
 

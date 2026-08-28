@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -72,21 +59,21 @@ public:
   static size_t size_of(size_t key_size, size_t blob_size);
   /// \brief Return the hash of \ref key.
   static Hash hash_of(const Key& key);
-  /// \brief Construct an object with optional Memcached metadata.
+  /// \brief 使用可选的 Memcached 元数据构造对象。
   Object(const Key& key, const Blob& blob, uint32_t flags = 0, uint64_t expiration = 0);
   /// \brief Expire object.
   void expire();
-  /// \brief Return true if the object has reached its wall-clock expiration.
+  /// \brief 返回对象是否已达到其墙钟过期时间。
   bool is_expired(uint64_t now) const;
-  /// \brief Return the flags stored with this object.
+  /// \brief 返回对象中存储的标志位。
   uint32_t flags() const;
-  /// \brief Return the absolute Unix expiration time, or zero for no expiry.
+  /// \brief 返回绝对 Unix 过期时间；零表示永不过期。
   uint64_t expiration() const;
   /// \brief Returns the size of the object in memory.
   size_t size() const;
-  /// \brief Return object key.
+  /// \brief 返回对象键。
   Key key() const;
-  /// \brief Return object blob.
+  /// \brief 返回对象数据。
   Blob blob() const;
 
 private:
@@ -109,7 +96,7 @@ public:
   size_t size() const;
   /// \brief Reset the segment into a clean segment.
   void reset();
-  /// \brief Append an object with optional Memcached metadata.
+  /// \brief 使用可选的 Memcached 元数据追加对象。
   Object* append(const Key& key, const Blob& blob, uint32_t flags = 0, uint64_t expiration = 0);
   /// \brief Return a pointer to the first object in the segment.
   Object* first_object();
@@ -128,7 +115,7 @@ struct LogConfig
   size_t segment_size;
 };
 
-/// A value and its Memcached metadata.
+/// 一个值及其 Memcached 元数据。
 struct Value
 {
   Blob blob;
@@ -136,7 +123,7 @@ struct Value
   uint64_t expiration;
 };
 
-/// The outcome of an atomic counter update.
+/// 原子计数器更新的结果状态。
 enum class ArithmeticStatus
 {
   Success,
@@ -145,7 +132,7 @@ enum class ArithmeticStatus
   StorageFull,
 };
 
-/// The result of an atomic counter update.
+/// 原子计数器更新的结果。
 struct ArithmeticResult
 {
   ArithmeticStatus status;
@@ -166,15 +153,15 @@ public:
   Log(const LogConfig& config);
   /// \brief Find for a blob for a given \ref key from the log.
   std::optional<Blob> find(const Key& key) const;
-  /// \brief Find a value and its Memcached metadata.
+  /// \brief 查找值及其 Memcached 元数据。
   std::optional<Value> find_value(const Key& key);
-  /// \brief Append a key-blob pair with optional Memcached metadata.
+  /// \brief 追加带可选 Memcached 元数据的键值对。
   bool append(const Key& key, const Blob& blob, uint32_t flags = 0, uint64_t expiration = 0);
   /// \brief Remove the given \ref key from the log.
   bool remove(const Key& key);
-  /// \brief Increment a decimal counter while preserving its metadata.
+  /// \brief 在保留元数据的同时递增十进制计数器。
   ArithmeticResult incr(const Key& key, uint64_t delta);
-  /// \brief Decrement a decimal counter while preserving its metadata.
+  /// \brief 在保留元数据的同时递减十进制计数器。
   ArithmeticResult decr(const Key& key, uint64_t delta);
 
 private:

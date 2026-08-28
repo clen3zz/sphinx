@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #include "server/config.h"
 #include "server/server.h"
@@ -64,7 +51,8 @@ run_server_thread(size_t thread_id,
     }
 
     auto memory_size = size_t(config.memory_limit) * 1024 * 1024;
-    auto memory = sphinx::memory::Memory::mmap(memory_size / config.nr_threads);
+    auto memory = sphinx::memory::Memory::mmap(
+      memory_size / static_cast<size_t>(config.nr_threads));
     sphinx::logmem::LogConfig log_config;
     log_config.segment_size = size_t(config.segment_size) * 1024 * 1024;
     log_config.memory_ptr = reinterpret_cast<char*>(memory.addr());
@@ -74,8 +62,8 @@ run_server_thread(size_t thread_id,
       log_config, config.backend, thread_id, reactor_group, stats, mget_queue_failure_used};
     server.serve(config);
   } catch (const std::exception& error) {
-    std::cerr << "error: " << error.what() << std::endl;
-    std::exit(EXIT_FAILURE);
+    std::cerr << "error: " << error.what() << '\n' << std::flush;
+    std::exit(EXIT_FAILURE); // NOLINT(concurrency-mt-unsafe)
   }
 }
 
@@ -131,7 +119,7 @@ main(int argc, char* argv[])
       worker.join();
     }
   } catch (const std::exception& error) {
-    std::cerr << "error: " << error.what() << std::endl;
+    std::cerr << "error: " << error.what() << '\n' << std::flush;
     return EXIT_FAILURE;
   }
   return EXIT_SUCCESS;

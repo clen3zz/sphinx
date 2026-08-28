@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
 
 #include <sphinx/cluster_client.h>
@@ -259,7 +260,7 @@ TEST(ClusterClientTest, HandlesPartialResponsesAndBinaryValues)
   const auto value = client.get("key");
   ASSERT_TRUE(value.has_value());
   const std::string expected{"\0x\r\n", 4};
-  EXPECT_EQ(*value, expected);
+  EXPECT_EQ(value, std::optional<std::string>{expected});
 }
 
 TEST(ClusterClientTest, GetMissReturnsNullopt)

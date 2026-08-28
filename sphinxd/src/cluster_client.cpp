@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include <sphinx/cluster_client.h>
 
 #include <algorithm>
@@ -20,7 +21,13 @@
 namespace sphinx::cluster {
 namespace {
 
-constexpr size_t kMaxResponseLine = 64 * 1024;
+constexpr size_t kMaxResponseLine = size_t{64} * 1024;
+
+inline std::string
+errno_message(int err)
+{
+  return std::generic_category().message(err);
+}
 
 [[noreturn]] void
 throw_node_error(std::string_view target, std::string_view detail)
@@ -35,7 +42,7 @@ quote(std::string_view value)
 }
 
 uint64_t
-parse_decimal(std::string_view value, std::string_view target, const char* field)
+parse_decimal(std::string_view target, const char* field, std::string_view value)
 {
   uint64_t result = 0;
   const auto parsed = std::from_chars(value.data(), value.data() + value.size(), result);
@@ -100,7 +107,7 @@ public:
       if (count == 0) {
         throw_node_error(_target, "connection closed while writing");
       }
-      throw_node_error(_target, std::strerror(errno));
+      throw_node_error(_target, errno_message(errno));
     }
   }
 
@@ -169,11 +176,11 @@ private:
   {
     const auto fd = ::socket(address->ai_family, address->ai_socktype, address->ai_protocol);
     if (fd < 0) {
-      *last_error = std::strerror(errno);
+      *last_error = errno_message(errno);
       return -1;
     }
     const auto fail = [&](int error) {
-      *last_error = std::strerror(error);
+      *last_error = errno_message(error);
       ::close(fd);
       return -1;
     };
@@ -217,7 +224,7 @@ private:
         if (errno == EINTR) {
           continue;
         }
-        throw_node_error(_target, std::strerror(errno));
+        throw_node_error(_target, errno_message(errno));
       }
       if ((descriptor.revents & (events | POLLERR | POLLHUP | POLLNVAL)) != 0) {
         return;
@@ -240,7 +247,7 @@ private:
     }
     if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
       return;
-    throw_node_error(_target, std::strerror(errno));
+    throw_node_error(_target, errno_message(errno));
   }
 
   void close()
@@ -261,7 +268,7 @@ private:
 };
 
 size_t
-parse_value_header(std::string_view response, std::string_view key, std::string_view target)
+parse_value_header(std::string_view target, const std::string& response, std::string_view key)
 {
   if (response.size() < 10 || response.compare(0, 6, "VALUE ") != 0 ||
       response.compare(response.size() - 2, 2, "\r\n") != 0) {
@@ -280,7 +287,7 @@ parse_value_header(std::string_view response, std::string_view key, std::string_
   }
 
   const auto flags =
-    parse_decimal(body.substr(first_space + 1, second_space - first_space - 1), target, "flags");
+    parse_decimal(target, "flags", body.substr(first_space + 1, second_space - first_space - 1));
   if (flags > std::numeric_limits<uint32_t>::max()) {
     throw_node_error(target, "flags are out of range in response");
   }
@@ -289,7 +296,7 @@ parse_value_header(std::string_view response, std::string_view key, std::string_
   if (length.empty()) {
     throw_node_error(target, "missing value length in get response");
   }
-  const auto bytes = parse_decimal(length, target, "value length");
+  const auto bytes = parse_decimal(target, "value length", length);
   if (bytes > std::numeric_limits<size_t>::max()) {
     throw_node_error(target, "value length is too large");
   }
@@ -335,7 +342,7 @@ public:
     if (header == "END\r\n") {
       return std::nullopt;
     }
-    const auto value_size = parse_value_header(header, key, _transport.target());
+    const auto value_size = parse_value_header(_transport.target(), header, key);
 
     auto value = _transport.read_exact(value_size);
     if (_transport.read_exact(2) != "\r\n") {

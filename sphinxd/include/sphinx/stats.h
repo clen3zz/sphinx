@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -25,11 +12,10 @@ limitations under the License.
 namespace sphinx::stats {
 
 /**
- * Process-wide counters used by the small ASCII stats response.
+ * 用于生成简易 ASCII stats 响应的进程级计数器。
  *
- * A ServerStats instance is intended to be shared by every worker.  Counter
- * updates are deliberately relaxed: stats is a weakly-consistent observation
- * and does not participate in request synchronization.
+ * 每个工作线程都应共享同一个 ServerStats 实例。计数器更新有意采用 relaxed
+ * 顺序：stats 是弱一致性观察，不参与请求同步。
  */
 class ServerStats
 {
@@ -67,7 +53,7 @@ public:
 
   uint64_t counter(Counter counter) const noexcept;
 
-  // Return the fixed-order Memcached ASCII stats response.
+  // 返回固定顺序的 Memcached ASCII stats 响应。
   std::string render() const;
 
 private:

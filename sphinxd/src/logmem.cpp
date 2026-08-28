@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #include <sphinx/logmem.h>
 
@@ -20,6 +7,7 @@ limitations under the License.
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -106,7 +94,7 @@ Object::hash_of(const Key& key)
     return 0;
   }
   uint32_t hash = 0;
-  MurmurHash3_x86_32(key.data(), key.size(), 1, &hash);
+  MurmurHash3_x86_32(key.data(), static_cast<int>(key.size()), 1, &hash);
   return hash;
 }
 
@@ -185,7 +173,7 @@ Segment::is_empty() const
 size_t
 Segment::size() const
 {
-  return _end - start();
+  return static_cast<size_t>(_end - start());
 }
 
 void
@@ -198,7 +186,7 @@ Object*
 Segment::append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration)
 {
   size_t object_size = Object::size_of(key, blob);
-  size_t remaining = _end - _pos;
+  size_t remaining = static_cast<size_t>(_end - _pos);
   if (remaining >= object_size) {
     Object* object = new (_pos) Object(key, blob, flags, expiration);
     _pos += object_size;
@@ -289,8 +277,8 @@ Log::find_value(const Key& key)
   }
   auto* object = search.value();
   if (object->is_expired(current_time_seconds())) {
-    // The index may still point at a logically expired object until this lookup.
-    // Remove it only if it is still the current object for the key.
+    // 索引可能会一直指向逻辑上已过期的对象，直到本次查找。
+    // 仅当索引仍指向该键的当前对象时才删除它。
     const auto current = _index.find(object->key());
     if (current && current.value() == object) {
       _index.erase(object->key());
@@ -360,8 +348,8 @@ Log::remove(const Key& key)
   }
   auto* object = value_opt.value();
   if (object->is_expired(current_time_seconds())) {
-    // An expired object is a miss.  Remove the index entry only when it still
-    // points at this object; a later append may already have rebound the key.
+    // 已过期对象按未命中处理；仅当索引仍指向该对象时才移除索引项。
+    // 后续追加可能已使该键重新绑定到其他对象。
     const auto current = _index.find(object->key());
     if (current && current.value() == object) {
       _index.erase(object->key());
@@ -400,8 +388,7 @@ Log::update_counter(const Key& key, uint64_t delta, bool increment)
 
   uint64_t updated;
   if (increment) {
-    // Unsigned arithmetic is intentionally modulo 2^64, matching the protocol
-    // contract for increment overflow.
+    // 无符号算术有意采用模 2^64 运算，以匹配递增溢出时的协议约定。
     updated = parsed.value() + delta;
   } else {
     updated = parsed.value() < delta ? 0 : parsed.value() - delta;

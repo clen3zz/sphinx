@@ -1,4 +1,23 @@
-/build
+# Build directories
+/build/
+/cmake-build-*/
+/out/
+compile_commands.json
+
+# IDE and Editor files
 /.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python caches and artifacts
 __pycache__/
 *.py[cod]
+*$py.class
+.pytest_cache/
+
+# Local benchmark output
+/benchmark-results/
+benchmark-smoke/

@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -74,8 +61,7 @@ public:
       return false;
     }
     _data[tail] = T{std::forward<Args>(args)...};
-    // The release fence here ensures that message is constructed before we update the tail. This
-    // prevents the consumer from reading stale messages.
+    // release 存储确保消息构造完成后才更新 tail，避免消费者读取过期消息。
     _tail.store(next_tail, std::memory_order_release);
     return true;
   }
@@ -94,8 +80,7 @@ public:
     if (next_head == N) {
       next_head = 0;
     }
-    // The release store ensures that the consumer has finished reading the
-    // slot before the producer is allowed to reuse it.
+    // release 存储确保消费者读完槽位后，生产者才可以重新使用它。
     _head.store(next_head, std::memory_order_release);
   }
 };

@@ -13,11 +13,11 @@
 #include <vector>
 namespace sphinx::server {
 
-// Owns per-client receive state, response ordering, and multi-get assembly.
+// 管理每个客户端的接收状态、响应顺序和多键查询结果组装。
 class Connection final
 {
 public:
-  enum class WriteStatus
+  enum class WriteStatus : uint8_t
   {
     Complete,
     SocketUnavailable,
@@ -70,12 +70,13 @@ public:
     }
   }
   void begin_multi_get(uint64_t sequence, size_t key_count);
-  // Returns a response only after all key pieces arrive.
-  std::optional<std::string> add_multi_get_piece(uint64_t sequence,
-                                                 uint32_t key_index,
-                                                 std::string_view payload,
-                                                 bool failed = false);
-  // Queue a response and flush contiguous entries; Reactor handles partial I/O.
+  // 仅在所有键的回复片段都到达后返回响应。
+  std::optional<std::string> add_multi_get_piece(
+    uint64_t sequence, // NOLINT(bugprone-easily-swappable-parameters)：参数含义由调用处明确区分
+    uint32_t key_index,
+    std::string_view payload,
+    bool failed = false);
+  // 将响应入队并发送连续就绪的条目；部分 I/O 由反应器处理。
   WriteStatus enqueue_response(uint64_t sequence,
                                std::string_view payload,
                                sphinx::reactor::Reactor& reactor);

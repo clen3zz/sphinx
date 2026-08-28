@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Deterministic black-box checks for the single-node TCP service."""
 
 import concurrent.futures
@@ -168,7 +169,7 @@ def run_basic(address):
         if client.get_response() != ("foo", 9, b"baz"):
             raise AssertionError("replace did not preserve new flags/value")
 
-        # An exptime above 30 days is an absolute Unix timestamp.
+        # 大于 30 天的 exptime 表示绝对 Unix 时间戳。
         expired = str(int(time.time()) - 1).encode()
         client.send(b"set old 7 " + expired + b" 3\r\nold\r\n")
         if client.storage_response() != "STORED\r\n":
@@ -177,7 +178,7 @@ def run_basic(address):
         if client.get_response() is not None:
             raise AssertionError("already-expired value was returned")
 
-        # A relative one-second expiry is visible first, then disappears.
+        # 相对一秒的过期值先可见，随后消失。
         client.send(b"set ttl 11 1 3\r\nttl\r\n")
         if client.storage_response() != "STORED\r\n":
             raise AssertionError("relative-expiration set failed")
@@ -614,9 +615,8 @@ def run_suite(executable, threads):
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, threads + 2)) as pool:
             list(pool.map(lambda worker: run_concurrent(address, worker), range(8)))
         if threads >= 8:
-            # More requests than one inter-core queue can hold, with responses
-            # consumed continuously.  This exercises backpressure without
-            # allowing a full queue to abort or strand a request.
+            # 请求数超过单个核间队列容量，同时持续消费响应。这样可以测试背压，
+            # 又不会因队列已满而中止或遗留请求。
             run_pipeline(address, 12000)
     finally:
         stop_server(process)

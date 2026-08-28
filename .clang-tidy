@@ -1,0 +1,51 @@
+Checks: >
+  -*,
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  readability-identifier-naming,
+  concurrency-mt-unsafe,
+  modernize-use-override,
+  modernize-use-nullptr,
+  modernize-make-unique,
+  modernize-make-shared,
+  modernize-loop-convert,
+  modernize-deprecated-headers,
+  modernize-use-equals-default,
+  modernize-use-equals-delete,
+  readability-redundant-smartptr-get,
+  readability-redundant-string-cstr,
+  readability-container-size-empty,
+  readability-simplify-boolean-expr,
+  readability-make-member-function-const,
+  misc-redundant-expression,
+  misc-unused-using-decls,
+  -bugprone-easily-swappable-parameters,
+  -performance-enum-size,
+  -portability-avoid-pragma-once
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*/sphinxd/(include|src)/.*'
+ExcludeHeaderFilterRegex: '.*/(third_party/.*|MurmurHash3\.(h|cpp)|sphinxd/include/sphinx/protocol\.h)'
+FormatStyle: file
+CheckOptions:
+  readability-identifier-naming.NamespaceCase: 'lower_case'
+  readability-identifier-naming.MacroDefinitionCase: 'UPPER_CASE'
+  readability-identifier-naming.ClassCase: 'CamelCase'
+  readability-identifier-naming.StructCase: 'CamelCase'
+  readability-identifier-naming.EnumCase: 'CamelCase'
+  readability-identifier-naming.EnumConstantCase: 'CamelCase'
+  readability-identifier-naming.FunctionCase: 'lower_case'
+  readability-identifier-naming.MethodCase: 'lower_case'
+  readability-identifier-naming.ParameterCase: 'lower_case'
+  readability-identifier-naming.VariableCase: 'lower_case'
+  readability-identifier-naming.PrivateMemberPrefix: '_'
+  readability-identifier-naming.PrivateMemberCase: 'lower_case'
+  readability-identifier-naming.ProtectedMemberPrefix: '_'
+  readability-identifier-naming.ProtectedMemberCase: 'lower_case'
+  readability-identifier-naming.PublicMemberCase: 'lower_case'
+  readability-identifier-naming.ConstantCase: 'aNy_CasE'
+  readability-identifier-naming.ConstexprVariableCase: 'aNy_CasE'
+  readability-identifier-naming.GlobalConstantCase: 'aNy_CasE'
+  readability-identifier-naming.LocalConstantCase: 'aNy_CasE'
+  readability-identifier-naming.ClassConstantCase: 'aNy_CasE'

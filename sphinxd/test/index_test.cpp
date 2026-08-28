@@ -1,23 +1,11 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
 
 #include <sphinx/index.h>
 
+#include <optional>
 #include <string>
 
 TEST(IndexTest, overwriteReturnsOldValueAndRebindsViewKey)
@@ -28,10 +16,10 @@ TEST(IndexTest, overwriteReturnsOldValueAndRebindsViewKey)
   ASSERT_FALSE(index.insert_or_assign(first, 1).has_value());
   auto old = index.insert_or_assign(second, 2);
   ASSERT_TRUE(old.has_value());
-  ASSERT_EQ(old.value(), 1);
-  ASSERT_EQ(index.find(std::string_view{"same"}).value(), 2);
+  ASSERT_EQ(old, std::optional<int>{1});
+  ASSERT_EQ(index.find(std::string_view{"same"}), std::optional<int>{2});
 
-  // The replacement key is the second view, not the stale first view.
+  // 替换后的键应是第二个视图，而不是已经失效的第一个视图。
   first.assign("xxxx");
-  ASSERT_EQ(index.find(std::string_view{"same"}).value(), 2);
+  ASSERT_EQ(index.find(std::string_view{"same"}), std::optional<int>{2});
 }

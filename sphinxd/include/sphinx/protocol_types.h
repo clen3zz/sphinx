@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -27,17 +14,15 @@ limitations under the License.
 
 namespace sphinx::memcache {
 
-// Parsing a command header and receiving its value are deliberately separate
-// operations.  The parser consumes one CRLF-terminated header at a time; a
-// storage command's Body describes where the following value is expected.
+// 命令头解析与接收命令值是两个刻意分开的操作。解析器每次消费一个以 CRLF
+// 结尾的命令头；存储命令的 Body 描述后续值的预期位置。
 struct StorageBody
 {
   uint64_t size = 0;
   size_t offset = 0;
 
-  // The wire frame consists of the value followed by its trailing CRLF.
-  // Returning nullopt here is important: a uint64 length may not fit in a
-  // size_t, and adding the CRLF must not wrap.
+  // 协议帧由值及其末尾的 CRLF 组成。这里返回 nullopt 很重要：uint64 长度
+  // 可能无法放入 size_t，追加 CRLF 时也不能发生整数回绕。
   std::optional<size_t> frame_size() const noexcept
   {
     constexpr auto max_size = std::numeric_limits<size_t>::max();
@@ -62,9 +47,8 @@ struct StorageBody
     return input[offset + value_size] == '\r' && input[offset + value_size + 1] == '\n';
   }
 
-  // Return the value only when the complete frame, including the trailing
-  // CRLF, is present and valid.  A null result means either that the receive
-  // buffer needs more bytes or that the frame is malformed/too large.
+  // 仅当包含末尾 CRLF 的完整帧存在且有效时才返回值。返回空结果表示接收缓冲区
+  // 需要更多字节，或帧格式错误/长度过大。
   std::optional<std::string_view> view(std::string_view input) const noexcept
   {
     if (!has_valid_terminator(input)) {
@@ -128,9 +112,8 @@ struct StatsCommand
 {
 };
 
-// A parsed command owns all textual fields.  In particular, GetCommand keys
-// do not point into the receive buffer, which the reactor may compact or
-// release immediately after parse() returns.
+// 解析后的命令拥有全部文本字段。特别是，GetCommand 的键不指向接收缓冲区，
+// 因为解析器返回后 reactor 可能会立即压缩或释放该缓冲区。
 using ParsedCommand = std::variant<SetCommand,
                                    AddCommand,
                                    ReplaceCommand,
@@ -141,7 +124,7 @@ using ParsedCommand = std::variant<SetCommand,
                                    VersionCommand,
                                    StatsCommand>;
 
-enum class ParseStatus
+enum class ParseStatus : uint8_t
 {
   Incomplete,
   Invalid,

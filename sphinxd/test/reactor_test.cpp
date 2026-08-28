@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
 
@@ -27,8 +14,8 @@ namespace {
 
 struct IntMessage final : sphinx::reactor::Message
 {
-  explicit IntMessage(int value)
-    : value{value}
+  explicit IntMessage(int initial_value)
+    : value{initial_value}
   {
   }
 
@@ -82,7 +69,7 @@ TEST(ReactorTest, fullBoundedQueueReturnsBackpressureAndDrains)
     sent++;
   }
   ASSERT_TRUE(rejected);
-  ASSERT_EQ(sent, 9999U); // Queue capacity is N-1 by design.
+  ASSERT_EQ(sent, 9999U); // 队列容量按设计为 N-1。
   auto deferred_message = std::make_shared<IntMessage>(0);
   ASSERT_TRUE(source.send_msg_deferred(1, deferred_message));
 
@@ -123,7 +110,7 @@ TEST(ReactorTest, tcpSocketDrainsPartialNonblockingWrites)
     fds[0], [&eof](std::shared_ptr<sphinx::reactor::TcpSocket>, std::string_view msg) {
       eof = msg.empty();
     });
-  socket->on_pollin(); // A nonblocking read with no data is not a connection error.
+  socket->on_pollin(); // 非阻塞读取暂无数据时不属于连接错误。
   ASSERT_FALSE(eof);
   std::string payload(1024 * 1024, 'x');
   ASSERT_FALSE(socket->send(payload.data(), payload.size()));

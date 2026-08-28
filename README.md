@@ -63,13 +63,13 @@ Ubuntu 24.04 可安装以下依赖：
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake ragel python3 libgtest-dev netcat-openbsd
+sudo apt install -y build-essential cmake ninja-build ccache python3 libgtest-dev netcat-openbsd
 ```
 
-构建并运行默认测试：
+构建并运行默认测试（支持 Ninja 与 ccache 自动加速）：
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
 ```
@@ -112,6 +112,7 @@ NODES=127.0.0.1:11211,127.0.0.1:11212,127.0.0.1:11213
 
 - [调用链说明](docs/CALL_CHAIN.md)
 - [端到端基准方法与结果](docs/BENCHMARK.md)
+- [编码与命名规范](docs/CODING_STANDARDS.md)
 
 ## 来源与许可
 

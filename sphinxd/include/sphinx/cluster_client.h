@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #pragma once
 
 #include <sphinx/cluster.h>
@@ -15,7 +16,7 @@
 
 namespace sphinx::cluster {
 
-enum class DeleteStatus
+enum class DeleteStatus : std::uint8_t
 {
   Deleted,
   NotFound
@@ -30,7 +31,7 @@ public:
   }
 };
 
-/// Synchronous client for a statically configured set of cache nodes.
+/// 为静态配置的缓存节点集合提供同步客户端。
 class ClusterClient final
 {
 public:
@@ -55,7 +56,7 @@ public:
 
   bool remove(std::string_view key);
 
-  /// Return the protocol-level delete result.
+  /// 返回协议层的删除结果。
   DeleteStatus remove_status(std::string_view key);
 
 private:

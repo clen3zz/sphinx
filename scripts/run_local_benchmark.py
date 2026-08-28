@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Run one reproducible local Sphinx benchmark with memtier_benchmark.
+# SPDX-License-Identifier: Apache-2.0
+"""使用 memtier_benchmark 运行一次可复现的本地 Sphinx 基准测试。
 
-The script deliberately stays small: it owns the Sphinx child process, waits
-for its TCP listener, invokes memtier, and records the result and metadata.  It
-does not implement a benchmark client and it does not apply performance
-thresholds.
+该脚本保持精简：负责管理 Sphinx 子进程，等待 TCP 监听端口，调用 memtier，
+并记录结果和元数据。它不实现基准客户端，也不设置性能阈值。
 """
 
 from __future__ import annotations
@@ -41,12 +40,12 @@ DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 3.0
 
 
 class BenchmarkError(RuntimeError):
-    """Raised when a benchmark cannot produce a trustworthy result."""
+    """基准测试无法产生可信结果时抛出的异常。"""
 
 
 @dataclass(frozen=True)
 class BenchmarkConfig:
-    """Validated inputs for one measured workload."""
+    """一次测量负载的已校验输入。"""
 
     server_executable: str
     workload: str = "read"
@@ -68,7 +67,7 @@ class BenchmarkConfig:
 
 @dataclass(frozen=True)
 class BenchmarkResult:
-    """Paths and summary values produced by a successful measured run."""
+    """成功完成测量后生成的路径和汇总值。"""
 
     raw_result_path: Path
     metadata_path: Path
@@ -83,7 +82,7 @@ def _positive(name: str, value: int) -> None:
 
 
 def validate_config(config: BenchmarkConfig) -> None:
-    """Validate script and Sphinx arguments before creating any process."""
+    """在创建任何进程前校验脚本和 Sphinx 参数。"""
 
     if not config.server_executable:
         raise BenchmarkError("server executable must not be empty")
@@ -111,7 +110,7 @@ def validate_config(config: BenchmarkConfig) -> None:
 
 
 def _executable_path(value: str, label: str) -> str:
-    """Resolve an executable without accepting a missing program silently."""
+    """解析可执行文件，不静默接受缺失的程序。"""
 
     candidate = Path(value).expanduser()
     if candidate.parent != Path(".") or candidate.is_absolute():
@@ -125,7 +124,7 @@ def _executable_path(value: str, label: str) -> str:
 
 
 def find_free_port(host: str = DEFAULT_HOST) -> int:
-    """Return an ephemeral local TCP port currently available for binding."""
+    """返回当前可用于绑定的临时本地 TCP 端口。"""
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -134,7 +133,7 @@ def find_free_port(host: str = DEFAULT_HOST) -> int:
 
 
 def build_server_command(config: BenchmarkConfig, port: int) -> list[str]:
-    """Build the exact Sphinx command used for one run."""
+    """构造一次运行所使用的精确 Sphinx 命令。"""
 
     return [
         config.server_executable,
@@ -152,7 +151,7 @@ def build_server_command(config: BenchmarkConfig, port: int) -> list[str]:
 
 
 def _ratio_for(workload: str) -> str:
-    # memtier expresses this as SET:GET.  1:9 is therefore 10% SET and 90% GET.
+    # memtier 使用 SET:GET 表示比例，因此 1:9 即 10% SET 和 90% GET。
     return {"read": "0:1", "mixed": "1:9", "write": "1:0"}[workload]
 
 
@@ -163,7 +162,7 @@ def build_memtier_command(
     *,
     prefill: bool = False,
 ) -> list[str]:
-    """Build a memtier command for either prefill or measured traffic."""
+    """构造预填充或测量流量所使用的 memtier 命令。"""
 
     workload = "write" if prefill else config.workload
     command = [
@@ -194,9 +193,8 @@ def build_memtier_command(
         str(result_path),
     ]
     if prefill:
-        # memtier's allkeys mode issues one request for every key in its
-        # half-open [minimum, maximum) range.  A single client avoids duplicate
-        # partitions, and does not depend on an arbitrary time budget.
+        # memtier 的 allkeys 模式会为半开区间 [minimum, maximum) 中的每个键发送
+        # 一个请求。单个客户端可避免分片重复，也不依赖任意的时间预算。
         command[command.index("--threads") + 1] = "1"
         command.extend(["--requests", "allkeys"])
     else:
@@ -217,7 +215,7 @@ def wait_for_server(
     *,
     poll_interval: float = 0.02,
 ) -> None:
-    """Wait until a child accepts TCP, or fail with its startup diagnostics."""
+    """等待子进程接受 TCP 连接，否则带启动诊断信息失败。"""
 
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
@@ -235,7 +233,7 @@ def wait_for_server(
 
 
 def _process_diagnostics(process: subprocess.Popen[Any]) -> str:
-    """Read already-available child output without blocking a live process."""
+    """读取子进程已有的输出，且不阻塞仍在运行的进程。"""
 
     if process.poll() is None:
         return ""
@@ -252,7 +250,7 @@ def _process_diagnostics(process: subprocess.Popen[Any]) -> str:
 
 
 def stop_process(process: Optional[subprocess.Popen[Any]], timeout_seconds: float) -> None:
-    """Stop exactly the child represented by *process*, if it is still alive."""
+    """如果 *process* 仍在运行，只停止它所代表的子进程。"""
 
     if process is None:
         return
@@ -263,8 +261,8 @@ def stop_process(process: Optional[subprocess.Popen[Any]], timeout_seconds: floa
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=timeout_seconds)
-    # Closing PIPEs matters for callers that run the script repeatedly.  A
-    # server that exits before the final cleanup has already been reaped here.
+    # 关闭 PIPE 对重复调用脚本的调用方很重要。在最终清理前退出的服务进程
+    # 已经在这里完成回收。
     try:
         process.communicate(timeout=0.2)
     except (subprocess.TimeoutExpired, OSError):
@@ -276,7 +274,7 @@ def _run_client(
     server_process: subprocess.Popen[Any],
     timeout_seconds: float,
 ) -> None:
-    """Run memtier while detecting a server that dies before it finishes."""
+    """运行 memtier，同时检测服务进程是否在其完成前退出。"""
 
     try:
         client = subprocess.Popen(
@@ -331,7 +329,7 @@ def _walk_dicts(value: Any) -> Iterable[tuple[str, Any]]:
 
 
 def _error_category(normalized_key: str) -> Optional[str]:
-    """Map a memtier error-counter key to a small stable category."""
+    """将 memtier 错误计数键映射到少量稳定的类别。"""
 
     if normalized_key.endswith("sec") or normalized_key.endswith("rate"):
         return None
@@ -345,7 +343,7 @@ def _error_category(normalized_key: str) -> Optional[str]:
 
 
 def _sum_error_value(value: Any) -> int:
-    """Sum numeric leaves below an error map without treating text as errors."""
+    """汇总错误映射下的数值叶节点，不把文本当作错误。"""
 
     number = _numeric(value)
     if number is not None:
@@ -377,11 +375,10 @@ def _error_counts_in(document: Any) -> dict[str, int]:
 
 
 def error_counts(document: Any) -> dict[str, int]:
-    """Return protocol, connection and other error counts from memtier JSON.
+    """从 memtier JSON 返回协议、连接和其他错误计数。
 
-    Memtier emits command-specific counters and a ``Totals`` aggregate.  When
-    a totals object exists, use that object only so Sets/Gets/Totals are not
-    counted three times; otherwise use all counters in the document.
+    Memtier 会输出命令专用计数和 ``Totals`` 汇总对象。如果存在 Totals 对象，
+    只使用该对象，避免重复统计 Sets、Gets 和 Totals；否则使用文档中的所有计数。
     """
 
     totals: list[Any] = []
@@ -400,9 +397,9 @@ def error_counts(document: Any) -> dict[str, int]:
     find_totals(document)
     counts = _error_counts_in(totals[0] if totals else document)
     if totals and isinstance(document, Mapping):
-        # Some memtier builds put protocol-level counters at the document root
-        # while command/connection counters live under ALL STATS/Totals.
-        # Preserve those root counters without re-adding Sets and Gets.
+        # 某些 memtier 构建版本会把协议级计数放在文档根部，
+        # 而命令/连接计数位于 ALL STATS/Totals 下。
+        # 保留这些根部计数，但不重复加入 Sets 和 Gets。
         for key, child in document.items():
             category = _error_category(_normal_key(str(key)))
             if category is not None:
@@ -411,7 +408,7 @@ def error_counts(document: Any) -> dict[str, int]:
 
 
 def protocol_error_count(document: Any) -> int:
-    """Backward-compatible total-error view kept for existing callers."""
+    """为兼容现有调用方而保留的总错误数视图。"""
 
     return sum(error_counts(document).values())
 
@@ -455,12 +452,11 @@ def _operation_count(document: Any, operation: str) -> Optional[int]:
 
 
 def extract_metrics(document: Any) -> dict[str, Optional[float]]:
-    """Extract the small set of fields copied into BENCHMARK.md."""
+    """提取写入 BENCHMARK.md 的少量字段。"""
 
-    # Official memtier JSON contains Sets, Gets and Totals.  Inactive command
-    # sections still contain 0.007 ms placeholder percentiles, so walking the
-    # whole document can silently report the wrong latency.  Prefer the Totals
-    # aggregate and only fall back to generic layouts used by older clients.
+    # 官方 memtier JSON 包含 Sets、Gets 和 Totals。未激活的命令区段仍会包含
+    # 0.007 ms 的百分位占位值，因此遍历整个文档可能静默报告错误的延迟。
+    # 优先使用 Totals 汇总，仅在旧客户端使用的通用布局中找不到时再回退。
     totals = _find_named_mapping(document, "totals")
     metrics_source: Any = totals if totals is not None else document
     percentiles = _find_named_mapping(metrics_source, "percentilelatencies")
@@ -489,7 +485,7 @@ def _git_commit() -> Optional[str]:
 
 
 def _git_source_state() -> dict[str, Any]:
-    """Capture dirty state without requiring a commit before benchmarking."""
+    """记录工作树状态，不要求在基准测试前创建提交。"""
 
     repository = Path(__file__).resolve().parents[1]
     try:
@@ -535,9 +531,8 @@ def _git_source_state() -> dict[str, Any]:
     hasher.update(source_status.encode("utf-8", errors="replace"))
     hasher.update(b"\0")
     hasher.update(diff_result.stdout.encode("utf-8", errors="replace"))
-    # A status line names an untracked file but not its contents.  Include
-    # source-like untracked files so the identifier remains useful before the
-    # first commit; skip build products and IDE state.
+    # 状态行只会列出未跟踪文件名，不包含文件内容。加入类似源码的未跟踪文件，
+    # 让标识符在首次提交前仍然有用；跳过构建产物和 IDE 状态。
     source_suffixes = {".c", ".cc", ".cpp", ".h", ".hpp", ".py", ".rl", ".cmake"}
     for line in source_status_lines:
         if not line.startswith("?? "):
@@ -591,7 +586,7 @@ def _write_json(path: Path, document: Any) -> None:
 
 
 def run_benchmark(config: BenchmarkConfig) -> Optional[BenchmarkResult]:
-    """Run one workload, returning paths only after every check succeeds."""
+    """运行一次负载，仅在所有检查成功后返回结果路径。"""
 
     validate_config(config)
     server_command = build_server_command(config, 0)

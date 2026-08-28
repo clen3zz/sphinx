@@ -23,11 +23,13 @@ Server::Server(const sphinx::logmem::LogConfig& log_config,
                std::shared_ptr<sphinx::reactor::ReactorGroup> reactor_group,
                std::shared_ptr<sphinx::stats::ServerStats> stats,
                std::shared_ptr<std::atomic_bool> mget_queue_failure_used)
-  : _reactor{sphinx::reactor::make_reactor(
-      backend,
-      thread_id,
-      std::move(reactor_group),
-      [this](sphinx::reactor::MessagePtr data) { on_message(std::move(data)); })}
+  : _reactor{
+      sphinx::reactor::make_reactor(backend,
+                                    thread_id,
+                                    std::move(reactor_group),
+                                    [this](const sphinx::reactor::MessagePtr& data) {
+                                      on_message(data);
+                                    })}
   , _log{log_config}
   , _stats{std::move(stats)}
   , _mget_queue_failure_used{std::move(mget_queue_failure_used)}
@@ -45,12 +47,12 @@ Server::serve(const Config& config)
 }
 
 void
-Server::on_message(sphinx::reactor::MessagePtr data)
+Server::on_message(const sphinx::reactor::MessagePtr& data)
 {
   if (data == nullptr) {
     return;
   }
-  auto message = std::dynamic_pointer_cast<Message>(std::move(data));
+  auto message = std::dynamic_pointer_cast<Message>(data);
   if (!message) {
     return;
   }
@@ -103,14 +105,14 @@ Server::accept(int sockfd)
 
 void
 Server::recv(const std::shared_ptr<Connection>& connection,
-             std::shared_ptr<sphinx::reactor::TcpSocket> socket,
+             const std::shared_ptr<sphinx::reactor::TcpSocket>& socket,
              std::string_view data)
 {
   if (data.empty()) {
     close_connection(connection, socket);
     return;
   }
-  constexpr size_t max_request_buffer_size = 8 * 1024 * 1024;
+  constexpr size_t max_request_buffer_size = size_t{8} * 1024 * 1024;
   if (data.size() > max_request_buffer_size - connection->receive_buffer().size()) {
     close_connection(connection, socket);
     return;
@@ -122,8 +124,8 @@ Server::recv(const std::shared_ptr<Connection>& connection,
     if (line_end == std::string_view::npos) {
       return;
     }
-    // Only CRLF terminates an ASCII command.  Keep a bare LF in the receive
-    // buffer instead of consuming bytes from a later pipelined command.
+    // ASCII 命令只能由 CRLF 结束。若只有 LF，则将其留在接收缓冲区中，
+    // 避免误消费后续流水线命令的字节。
     if (line_end == 0 || view[line_end - 1] != '\r') {
       return;
     }
@@ -146,9 +148,8 @@ Server::process_one(const std::shared_ptr<Connection>& connection, std::string_v
   Parser parser;
   const auto header_size = parser.parse(data);
   if (parser.number_overflow()) {
-    // A delta that does not fit uint64_t is a command error.  Consume only its
-    // header so a pipelined request remains usable; storage field overflow
-    // retains the historical connection-closing behavior.
+    // 无法放入 uint64_t 的增量属于命令错误。只消费该命令头，使后续流水线
+    // 请求仍可用；存储字段溢出则保留原有的关闭连接行为。
     const auto& parsed = parser.command();
     const bool arithmetic_overflow = parsed && (std::holds_alternative<IncrCommand>(*parsed) ||
                                                 std::holds_alternative<DecrCommand>(*parsed));
@@ -217,7 +218,7 @@ Server::process_one(const std::shared_ptr<Connection>& connection, std::string_v
           return;
         }
 
-        // Read each key on its owner, then emit one ordered END response.
+        // 在各键所属的工作线程读取数据，最后按顺序发出一个 END 响应。
         connection->begin_multi_get(sequence, command.keys.size());
         for (size_t key_index = 0; key_index < command.keys.size(); ++key_index) {
           auto outgoing = make_command(connection, sequence, Opcode::Get, command.keys[key_index]);
@@ -297,13 +298,15 @@ Server::submit_command(size_t target_thread, Command command)
                             std::static_pointer_cast<sphinx::reactor::Message>(message));
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)：调用处按语义传递线程和连接编号
 void
-Server::send_response(size_t response_thread,
-                      uint64_t connection_id,
-                      uint64_t sequence,
-                      std::string_view payload,
-                      bool multi_get,
-                      uint32_t key_index)
+Server::send_response(
+  size_t response_thread,
+  uint64_t connection_id,
+  uint64_t sequence,
+  std::string_view payload,
+  bool multi_get,
+  uint32_t key_index)
 {
   if (response_thread == _reactor->thread_id()) {
     auto it = _connections.find(connection_id);
@@ -318,16 +321,17 @@ Server::send_response(size_t response_thread,
   }
   auto message = std::static_pointer_cast<sphinx::reactor::Message>(std::make_shared<Message>(
     Response{connection_id, sequence, std::string{payload}, multi_get, key_index}));
-  // Deferred delivery keeps the data worker from waiting on the connection worker.
+  // 延迟投递可避免数据工作线程等待连接工作线程。
   if (_reactor->send_msg_deferred(response_thread, message)) {
     return;
   }
-  // Retry the bounded queue; if both paths fail, terminate rather than strand
-  // the connection's ordered response queue.
+  // 再尝试一次有界队列；若两种路径都失败，则终止进程，避免连接的有序响应队列
+  // 永久滞留。
   if (_reactor->send_msg(response_thread, message)) {
     return;
   }
-  std::cerr << "fatal: response delivery failed for connection " << connection_id << std::endl;
+  std::cerr << "fatal: response delivery failed for connection " << connection_id << '\n'
+            << std::flush;
   std::terminate();
 }
 
@@ -389,7 +393,7 @@ Server::normalize_expiration(uint64_t expiration)
   if (expiration == 0) {
     return 0;
   }
-  constexpr uint64_t thirty_days = 60 * 60 * 24 * 30;
+  constexpr uint64_t thirty_days = uint64_t{60} * 60 * 24 * 30;
   using namespace std::chrono;
   auto now = uint64_t(duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
   if (expiration <= thirty_days) {
@@ -411,6 +415,7 @@ Server::find_target(const sphinx::logmem::Hash& hash) const
 bool
 Server::force_mget_queue_failure_once()
 {
+  // NOLINTNEXTLINE(concurrency-mt-unsafe)
   if (std::getenv("SPHINXD_TEST_FAIL_MGET_QUEUE_ONCE") == nullptr || !_mget_queue_failure_used) {
     return false;
   }

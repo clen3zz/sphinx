@@ -15,7 +15,7 @@ namespace {
 void
 print_version()
 {
-  std::cout << "Sphinx " << SPHINX_VERSION << std::endl;
+  std::cout << "Sphinx " << SPHINX_VERSION << '\n' << std::flush;
 }
 void
 print_usage(const std::string& program)
@@ -39,8 +39,8 @@ print_usage(const std::string& program)
 void
 print_option_error(const std::string& program, const std::string& option, const std::string& reason)
 {
-  std::cerr << program << ": " << reason << " '" << option << "' option" << std::endl;
-  std::cerr << "Try '" << program << " --help' for more information" << std::endl;
+  std::cerr << program << ": " << reason << " '" << option << "' option\n";
+  std::cerr << "Try '" << program << " --help' for more information\n" << std::flush;
 }
 std::set<int>
 parse_cpu_list(const std::string& raw_cpu_list)
@@ -60,9 +60,9 @@ parse_cpu_list(const std::string& raw_cpu_list)
 void
 validate(const Config& args)
 {
-  const auto require = [](bool valid, std::string message) {
+  const auto require = [](bool valid, const std::string& message) {
     if (!valid) {
-      throw std::invalid_argument(std::move(message));
+      throw std::invalid_argument(message);
     }
   };
   require(args.tcp_port >= 0 && args.tcp_port <= 65535, "TCP port must be between 0 and 65535");
@@ -102,6 +102,7 @@ parse_options(int argc, char* argv[], const std::string& program)
   Config args;
   int option;
   int long_index;
+  // NOLINTNEXTLINE(concurrency-mt-unsafe)
   while ((option = ::getopt_long(argc, argv, "p:l:m:s:b:t:I:i:S", long_options, &long_index)) !=
          -1) {
     switch (option) {
@@ -134,16 +135,16 @@ parse_options(int argc, char* argv[], const std::string& program)
         break;
       case 'h':
         print_usage(program);
-        std::exit(EXIT_SUCCESS);
+        std::exit(EXIT_SUCCESS); // NOLINT(concurrency-mt-unsafe)
       case 'v':
         print_version();
-        std::exit(EXIT_SUCCESS);
+        std::exit(EXIT_SUCCESS); // NOLINT(concurrency-mt-unsafe)
       case '?':
-        print_option_error(program, argv[optind - 1], "unregonized");
-        std::exit(EXIT_FAILURE);
+        print_option_error(program, argv[optind - 1], "unrecognized");
+        std::exit(EXIT_FAILURE); // NOLINT(concurrency-mt-unsafe)
       default:
         print_usage(program);
-        std::exit(EXIT_FAILURE);
+        std::exit(EXIT_FAILURE); // NOLINT(concurrency-mt-unsafe)
     }
   }
   validate(args);

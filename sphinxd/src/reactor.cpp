@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #include <sphinx/reactor.h>
 
@@ -126,7 +113,7 @@ std::shared_ptr<TcpListener>
 make_tcp_listener(const std::string& iface, int port, int backlog, TcpAcceptFn&& accept_fn)
 {
   auto* addresses = lookup_addresses(iface, port, SOCK_STREAM);
-  for (addrinfo* rp = addresses; rp != NULL; rp = rp->ai_next) {
+  for (addrinfo* rp = addresses; rp != nullptr; rp = rp->ai_next) {
     int sockfd =
       ::socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC, rp->ai_protocol);
     if (sockfd < 0) {
@@ -161,14 +148,12 @@ TcpSocket::TcpSocket(int sockfd, TcpRecvFn&& recv_fn)
 {
 }
 
-TcpSocket::~TcpSocket()
-{
-}
+TcpSocket::~TcpSocket() = default;
 
 void
 TcpSocket::set_tcp_nodelay(bool nodelay)
 {
-  int value = nodelay;
+  int value = nodelay ? 1 : 0;
   if (setsockopt(_sockfd, SOL_TCP, TCP_NODELAY, &value, sizeof(value)) < 0) {
     throw std::system_error(errno, std::system_category(), "setsockopt");
   }
@@ -208,7 +193,7 @@ TcpSocket::send(const char* msg, size_t len)
   if (nr < 0) {
     throw std::system_error(errno, std::system_category(), "send");
   }
-  if (nr == 0 || size_t(nr) < len) {
+  if (nr == 0 || static_cast<size_t>(nr) < len) {
     _tx_buf.insert(_tx_buf.end(), msg + nr, msg + len);
     return false;
   }
@@ -218,13 +203,13 @@ TcpSocket::send(const char* msg, size_t len)
 void
 TcpSocket::on_pollin()
 {
-  constexpr size_t rx_buf_size = 256 * 1024;
+  constexpr size_t rx_buf_size = size_t{256} * 1024;
   std::array<char, rx_buf_size> rx_buf;
   for (;;) {
     ssize_t nr = ::recv(_sockfd, rx_buf.data(), rx_buf.size(), MSG_DONTWAIT);
     if (nr > 0) {
       _recv_fn(this->shared_from_this(),
-               std::string_view{rx_buf.data(), std::string_view::size_type(nr)});
+               std::string_view{rx_buf.data(), static_cast<std::string_view::size_type>(nr)});
       return;
     }
     if (nr == 0) {
@@ -293,7 +278,7 @@ checked_thread_count(size_t nr_threads)
 ReactorGroup::ReactorGroup(size_t nr_threads)
   : _nr_threads{checked_thread_count(nr_threads)}
   , _eventfds(_nr_threads, -1)
-  , _thread_is_sleeping{std::make_unique<std::atomic<bool>[]>(_nr_threads)}
+  , _thread_is_sleeping(_nr_threads)
   , _channels(_nr_threads * _nr_threads)
 {
   for (size_t id = 0; id < nr_threads; id++) {
@@ -332,7 +317,7 @@ ReactorGroup::channel(size_t destination, size_t source)
   if (destination >= _nr_threads || source >= _nr_threads) {
     throw std::invalid_argument("invalid reactor message target");
   }
-  auto& slot = _channels[destination * _nr_threads + source];
+  auto& slot = _channels[(destination * _nr_threads) + source];
   if (!slot) {
     throw std::logic_error("reactor channel is not initialized");
   }
@@ -345,16 +330,16 @@ ReactorGroup::initialize_thread(size_t thread_id)
   if (thread_id >= _nr_threads) {
     throw std::invalid_argument("invalid reactor thread id");
   }
-  std::lock_guard lock{_channels_mutex};
+  std::scoped_lock lock{_channels_mutex};
   for (size_t peer = 0; peer < _nr_threads; peer++) {
     if (peer == thread_id) {
       continue;
     }
-    auto& outgoing = _channels[peer * _nr_threads + thread_id];
+    auto& outgoing = _channels[(peer * _nr_threads) + thread_id];
     if (!outgoing) {
       outgoing = std::make_unique<Channel>();
     }
-    auto& incoming = _channels[thread_id * _nr_threads + peer];
+    auto& incoming = _channels[(thread_id * _nr_threads) + peer];
     if (!incoming) {
       incoming = std::make_unique<Channel>();
     }
@@ -446,29 +431,19 @@ Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool defer_i
   }
   auto& channel = _group->channel(remote_id, _thread_id);
   {
-    std::lock_guard lock{channel.overflow_mutex};
-    // Once an overflow message exists, keep later messages there as well so
-    // the destination observes the same FIFO order as the bounded ring.
-    if (!channel.overflow.empty()) {
-      if (!defer_if_full) {
-        return false;
-      }
+    std::scoped_lock lock{channel.overflow_mutex};
+    // 一旦出现溢出消息，后续消息也放入溢出邮箱，确保目的端观察到的顺序
+    // 与有界环形队列保持一致。
+    if (channel.overflow.empty() && channel.queue.try_to_emplace(message)) {
+      // 有界队列已接受该消息。
+    } else if (defer_if_full) {
       try {
         channel.overflow.emplace_back(message);
       } catch (const std::bad_alloc&) {
         return false;
       }
-    } else if (channel.queue.try_to_emplace(message)) {
-      // The bounded queue accepted the message.
     } else {
-      if (!defer_if_full) {
-        return false;
-      }
-      try {
-        channel.overflow.emplace_back(message);
-      } catch (const std::bad_alloc&) {
-        return false;
-      }
+      return false;
     }
   }
   _pending_wakeups.set(remote_id);
@@ -510,7 +485,7 @@ Reactor::has_messages()
     if (channel.queue.front() != nullptr) {
       return true;
     }
-    std::lock_guard lock{channel.overflow_mutex};
+    std::scoped_lock lock{channel.overflow_mutex};
     if (!channel.overflow.empty()) {
       return true;
     }
@@ -540,7 +515,7 @@ Reactor::poll_messages()
     for (;;) {
       MessagePtr message;
       {
-        std::lock_guard lock{channel.overflow_mutex};
+        std::scoped_lock lock{channel.overflow_mutex};
         if (channel.overflow.empty()) {
           break;
         }

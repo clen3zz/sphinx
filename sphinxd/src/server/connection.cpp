@@ -9,10 +9,11 @@ Connection::begin_multi_get(uint64_t sequence, size_t key_count)
                               MultiGetState{key_count, false, std::vector<std::string>(key_count)});
 }
 std::optional<std::string>
-Connection::add_multi_get_piece(uint64_t sequence,
-                                uint32_t key_index,
-                                std::string_view payload,
-                                bool failed)
+Connection::add_multi_get_piece(
+  uint64_t sequence, // NOLINT(bugprone-easily-swappable-parameters)：参数含义由调用处明确区分
+  uint32_t key_index,
+  std::string_view payload,
+  bool failed)
 {
   auto it = _pending_multi_gets.find(sequence);
   if (it == _pending_multi_gets.end()) {

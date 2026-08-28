@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
 
@@ -22,6 +9,32 @@ limitations under the License.
 #include <limits>
 #include <string>
 #include <vector>
+
+namespace {
+
+template<typename Command>
+const Command*
+command_as(const sphinx::memcache::Parser& parser)
+{
+  const auto& parsed = parser.command();
+  if (!parsed) {
+    return nullptr;
+  }
+  return std::get_if<Command>(&parsed.value());
+}
+
+template<typename Command>
+bool
+has_command(const sphinx::memcache::Parser& parser)
+{
+  const auto& parsed = parser.command();
+  if (!parsed) {
+    return false;
+  }
+  return std::holds_alternative<Command>(parsed.value());
+}
+
+} // namespace
 
 TEST(ProtocolTest, parse_error)
 {
@@ -40,7 +53,7 @@ TEST(ProtocolTest, parse_set)
   Parser parser;
   parser.parse(msg);
   ASSERT_TRUE(parser.command().has_value());
-  ASSERT_TRUE(std::holds_alternative<SetCommand>(*parser.command()));
+  ASSERT_TRUE(has_command<SetCommand>(parser));
 }
 
 TEST(ProtocolTest, parsed_command_is_typed_and_describes_storage_body)
@@ -52,7 +65,7 @@ TEST(ProtocolTest, parsed_command_is_typed_and_describes_storage_body)
 
   ASSERT_EQ(parser.status(), ParseStatus::Parsed);
   ASSERT_TRUE(parser.command().has_value());
-  const auto* command = std::get_if<SetCommand>(&*parser.command());
+  const auto* command = command_as<SetCommand>(parser);
   ASSERT_NE(command, nullptr);
   EXPECT_EQ(command->key, "foo");
   EXPECT_EQ(command->flags, 7U);
@@ -63,6 +76,9 @@ TEST(ProtocolTest, parsed_command_is_typed_and_describes_storage_body)
   ASSERT_TRUE(command->body.has_valid_terminator(msg));
   const auto value = command->body.view(msg);
   ASSERT_TRUE(value.has_value());
+  if (!value) {
+    return;
+  }
   EXPECT_EQ(*value, "bar");
 }
 
@@ -74,7 +90,7 @@ TEST(ProtocolTest, parsed_command_owns_get_keys)
   parser.parse(msg);
 
   ASSERT_TRUE(parser.command().has_value());
-  const auto* command = std::get_if<GetCommand>(&*parser.command());
+  const auto* command = command_as<GetCommand>(parser);
   ASSERT_NE(command, nullptr);
   ASSERT_EQ(command->keys, (std::vector<std::string>{"first", "second", "first"}));
   msg.clear();
@@ -88,7 +104,7 @@ TEST(ProtocolTest, parse_get)
   Parser parser;
   parser.parse(msg);
   ASSERT_TRUE(parser.command().has_value());
-  ASSERT_TRUE(std::holds_alternative<GetCommand>(*parser.command()));
+  ASSERT_TRUE(has_command<GetCommand>(parser));
 }
 
 TEST(ProtocolTest, parse_many)
@@ -100,18 +116,21 @@ TEST(ProtocolTest, parse_many)
     Parser parser;
     auto nr_consumed = parser.parse(msg);
     ASSERT_EQ(15, nr_consumed);
-    const auto* command = std::get_if<SetCommand>(&*parser.command());
+    const auto* command = command_as<SetCommand>(parser);
     ASSERT_NE(command, nullptr);
     ASSERT_EQ(3U, command->body.size);
     const auto frame_size = command->body.frame_size();
     ASSERT_TRUE(frame_size.has_value());
+    if (!frame_size) {
+      return;
+    }
     msg.remove_prefix(nr_consumed + *frame_size);
   }
   {
     Parser parser;
     auto nr_consumed = parser.parse(msg);
     ASSERT_EQ(9, nr_consumed);
-    ASSERT_TRUE(std::holds_alternative<GetCommand>(*parser.command()));
+    ASSERT_TRUE(has_command<GetCommand>(parser));
   }
 }
 
@@ -122,7 +141,7 @@ TEST(ProtocolTest, parse_pipelined_headers_without_consuming_next_command)
   Parser first;
   auto first_consumed = first.parse(msg);
   ASSERT_EQ(first_consumed, 11U);
-  const auto* first_command = std::get_if<GetCommand>(&*first.command());
+  const auto* first_command = command_as<GetCommand>(first);
   ASSERT_NE(first_command, nullptr);
   ASSERT_EQ(first_command->keys, (std::vector<std::string>{"first"}));
 
@@ -130,7 +149,7 @@ TEST(ProtocolTest, parse_pipelined_headers_without_consuming_next_command)
   Parser second;
   auto second_consumed = second.parse(msg);
   ASSERT_EQ(second_consumed, 12U);
-  const auto* second_command = std::get_if<GetCommand>(&*second.command());
+  const auto* second_command = command_as<GetCommand>(second);
   ASSERT_NE(second_command, nullptr);
   ASSERT_EQ(second_command->keys, (std::vector<std::string>{"second"}));
 }
@@ -143,12 +162,12 @@ TEST(ProtocolTest, parse_multi_get_preserves_order_and_owns_keys)
   auto nr_consumed = parser.parse(msg);
 
   ASSERT_EQ(nr_consumed, 24U);
-  const auto* command = std::get_if<GetCommand>(&*parser.command());
+  const auto* command = command_as<GetCommand>(parser);
   ASSERT_NE(command, nullptr);
   ASSERT_EQ(command->keys, (std::vector<std::string>{"first", "second", "first"}));
 
-  // The key results are owned by Parser, rather than views into the receive
-  // buffer that the reactor is free to move or release after parsing.
+  // 键结果由 Parser 持有，而不是接收缓冲区中的视图；解析后 reactor 可以移动或
+  // 释放该缓冲区。
   msg.clear();
   ASSERT_EQ(command->keys[1], "second");
   ASSERT_EQ(command->keys[2], "first");
@@ -160,7 +179,7 @@ TEST(ProtocolTest, parse_delete)
   Parser parser;
   auto msg = std::string{"delete gone\r\n"};
   ASSERT_EQ(parser.parse(msg), msg.size());
-  const auto* command = std::get_if<DeleteCommand>(&*parser.command());
+  const auto* command = command_as<DeleteCommand>(parser);
   ASSERT_NE(command, nullptr);
   ASSERT_EQ(command->key, "gone");
 }
@@ -172,7 +191,7 @@ TEST(ProtocolTest, parse_incr_and_decr_delta)
     Parser parser;
     auto msg = std::string{"incr counter 0\r\n"};
     ASSERT_EQ(parser.parse(msg), msg.size());
-    const auto* command = std::get_if<IncrCommand>(&*parser.command());
+    const auto* command = command_as<IncrCommand>(parser);
     ASSERT_NE(command, nullptr);
     ASSERT_EQ(command->key, "counter");
     ASSERT_EQ(command->delta, 0U);
@@ -181,7 +200,7 @@ TEST(ProtocolTest, parse_incr_and_decr_delta)
     Parser parser;
     auto msg = std::string{"decr counter 18446744073709551615\r\n"};
     ASSERT_EQ(parser.parse(msg), msg.size());
-    const auto* command = std::get_if<DecrCommand>(&*parser.command());
+    const auto* command = command_as<DecrCommand>(parser);
     ASSERT_NE(command, nullptr);
     ASSERT_EQ(command->delta, std::numeric_limits<uint64_t>::max());
     ASSERT_FALSE(parser.number_overflow());
@@ -196,7 +215,7 @@ TEST(ProtocolTest, parse_delta_overflow_is_reported_without_losing_opcode)
   ASSERT_EQ(parser.parse(msg), msg.size());
   ASSERT_TRUE(parser.number_overflow());
   ASSERT_TRUE(parser.command().has_value());
-  const auto* command = std::get_if<IncrCommand>(&*parser.command());
+  const auto* command = command_as<IncrCommand>(parser);
   ASSERT_NE(command, nullptr);
   EXPECT_EQ(command->key, "counter");
 }
@@ -221,7 +240,7 @@ TEST(ProtocolTest, storage_body_view_preserves_incomplete_and_bad_terminator_bou
   Parser parser;
   const auto header = std::string{"set foo 0 0 3\r\n"};
   ASSERT_EQ(parser.parse(header), header.size());
-  const auto* command = std::get_if<SetCommand>(&*parser.command());
+  const auto* command = command_as<SetCommand>(parser);
   ASSERT_NE(command, nullptr);
 
   EXPECT_FALSE(command->body.available(header + "bar"));
@@ -238,7 +257,7 @@ TEST(ProtocolTest, storage_body_size_overflow_is_safe)
   Parser parser;
   const auto msg = std::string{"set foo 0 0 18446744073709551615\r\n"};
   ASSERT_EQ(parser.parse(msg), msg.size());
-  const auto* command = std::get_if<SetCommand>(&*parser.command());
+  const auto* command = command_as<SetCommand>(parser);
   ASSERT_NE(command, nullptr);
   EXPECT_FALSE(command->body.frame_size().has_value());
   EXPECT_FALSE(command->body.available(msg));
@@ -264,7 +283,7 @@ TEST(ProtocolTest, parse_mixed_pipeline_one_header_at_a_time)
   Parser get;
   auto get_consumed = get.parse(msg);
   ASSERT_EQ(get_consumed, 18U);
-  const auto* get_command = std::get_if<GetCommand>(&*get.command());
+  const auto* get_command = command_as<GetCommand>(get);
   ASSERT_NE(get_command, nullptr);
   ASSERT_EQ(get_command->keys, (std::vector<std::string>{"first", "second"}));
   msg.remove_prefix(get_consumed);
@@ -272,7 +291,7 @@ TEST(ProtocolTest, parse_mixed_pipeline_one_header_at_a_time)
   Parser remove;
   auto remove_consumed = remove.parse(msg);
   ASSERT_EQ(remove_consumed, 12U);
-  const auto* remove_command = std::get_if<DeleteCommand>(&*remove.command());
+  const auto* remove_command = command_as<DeleteCommand>(remove);
   ASSERT_NE(remove_command, nullptr);
   ASSERT_EQ(remove_command->key, "old");
   msg.remove_prefix(remove_consumed);
@@ -280,14 +299,14 @@ TEST(ProtocolTest, parse_mixed_pipeline_one_header_at_a_time)
   Parser incr;
   auto incr_consumed = incr.parse(msg);
   ASSERT_EQ(incr_consumed, 14U);
-  const auto* incr_command = std::get_if<IncrCommand>(&*incr.command());
+  const auto* incr_command = command_as<IncrCommand>(incr);
   ASSERT_NE(incr_command, nullptr);
   ASSERT_EQ(incr_command->delta, 7U);
   msg.remove_prefix(incr_consumed);
 
   Parser decr;
   ASSERT_EQ(decr.parse(msg), msg.find("\r\n") + 2);
-  const auto* decr_command = std::get_if<DecrCommand>(&*decr.command());
+  const auto* decr_command = command_as<DecrCommand>(decr);
   ASSERT_NE(decr_command, nullptr);
   ASSERT_EQ(decr_command->delta, 2U);
 }
@@ -306,7 +325,7 @@ TEST(ProtocolTest, invalid_complete_command_does_not_consume_next_command)
 
   Parser valid;
   ASSERT_EQ(valid.parse(msg), 11U);
-  const auto* valid_command = std::get_if<GetCommand>(&*valid.command());
+  const auto* valid_command = command_as<GetCommand>(valid);
   ASSERT_NE(valid_command, nullptr);
   ASSERT_EQ(valid_command->keys, (std::vector<std::string>{"valid"}));
 }
@@ -317,7 +336,7 @@ TEST(ProtocolTest, parse_stats)
   Parser parser;
   auto msg = std::string{"stats\r\n"};
   ASSERT_EQ(parser.parse(msg), msg.size());
-  ASSERT_TRUE(std::holds_alternative<StatsCommand>(*parser.command()));
+  ASSERT_TRUE(has_command<StatsCommand>(parser));
 }
 
 TEST(ProtocolTest, parse_stats_header_in_fragments)
@@ -333,7 +352,7 @@ TEST(ProtocolTest, parse_stats_header_in_fragments)
 
   auto complete = std::string{"stats\r\n"};
   ASSERT_EQ(parser.parse(complete), complete.size());
-  ASSERT_TRUE(std::holds_alternative<StatsCommand>(*parser.command()));
+  ASSERT_TRUE(has_command<StatsCommand>(parser));
 }
 
 TEST(ProtocolTest, parse_stats_in_pipeline)
@@ -344,18 +363,18 @@ TEST(ProtocolTest, parse_stats_in_pipeline)
   Parser version;
   auto version_consumed = version.parse(msg);
   ASSERT_EQ(version_consumed, 9U);
-  ASSERT_TRUE(std::holds_alternative<VersionCommand>(*version.command()));
+  ASSERT_TRUE(has_command<VersionCommand>(version));
   msg.remove_prefix(version_consumed);
 
   Parser stats;
   auto stats_consumed = stats.parse(msg);
   ASSERT_EQ(stats_consumed, 7U);
-  ASSERT_TRUE(std::holds_alternative<StatsCommand>(*stats.command()));
+  ASSERT_TRUE(has_command<StatsCommand>(stats));
   msg.remove_prefix(stats_consumed);
 
   Parser get;
   ASSERT_EQ(get.parse(msg), 9U);
-  const auto* get_command = std::get_if<GetCommand>(&*get.command());
+  const auto* get_command = command_as<GetCommand>(get);
   ASSERT_NE(get_command, nullptr);
   ASSERT_EQ(get_command->keys, (std::vector<std::string>{"key"}));
 }

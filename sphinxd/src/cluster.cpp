@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #include "sphinx/cluster.h"
 
@@ -157,19 +144,19 @@ parse_nodes(std::string_view specification)
 }
 
 ConsistentHashRing::ConsistentHashRing(std::vector<Node> nodes)
-  : nodes_(std::move(nodes))
+  : _nodes(std::move(nodes))
 {
-  validate_nodes(nodes_);
-  entries_.reserve(nodes_.size() * kVirtualNodesPerNode);
-  for (const auto& node : nodes_) {
+  validate_nodes(_nodes);
+  _entries.reserve(_nodes.size() * kVirtualNodesPerNode);
+  for (const auto& node : _nodes) {
     const std::string node_id = node.id();
     for (uint32_t virtual_index = 0; virtual_index < kVirtualNodesPerNode; virtual_index++) {
       const std::string virtual_id = node_id + "#" + std::to_string(virtual_index);
-      entries_.push_back(RingEntry{hash_string(virtual_id), node_id, virtual_index, node});
+      _entries.push_back(RingEntry{hash_string(virtual_id), node_id, virtual_index, node});
     }
   }
 
-  std::sort(entries_.begin(), entries_.end(), [](const RingEntry& left, const RingEntry& right) {
+  std::sort(_entries.begin(), _entries.end(), [](const RingEntry& left, const RingEntry& right) {
     if (left.hash != right.hash) {
       return left.hash < right.hash;
     }
@@ -188,28 +175,28 @@ ConsistentHashRing::ConsistentHashRing(std::string_view specification)
 Node
 ConsistentHashRing::route(std::string_view key) const
 {
-  if (entries_.empty()) {
+  if (_entries.empty()) {
     throw std::runtime_error("cannot route a key with an empty cluster");
   }
 
   const uint32_t key_hash = hash_string(key);
   const auto it = std::lower_bound(
-    entries_.begin(), entries_.end(), key_hash, [](const RingEntry& entry, uint32_t hash) {
+    _entries.begin(), _entries.end(), key_hash, [](const RingEntry& entry, uint32_t hash) {
       return entry.hash < hash;
     });
-  return (it == entries_.end() ? entries_.front() : *it).node;
+  return (it == _entries.end() ? _entries.front() : *it).node;
 }
 
 const std::vector<Node>&
 ConsistentHashRing::nodes() const
 {
-  return nodes_;
+  return _nodes;
 }
 
 const std::vector<RingEntry>&
 ConsistentHashRing::entries() const
 {
-  return entries_;
+  return _entries;
 }
 
 } // namespace sphinx::cluster

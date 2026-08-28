@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Tests for scripts/run_local_benchmark.py using fake child programs."""
+# SPDX-License-Identifier: Apache-2.0
+"""使用伪造的子程序测试 scripts/run_local_benchmark.py。"""
 
 from __future__ import annotations
 

@@ -13,7 +13,7 @@ struct ExecutionResult
 {
   std::string payload;
 };
-// Execute on the owning worker; Command carries response metadata.
+// 在所属工作线程上执行；Command 携带响应所需的元数据。
 ExecutionResult
 execute_command(sphinx::logmem::Log& log,
                 sphinx::stats::ServerStats& stats,

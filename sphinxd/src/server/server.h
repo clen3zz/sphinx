@@ -38,12 +38,12 @@ public:
   void serve(const Config& config);
 
 private:
-  void on_message(sphinx::reactor::MessagePtr data);
+  void on_message(const sphinx::reactor::MessagePtr& data);
   void handle_command(const Command& command);
   void handle_response(const Response& response);
   void accept(int sockfd);
   void recv(const std::shared_ptr<Connection>& connection,
-            std::shared_ptr<sphinx::reactor::TcpSocket> socket,
+            const std::shared_ptr<sphinx::reactor::TcpSocket>& socket,
             std::string_view data);
   size_t process_one(const std::shared_ptr<Connection>& connection, std::string_view data);
 
@@ -53,12 +53,14 @@ private:
                        std::string_view key) const;
   void dispatch_command(Command command);
   bool submit_command(size_t target_thread, Command command);
-  void send_response(size_t response_thread,
-                     uint64_t connection_id,
-                     uint64_t sequence,
-                     std::string_view payload,
-                     bool multi_get = false,
-                     uint32_t key_index = 0);
+  // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)：调用处按语义传递线程和连接编号
+  void send_response(
+    size_t response_thread,
+    uint64_t connection_id,
+    uint64_t sequence,
+    std::string_view payload,
+    bool multi_get = false,
+    uint32_t key_index = 0);
   void complete_multi_get(const std::shared_ptr<Connection>& connection,
                           uint64_t sequence,
                           uint32_t key_index,

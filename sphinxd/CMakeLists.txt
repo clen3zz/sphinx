@@ -1,18 +1,7 @@
 option(BUILD_BENCHMARKS "Build Sphinx benchmarks" OFF)
 
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/sphinx)
-
-set(PROTOCOL_HEADER ${CMAKE_CURRENT_BINARY_DIR}/include/sphinx/protocol.h)
-set(PROTOCOL_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/protocol.rl)
-
-add_custom_command(
-  OUTPUT ${PROTOCOL_HEADER}
-  COMMAND ${RAGEL_EXECUTABLE} -o ${PROTOCOL_HEADER} ${PROTOCOL_SOURCE}
-  DEPENDS ${PROTOCOL_SOURCE}
-  COMMENT "Generating protocol parser with Ragel"
-  VERBATIM
-)
-add_custom_target(generate_protocol DEPENDS ${PROTOCOL_HEADER})
+# MurmurHash3 是保持原样的第三方实现，其中的 switch 贯穿是有意设计。
+set_source_files_properties(third_party/murmurhash3/MurmurHash3.cpp PROPERTIES COMPILE_FLAGS "-Wno-implicit-fallthrough")
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
   set(SYSTEM_SOURCES src/reactor-epoll.cpp)
@@ -22,54 +11,58 @@ endif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 
 include_directories(
     include
-    ${CMAKE_CURRENT_BINARY_DIR}/include
+    SYSTEM third_party/murmurhash3
 )
 
-add_executable(sphinxd
-    src/MurmurHash3.cpp
+add_library(sphinx_core STATIC
+    third_party/murmurhash3/MurmurHash3.cpp
     src/buffer.cpp
     src/stats.cpp
+    src/cluster.cpp
+    src/cluster_client.cpp
     src/logmem.cpp
     src/memory.cpp
     src/reactor.cpp
+    ${SYSTEM_SOURCES}
+)
+target_include_directories(sphinx_core PUBLIC include)
+target_include_directories(sphinx_core SYSTEM PUBLIC third_party/murmurhash3)
+target_link_libraries(sphinx_core PUBLIC pthread)
+
+target_precompile_headers(sphinx_core PUBLIC
+    <algorithm>
+    <atomic>
+    <chrono>
+    <cstdint>
+    <memory>
+    <string>
+    <string_view>
+    <unordered_map>
+    <vector>
+)
+
+add_executable(sphinxd
     src/server/command_executor.cpp
     src/server/connection.cpp
     src/server/options.cpp
     src/server/server.cpp
     src/sphinxd.cpp
-    ${SYSTEM_SOURCES}
 )
-add_dependencies(sphinxd generate_protocol)
 target_compile_definitions(sphinxd PRIVATE SPHINX_VERSION="v${SPHINX_VERSION}-${GIT_COMMIT_HASH}")
-target_link_libraries(sphinxd pthread)
+target_link_libraries(sphinxd PRIVATE sphinx_core pthread)
 
 add_executable(sphinx-cluster
-    src/MurmurHash3.cpp
-    src/cluster.cpp
-    src/cluster_client.cpp
     src/sphinx-cluster.cpp
 )
-target_link_libraries(sphinx-cluster pthread)
+target_link_libraries(sphinx-cluster PRIVATE sphinx_core pthread)
 
 add_executable(sphinx_cluster_client_integration_driver
-    src/MurmurHash3.cpp
-    src/cluster.cpp
-    src/cluster_client.cpp
     test/cluster_client_integration_driver.cpp
 )
-target_link_libraries(sphinx_cluster_client_integration_driver pthread)
+target_link_libraries(sphinx_cluster_client_integration_driver PRIVATE sphinx_core pthread)
 
 if(GTEST_FOUND)
   add_executable(sphinxd_tests
-      src/MurmurHash3.cpp
-      src/buffer.cpp
-      src/stats.cpp
-      src/cluster.cpp
-      src/cluster_client.cpp
-      src/logmem.cpp
-      src/memory.cpp
-      src/reactor.cpp
-      src/reactor-epoll.cpp
       test/buffer_test.cpp
       test/index_test.cpp
       test/cluster_test.cpp
@@ -82,8 +75,7 @@ if(GTEST_FOUND)
       test/stats_test.cpp
       test/string_test.cpp
   )
-  add_dependencies(sphinxd_tests generate_protocol)
-  target_link_libraries(sphinxd_tests ${GTEST_BOTH_LIBRARIES} pthread)
+  target_link_libraries(sphinxd_tests PRIVATE sphinx_core ${GTEST_BOTH_LIBRARIES} pthread)
   add_test(sphinxd_tests sphinxd_tests)
 endif()
 
@@ -139,11 +131,6 @@ if(BUILD_BENCHMARKS)
       perf/logmem_perf.cpp
       perf/main.cpp
       perf/protocol_perf.cpp
-      src/MurmurHash3.cpp
-      src/buffer.cpp
-      src/logmem.cpp
-      src/memory.cpp
   )
-  add_dependencies(sphinxd_perf generate_protocol)
-  target_link_libraries(sphinxd_perf benchmark pthread)
+  target_link_libraries(sphinxd_perf PRIVATE sphinx_core benchmark pthread)
 endif()

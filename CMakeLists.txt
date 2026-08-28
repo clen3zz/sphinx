@@ -1,22 +1,32 @@
-cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
 project(Sphinx LANGUAGES CXX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# 自动检测并启用 ccache
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+  message(STATUS "Found ccache: ${CCACHE_PROGRAM}")
+  set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
+endif()
+
 enable_testing()
 
-find_program(RAGEL_EXECUTABLE NAMES ragel)
-if(NOT RAGEL_EXECUTABLE)
-  message(FATAL_ERROR "Ragel is required to build Sphinx")
-endif()
 find_package(GTest)
 
 set(SPHINX_VERSION 0.1.0)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address -fno-omit-frame-pointer")
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
+endif()
 
-set(CMAKE_CXX_FLAGS "-O3 -g -Wall -Wextra")
+add_compile_options(-Wall -Wextra)
+set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -fsanitize=address -fno-omit-frame-pointer")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -g -DNDEBUG")
 
 execute_process(
   COMMAND git log -1 --format=%h

@@ -1,5 +1,5 @@
 #!/bin/sh
 set -eu
 
-find sphinxd -type f \( -name "*.h" -o -name "*.cpp" \) ! -name "MurmurHash3.*" -print0 |
+find sphinxd -type f \( -name "*.h" -o -name "*.cpp" \) ! -path "*/third_party/*" -print0 |
   xargs -0 -r clang-format -i --style=file

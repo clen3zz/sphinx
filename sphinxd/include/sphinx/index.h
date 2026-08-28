@@ -1,18 +1,5 @@
-/*
-Copyright 2018 The Sphinxd Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// Copyright 2018 The Sphinxd Authors.
+// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -43,10 +30,10 @@ public:
       return std::nullopt;
     }
     auto old = it->second;
-    // `Key` is allowed to be a non-owning view (the log uses string_view keys).
-    // insert_or_assign updates only the mapped value when a key compares equal,
-    // leaving the old view pointing into an object that may be reclaimed.  Erase
-    // and insert so the index key is rebound to the newly appended object.
+    // `Key` 可以是非拥有视图（日志使用 string_view 作为键）。
+    // 当键比较相等时，insert_or_assign 只更新映射值，
+    // 可能使旧视图仍指向已被回收的对象。因此先删除再插入，
+    // 让索引键重新绑定到刚追加的对象。
     _index.erase(it);
     _index.emplace(key, value);
     return old;
