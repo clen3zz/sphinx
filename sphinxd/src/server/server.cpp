@@ -49,15 +49,10 @@ void Server::on_message(const reactor::MessagePtr& data) {
     return;
   }
 
-  auto message = std::dynamic_pointer_cast<Message>(data);
-  if (!message) {
-    return;
-  }
-
-  // 根据载荷类型分别分发给命令处理或响应处理
-  if (auto* command = std::get_if<Command>(&message->payload)) {
+  // 根据消息的实际类型分别分发给命令处理或响应处理
+  if (auto command = std::dynamic_pointer_cast<Command>(data)) {
     handle_command(*command);
-  } else if (auto* response = std::get_if<Response>(&message->payload)) {
+  } else if (auto response = std::dynamic_pointer_cast<Response>(data)) {
     handle_response(*response);
   }
 }
@@ -346,8 +341,8 @@ bool Server::submit_command(size_t target_thread, Command command) {
     return false;
   }
 
-  auto message = std::make_shared<Message>(std::move(command));
-  return _reactor->send_msg(target_thread, std::static_pointer_cast<reactor::Message>(message));
+  auto message = std::make_shared<Command>(std::move(command));
+  return _reactor->send_msg(target_thread, message);
 }
 
 // 将执行结果作为 Response 投递回连接所在的主调线程
@@ -368,8 +363,8 @@ void Server::send_response(size_t response_thread, uint64_t connection_id, uint6
   }
 
   // 2. 目标为其他线程，构造跨线程 Response 消息
-  auto message = std::static_pointer_cast<reactor::Message>(std::make_shared<Message>(
-      Response{connection_id, sequence, std::string{payload}, multi_get, key_index}));
+  auto message = std::make_shared<Response>(connection_id, sequence, std::string{payload},
+                                            multi_get, key_index);
 
   // 优先采用延迟投递，避免数据线程阻塞等待连接线程
   if (_reactor->send_msg_deferred(response_thread, message)) {

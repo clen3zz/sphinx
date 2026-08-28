@@ -46,6 +46,7 @@
       <w>spsc</w>
       <w>spscqueue</w>
       <w>valgrind</w>
+      <w>wakeups</w>
     </words>
   </dictionary>
 </component>
