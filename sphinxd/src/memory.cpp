@@ -8,7 +8,7 @@
 #include <system_error>
 #include <utility>
 
-namespace sphinx::memory {
+namespace sphinx {
 
 // 通过 mmap 匿名映射分配大块内存（启用 MAP_POPULATE 预先填充页表，减少缺页异常）
 Memory Memory::mmap(size_t size) {
@@ -72,4 +72,4 @@ void Memory::release() noexcept {
   _size = 0;
 }
 
-}  // namespace sphinx::memory
+}  // namespace sphinx

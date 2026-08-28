@@ -5,8 +5,6 @@
 #include <string>
 #include <string_view>
 
-using namespace sphinx;
-
 namespace {
 
 // 打印命令行工具使用帮助说明
@@ -45,7 +43,7 @@ int main(int argc, char* argv[]) {
 
   try {
     // 3. 初始化集群客户端实例（解析节点拓扑并构建哈希环）
-    ClusterClient client{node_spec};
+    sphinx::ClusterClient client{node_spec};
 
     // 4. 根据子命令分发执行相应逻辑
     // 子命令：route —— 查询键对应路由的目标节点
@@ -91,7 +89,7 @@ int main(int argc, char* argv[]) {
       }
 
       const auto status = client.remove_status(argv[4]);
-      std::cout << (status == DeleteStatus::Deleted ? "DELETED" : "NOT_FOUND") << '\n';
+      std::cout << (status == sphinx::DeleteStatus::Deleted ? "DELETED" : "NOT_FOUND") << '\n';
       return 0;
     }
 

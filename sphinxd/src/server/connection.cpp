@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "connection.h"
-namespace sphinx::server {
+namespace sphinx {
 
 // 初始化指定序列号的 multi-get 聚合上下文
 void Connection::begin_multi_get(uint64_t sequence, size_t key_count) {
@@ -55,7 +55,7 @@ std::optional<std::string> Connection::add_multi_get_piece(
 
 // 将响应按序列号入队，并按严格连续顺序写出就绪的响应
 Connection::WriteStatus Connection::enqueue_response(uint64_t sequence, std::string_view payload,
-                                                     reactor::Reactor& reactor) {
+                                                     Reactor& reactor) {
   // 1. 连接已关闭则拒绝入队
   if (_closed) {
     return WriteStatus::SocketUnavailable;
@@ -96,4 +96,4 @@ Connection::WriteStatus Connection::enqueue_response(uint64_t sequence, std::str
   }
 }
 
-}  // namespace sphinx::server
+}  // namespace sphinx

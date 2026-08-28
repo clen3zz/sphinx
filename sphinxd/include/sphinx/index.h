@@ -6,7 +6,7 @@
 #include <optional>
 #include <unordered_map>
 
-namespace sphinx::index {
+namespace sphinx {
 
 template <typename Key, typename Value>
 class Index {
@@ -39,4 +39,4 @@ class Index {
     _index.erase(key);
   }
 };
-}  // namespace sphinx::index
+}  // namespace sphinx

@@ -12,7 +12,7 @@
 #include <variant>
 #include <vector>
 
-namespace sphinx::memcache {
+namespace sphinx {
 
 // 命令头解析与接收命令值是两个刻意分开的操作。解析器每次消费一个以 CRLF
 // 结尾的命令头；存储命令的 Body 描述后续值的预期位置。
@@ -108,4 +108,4 @@ enum class ParseStatus : uint8_t {
   Parsed,
 };
 
-}  // namespace sphinx::memcache
+}  // namespace sphinx

@@ -14,7 +14,7 @@
 | 局部变量和函数参数 | `snake_case` | `thread_id`、`memory_limit`、`key_hash` | 全部小写，单词间用下划线分隔 |
 | 私有和受保护成员变量 | `_snake_case` | `_nodes`、`_entries`、`_socket` | **必须统一使用前置下划线**，禁止后置下划线 |
 | 公共结构体成员变量 | `snake_case` | `host`、`port`、`node_id` | POD / 数据载体结构体成员使用小写下划线 |
-| 命名空间 | `snake_case` / 小写 | `sphinx::cluster` | 统一小写 |
+| 命名空间 | `snake_case` / 小写 | `sphinx` | 统一小写 |
 | 宏定义与预处理标识符 | `UPPER_SNAKE_CASE` | `SPHINX_VERSION`、`SPHINX_PORT` | 全部大写，单词间用下划线分隔 |
 | C++ 文件名 | `snake_case` | `cluster_client.cpp`、`logmem.h` | 统一小写下划线（历史文件见下文说明） |
 
@@ -40,6 +40,13 @@ Sphinx 历史代码中存在 `lower_snake_case`（原有偏好）与部分公开
 ### 2.4 文件命名与历史文件
 - 新增头文件与实现文件统一使用 `snake_case.cpp` / `snake_case.h`。
 - 历史遗留的文件名（如 `reactor-epoll.cpp`）和与可执行程序名称对应的实现文件（如 `sphinx-cluster.cpp`）保持原样，避免引起构建脚本、CMakeLists 或部署流程的不必要变动。
+
+### 2.5 命名空间层级
+- 项目对外统一使用单一顶层命名空间 `sphinx`。
+- 项目类型、函数和类型别名直接声明在 `namespace sphinx` 中，禁止新增 `namespace sphinx::<module>` 作为模块分区。
+- 模块边界通过头文件、源文件和目录组织，不通过嵌套命名空间表达。
+- 仅文件内部使用的辅助实现放在匿名命名空间中，不作为公共 API 暴露。
+- 不使用根命名空间类型别名来遮蔽项目类型原本的嵌套命名空间；如确需兼容旧 API，必须单独说明兼容范围和迁移计划。
 
 ---
 

@@ -8,7 +8,7 @@
 #include <string>
 
 TEST(IndexTest, overwriteReturnsOldValueAndRebindsViewKey) {
-  sphinx::index::Index<std::string_view, int> index;
+  sphinx::Index<std::string_view, int> index;
   std::string first = "same";
   std::string second = "same";
   ASSERT_FALSE(index.insert_or_assign(first, 1).has_value());

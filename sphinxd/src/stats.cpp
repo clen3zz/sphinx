@@ -6,7 +6,7 @@
 #include <iterator>
 #include <utility>
 
-namespace sphinx::stats {
+namespace sphinx {
 
 namespace {
 
@@ -105,4 +105,4 @@ std::string ServerStats::render() const {
   return response;
 }
 
-}  // namespace sphinx::stats
+}  // namespace sphinx

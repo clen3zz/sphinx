@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-namespace sphinx::buffer {
+namespace sphinx {
 
 // 检查缓冲区是否为空
 bool Buffer::is_empty() const {
@@ -51,4 +51,4 @@ std::string_view Buffer::string_view() const {
   return std::string_view{_data.data(), _data.size()};
 }
 
-}  // namespace sphinx::buffer
+}  // namespace sphinx

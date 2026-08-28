@@ -7,7 +7,7 @@
 
 #include <unordered_map>
 
-namespace sphinx::reactor {
+namespace sphinx {
 
 class EpollReactor : public Reactor {
   std::unordered_map<int, std::shared_ptr<Pollable>> _pollables;
@@ -27,4 +27,4 @@ class EpollReactor : public Reactor {
  private:
   void update_epoll(Pollable* pollable, uint32_t events);
 };
-}  // namespace sphinx::reactor
+}  // namespace sphinx

@@ -9,12 +9,11 @@
 #include <utility>
 
 #include "command_executor.h"
-namespace sphinx::server {
+namespace sphinx {
 namespace {
 
 // 判断是否为无需按键哈希分片的查询类命令（Version、Stats）
-bool is_server_info_command(memcache::Opcode op) {
-  using memcache::Opcode;
+bool is_server_info_command(Opcode op) {
   return op == Opcode::Version || op == Opcode::Stats;
 }
 
@@ -25,7 +24,7 @@ Server::Server(const LogConfig& log_config, const std::string& backend, size_t t
                std::shared_ptr<ReactorGroup> reactor_group, std::shared_ptr<ServerStats> stats,
                std::shared_ptr<std::atomic_bool> mget_queue_failure_used)
     : _reactor{make_reactor(backend, thread_id, std::move(reactor_group),
-                            [this](const reactor::MessagePtr& data) { on_message(data); })},
+                            [this](const MessagePtr& data) { on_message(data); })},
       _log{log_config},
       _stats{std::move(stats)},
       _mget_queue_failure_used{std::move(mget_queue_failure_used)} {
@@ -44,7 +43,7 @@ void Server::serve(const Config& config) {
 }
 
 // Reactor 跨线程消息到达回调
-void Server::on_message(const reactor::MessagePtr& data) {
+void Server::on_message(const MessagePtr& data) {
   if (data == nullptr) {
     return;
   }
@@ -143,7 +142,6 @@ void Server::recv(const std::shared_ptr<Connection>& connection,
 
 // 解析并调度单条 Memcached 协议命令
 size_t Server::process_one(const std::shared_ptr<Connection>& connection, std::string_view data) {
-  using namespace memcache;
   Parser parser;
   const auto header_size = parser.parse(data);
 
@@ -295,7 +293,7 @@ size_t Server::process_one(const std::shared_ptr<Connection>& connection, std::s
 
 // 构造 Command 对象
 Command Server::make_command(const std::shared_ptr<Connection>& connection, uint64_t sequence,
-                             memcache::Opcode op, std::string_view key) const {
+                             Opcode op, std::string_view key) const {
   return {connection->id(), sequence, _reactor->thread_id(), op, std::string{key}};
 }
 
@@ -311,7 +309,7 @@ void Server::dispatch_command(Command command) {
   // 2. 服务器查询命令留在本线程处理，数据命令根据键哈希计算目标分区线程
   const auto target = is_server_info_command(command.op)
                           ? _reactor->thread_id()
-                          : find_target(logmem::Object::hash_of(command.key));
+                          : find_target(Object::hash_of(command.key));
 
   // 3. 目标即本线程，直接同步调用 handle_command
   if (target == _reactor->thread_id()) {
@@ -469,4 +467,4 @@ bool Server::force_mget_queue_failure_once() const {
                                                            std::memory_order_relaxed);
 }
 
-}  // namespace sphinx::server
+}  // namespace sphinx

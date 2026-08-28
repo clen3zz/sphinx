@@ -11,7 +11,7 @@
 #include <stdexcept>
 #include <system_error>
 
-namespace sphinx::reactor {
+namespace sphinx {
 namespace {
 
 // Eventfd 可轮询对象包装：用于跨线程唤醒 Reactor 事件循环
@@ -224,4 +224,4 @@ void EpollReactor::update_epoll(Pollable* pollable, uint32_t events) {
   _epoll_events.insert_or_assign(pollable->fd(), events);
 }
 
-}  // namespace sphinx::reactor
+}  // namespace sphinx

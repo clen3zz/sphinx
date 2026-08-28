@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <string>
 
-namespace sphinx::stats {
+namespace sphinx {
 
 /**
  * 用于生成简易 ASCII stats 响应的进程级计数器。
@@ -62,8 +62,4 @@ class ServerStats {
   std::array<std::atomic<uint64_t>, counter_count> _counters{};
 };
 
-}  // namespace sphinx::stats
-
-namespace sphinx {
-using ServerStats = stats::ServerStats;
-}
+}  // namespace sphinx

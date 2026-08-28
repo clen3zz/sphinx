@@ -20,14 +20,12 @@
 #include "server/config.h"
 #include "server/server.h"
 
-using namespace sphinx;
-
 namespace {
 
 // 工作线程主函数：负责各线程的 CPU 绑定、实时调度、内存分配、Server 实例化并启动事件循环
-void run_server_thread(size_t thread_id, std::optional<int> cpu_id, const Config& config,
-                       const std::shared_ptr<ServerStats>& stats,
-                       const std::shared_ptr<ReactorGroup>& reactor_group,
+void run_server_thread(size_t thread_id, std::optional<int> cpu_id, const sphinx::Config& config,
+                       const std::shared_ptr<sphinx::ServerStats>& stats,
+                       const std::shared_ptr<sphinx::ReactorGroup>& reactor_group,
                        const std::shared_ptr<std::atomic_bool>& mget_queue_failure_used) {
   try {
     // 1. CPU 核心亲和性绑定（减少跨核调度与缓存失效）
@@ -53,17 +51,17 @@ void run_server_thread(size_t thread_id, std::optional<int> cpu_id, const Config
 
     // 3. 线程私有内存分配（将总内存限额均分给各工作线程，通过 mmap 匿名映射）
     auto memory_size = static_cast<size_t>(config.memory_limit) * 1024 * 1024;
-    auto memory = Memory::mmap(memory_size / static_cast<size_t>(config.nr_threads));
+    auto memory = sphinx::Memory::mmap(memory_size / static_cast<size_t>(config.nr_threads));
 
     // 4. 日志型内存存储（Log-structured Memory）配置
-    LogConfig log_config;
+    sphinx::LogConfig log_config;
     log_config.segment_size = static_cast<size_t>(config.segment_size) * 1024 * 1024;
     log_config.memory_ptr = static_cast<char*>(memory.addr());
     log_config.memory_size = memory.size();
 
     // 5. 初始化 Server 实例并启动事件循环（监听端口并处理请求）
-    Server server{log_config,    config.backend, thread_id,
-                  reactor_group, stats,          mget_queue_failure_used};
+    sphinx::Server server{log_config,    config.backend, thread_id,
+                          reactor_group, stats,          mget_queue_failure_used};
     server.serve(config);
   } catch (const std::exception& error) {
     std::cerr << "error: " << error.what() << '\n' << std::flush;
@@ -98,10 +96,10 @@ int main(int argc, char* argv[]) {
   try {
     // 1. 命令行参数解析
     std::string program = ::basename(argv[0]);
-    auto config = parse_options(argc, argv, program);
+    auto config = sphinx::parse_options(argc, argv, program);
 
     // 2. 全局统计指标初始化
-    auto stats = std::make_shared<ServerStats>(
+    auto stats = std::make_shared<sphinx::ServerStats>(
         std::string{SPHINX_VERSION}, static_cast<uint64_t>(config.nr_threads),
         static_cast<uint64_t>(config.memory_limit) * 1024 * 1024);
 
@@ -109,7 +107,7 @@ int main(int argc, char* argv[]) {
     CpuAffinity cpu_affinity{config.isolate_cpus};
 
     // 4. 线程间通信与协同组件初始化（Reactor 分组与全局多键获取失败标记）
-    auto reactor_group = std::make_shared<ReactorGroup>(config.nr_threads);
+    auto reactor_group = std::make_shared<sphinx::ReactorGroup>(config.nr_threads);
     auto mget_queue_failure_used = std::make_shared<std::atomic_bool>(false);
 
     // 5. 创建并启动工作线程池

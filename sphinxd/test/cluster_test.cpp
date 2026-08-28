@@ -17,9 +17,9 @@
 
 namespace {
 
-using sphinx::cluster::ConsistentHashRing;
-using sphinx::cluster::Node;
-using sphinx::cluster::RingEntry;
+using sphinx::ConsistentHashRing;
+using sphinx::Node;
+using sphinx::RingEntry;
 
 uint32_t murmur_hash(std::string_view value) {
   uint32_t hash = 0;
@@ -28,13 +28,13 @@ uint32_t murmur_hash(std::string_view value) {
 }
 
 TEST(ClusterConfigTest, ParsesSingleAndMultipleNodes) {
-  const auto single = sphinx::cluster::parse_nodes("127.0.0.1:11211");
+  const auto single = sphinx::parse_nodes("127.0.0.1:11211");
   ASSERT_EQ(single.size(), 1U);
   EXPECT_EQ(single[0].host, "127.0.0.1");
   EXPECT_EQ(single[0].port, 11211);
   EXPECT_EQ(single[0].id(), "127.0.0.1:11211");
 
-  const auto multiple = sphinx::cluster::parse_nodes("cache-a:1,cache-b:65535");
+  const auto multiple = sphinx::parse_nodes("cache-a:1,cache-b:65535");
   ASSERT_EQ(multiple.size(), 2U);
   EXPECT_EQ(multiple[0], (Node{"cache-a", 1}));
   EXPECT_EQ(multiple[1], (Node{"cache-b", 65535}));
@@ -57,13 +57,13 @@ TEST(ClusterConfigTest, RejectsInvalidConfigurations) {
                                             "cache-a:1, cache-b:2",
                                             "[::1]:1"};
   for (const auto& configuration : invalid) {
-    EXPECT_THROW(sphinx::cluster::parse_nodes(configuration), std::invalid_argument)
+    EXPECT_THROW(sphinx::parse_nodes(configuration), std::invalid_argument)
         << configuration;
   }
 }
 
 TEST(ClusterConfigTest, NormalizesPortOnlyForTheNodeId) {
-  const auto nodes = sphinx::cluster::parse_nodes("cache-a:00042");
+  const auto nodes = sphinx::parse_nodes("cache-a:00042");
   ASSERT_EQ(nodes.size(), 1U);
   EXPECT_EQ(nodes[0].port, 42);
   EXPECT_EQ(nodes[0].id(), "cache-a:42");

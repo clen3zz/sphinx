@@ -231,7 +231,7 @@ TEST(ClusterClientTest, HandlesPartialResponsesAndBinaryValues) {
   }};
   server.start();
 
-  sphinx::cluster::ClusterClient client{node_spec(server.port())};
+  sphinx::ClusterClient client{node_spec(server.port())};
   const std::string binary_value{"\0x\r\n", 4};
   EXPECT_TRUE(client.set("key", binary_value));
   const auto value = client.get("key");
@@ -248,7 +248,7 @@ TEST(ClusterClientTest, GetMissReturnsNullopt) {
   }};
   server.start();
 
-  sphinx::cluster::ClusterClient client{node_spec(server.port())};
+  sphinx::ClusterClient client{node_spec(server.port())};
   const auto result = client.get("missing");
   EXPECT_FALSE(result.has_value());
 }
@@ -274,7 +274,7 @@ TEST(ClusterClientTest, ConnectionReuseAvoidsASecondAccept) {
   }};
   server.start();
 
-  sphinx::cluster::ClusterClient client{node_spec(server.port())};
+  sphinx::ClusterClient client{node_spec(server.port())};
   EXPECT_TRUE(client.set("key", "bar"));
   EXPECT_EQ(client.get("key"), std::optional<std::string>{"foo"});
   EXPECT_TRUE(client.remove("key"));
@@ -289,11 +289,11 @@ TEST(ClusterClientTest, EarlyCloseIsAnErrorRatherThanAGetMiss) {
   }};
   server.start();
 
-  sphinx::cluster::ClusterClient client{node_spec(server.port())};
+  sphinx::ClusterClient client{node_spec(server.port())};
   try {
     (void)client.get("key");
     FAIL() << "expected a client error";
-  } catch (const sphinx::cluster::ClientError& error) {
+  } catch (const sphinx::ClientError& error) {
     EXPECT_NE(std::string{error.what()}.find(node_spec(server.port())), std::string::npos);
   }
 }
@@ -306,11 +306,11 @@ TEST(ClusterClientTest, MalformedResponseIsAnError) {
   }};
   server.start();
 
-  sphinx::cluster::ClusterClient client{node_spec(server.port())};
+  sphinx::ClusterClient client{node_spec(server.port())};
   try {
     (void)client.get("key");
     FAIL() << "expected a client error";
-  } catch (const sphinx::cluster::ClientError& error) {
+  } catch (const sphinx::ClientError& error) {
     EXPECT_NE(std::string{error.what()}.find(node_spec(server.port())), std::string::npos);
   }
 }
@@ -323,11 +323,11 @@ TEST(ClusterClientTest, RejectsNonDecimalFlagsAndIncludesNode) {
   }};
   server.start();
 
-  sphinx::cluster::ClusterClient client{node_spec(server.port())};
+  sphinx::ClusterClient client{node_spec(server.port())};
   try {
     (void)client.get("key");
     FAIL() << "expected a client error";
-  } catch (const sphinx::cluster::ClientError& error) {
+  } catch (const sphinx::ClientError& error) {
     EXPECT_NE(std::string{error.what()}.find(node_spec(server.port())), std::string::npos);
   }
 }
@@ -336,13 +336,13 @@ TEST(ClusterClientTest, ReconnectsOnTheNextOperationAfterFailure) {
   TwoConnectionServer server;
   server.start();
 
-  sphinx::cluster::ClusterClient client{node_spec(server.port()), std::chrono::milliseconds{200}};
-  EXPECT_THROW((void)client.get("key"), sphinx::cluster::ClientError);
+  sphinx::ClusterClient client{node_spec(server.port()), std::chrono::milliseconds{200}};
+  EXPECT_THROW((void)client.get("key"), sphinx::ClientError);
   EXPECT_FALSE(client.get("key").has_value());
 }
 
 TEST(ClusterClientTest, DefaultTimeoutIsTwoSeconds) {
-  EXPECT_EQ(sphinx::cluster::ClusterClient::kDefaultTimeout, std::chrono::milliseconds{2000});
+  EXPECT_EQ(sphinx::ClusterClient::kDefaultTimeout, std::chrono::milliseconds{2000});
 }
 
 TEST(ClusterClientTest, TimeoutIsBoundedAndIncludesNode) {
@@ -353,12 +353,12 @@ TEST(ClusterClientTest, TimeoutIsBoundedAndIncludesNode) {
   }};
   server.start();
 
-  sphinx::cluster::ClusterClient client{node_spec(server.port()), std::chrono::milliseconds{40}};
+  sphinx::ClusterClient client{node_spec(server.port()), std::chrono::milliseconds{40}};
   const auto begin = std::chrono::steady_clock::now();
   try {
     (void)client.get("key");
     FAIL() << "expected a timeout";
-  } catch (const sphinx::cluster::ClientError& error) {
+  } catch (const sphinx::ClientError& error) {
     const auto elapsed = std::chrono::steady_clock::now() - begin;
     EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 500);
     EXPECT_NE(std::string{error.what()}.find(node_spec(server.port())), std::string::npos);

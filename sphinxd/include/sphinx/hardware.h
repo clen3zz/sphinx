@@ -3,7 +3,7 @@
 
 #pragma once
 
-namespace sphinx::hardware {
+namespace sphinx {
 
 static constexpr int cache_line_size =
 #ifdef __x86_64__
@@ -11,4 +11,4 @@ static constexpr int cache_line_size =
 #else
 #error "L1 cache line size is not defined for this architecture."
 #endif
-}  // namespace sphinx::hardware
+}  // namespace sphinx

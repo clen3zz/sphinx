@@ -11,7 +11,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace sphinx::logmem {
+namespace sphinx {
 
 // 获取当前系统时间的 UNIX 秒级时间戳
 static uint64_t current_time_seconds() {
@@ -435,4 +435,4 @@ size_t Log::expire(Segment* segment) {
   return nr_reclaimed;
 }
 
-}  // namespace sphinx::logmem
+}  // namespace sphinx

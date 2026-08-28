@@ -7,17 +7,15 @@
 #include <thread>
 
 TEST(QueueTest, try_to_emplace) {
-  using namespace sphinx::spsc;
-  Queue<int, 128> queue;
+  sphinx::Queue<int, 128> queue;
   ASSERT_TRUE(queue.empty());
   ASSERT_TRUE(queue.try_to_emplace(1));
   ASSERT_FALSE(queue.empty());
 }
 
 TEST(QueueTest, producer_consumer) {
-  using namespace sphinx::spsc;
   constexpr int nr_iterations = 1000000;
-  Queue<int, 128> queue;
+  sphinx::Queue<int, 128> queue;
   std::thread producer{[&queue]() {
     for (int i = 0; i < nr_iterations; i++) {
       while (!queue.try_to_emplace(i)) {

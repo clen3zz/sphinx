@@ -5,8 +5,7 @@
 #include <sphinx/buffer.h>
 
 TEST(BufferTest, append) {
-  using namespace sphinx::buffer;
-  Buffer buf;
+  sphinx::Buffer buf;
   ASSERT_TRUE(buf.size() == 0);
   std::string value = "The quick brown fox jumps over the lazy dog";
   buf.append(value);

@@ -12,7 +12,7 @@ int main(int argc, char* argv[]) {
   }
 
   try {
-    sphinx::cluster::ClusterClient client{std::string_view{argv[1]}};
+    sphinx::ClusterClient client{std::string_view{argv[1]}};
     constexpr std::string_view key = "cluster-client-integration-key";
     constexpr std::string_view value = "cluster-client-integration-value";
 
@@ -23,7 +23,7 @@ int main(int argc, char* argv[]) {
     if (!hit || *hit != value) {
       throw std::runtime_error{"get did not return the stored value"};
     }
-    if (client.remove_status(key) != sphinx::cluster::DeleteStatus::Deleted) {
+    if (client.remove_status(key) != sphinx::DeleteStatus::Deleted) {
       throw std::runtime_error{"delete did not report DELETED"};
     }
     if (client.get(key).has_value()) {

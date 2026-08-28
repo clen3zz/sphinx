@@ -14,7 +14,7 @@
 #include <utility>
 #include <vector>
 
-namespace sphinx::cluster {
+namespace sphinx {
 
 enum class DeleteStatus : std::uint8_t { Deleted, NotFound };
 
@@ -65,10 +65,4 @@ class ClusterClient final {
   std::unordered_map<std::string, std::unique_ptr<MemcachedConnection>> _connections;
 };
 
-}  // namespace sphinx::cluster
-
-namespace sphinx {
-using ClusterClient = cluster::ClusterClient;
-using DeleteStatus = cluster::DeleteStatus;
-using ClientError = cluster::ClientError;
 }  // namespace sphinx

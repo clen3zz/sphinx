@@ -15,7 +15,7 @@
 #include <system_error>
 #include <utility>
 
-namespace sphinx::cluster {
+namespace sphinx {
 namespace {
 
 constexpr size_t kMaxResponseLine = size_t{64} * 1024;
@@ -482,4 +482,4 @@ DeleteStatus ClusterClient::remove_status(std::string_view key) {
   return execute(key, [&](MemcachedConnection& connection) { return connection.remove(key); });
 }
 
-}  // namespace sphinx::cluster
+}  // namespace sphinx

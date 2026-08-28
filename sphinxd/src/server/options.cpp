@@ -11,7 +11,7 @@
 
 #include "config.h"
 
-namespace sphinx::server {
+namespace sphinx {
 namespace {
 
 // 打印程序版本号
@@ -31,7 +31,7 @@ void print_usage(const std::string& program) {
       << ")\n  -b, --listen-backlog number Listen backlog size (default: " << default_listen_backlog
       << ")\n  -t, --threads number        number of threads to use (default: "
       << default_nr_threads << ")\n  -I, --io-backend name       I/O backend (default: "
-      << reactor::Reactor::default_backend()
+      << Reactor::default_backend()
       << ")\n  -i, --isolate-cpus list     list of CPUs to isolate application threads\n"
       << "  -S, --sched-fifo            use SCHED_FIFO scheduling policy\n"
       << "      --help                  print this help text and exit\n"
@@ -76,8 +76,8 @@ void validate(const Config& args) {
   require(args.listen_backlog > 0, "listen backlog must be positive");
 
   // 2. 线程数合法性校验（不得超过系统 Reactor 上限）
-  require(args.nr_threads > 0 && args.nr_threads <= reactor::max_nr_threads,
-          "thread count must be between 1 and " + std::to_string(reactor::max_nr_threads));
+  require(args.nr_threads > 0 && args.nr_threads <= max_nr_threads,
+          "thread count must be between 1 and " + std::to_string(max_nr_threads));
 
   // 3. 内存与段大小基础正数校验
   require(args.memory_limit > 0, "memory limit must be positive");
@@ -172,4 +172,4 @@ Config parse_options(int argc, char* argv[], const std::string& program) {
   return args;
 }
 
-}  // namespace sphinx::server
+}  // namespace sphinx

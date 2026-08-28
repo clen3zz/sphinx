@@ -12,7 +12,7 @@
 
 namespace {
 
-using ServerStats = sphinx::stats::ServerStats;
+using ServerStats = sphinx::ServerStats;
 using Counter = ServerStats::Counter;
 
 constexpr std::array<Counter, 9> kCounters = {

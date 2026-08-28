@@ -29,7 +29,7 @@
 /// Furthermore, the allocator first exhausts all memory it manages before
 /// attempting to reclaim space by expiring segments.
 
-namespace sphinx::logmem {
+namespace sphinx {
 
 /// \addtogroup logmem-module
 /// @{
@@ -135,7 +135,7 @@ struct ArithmeticResult {
 
 /// A log of objects.
 class Log {
-  index::Index<Key, Object*> _index;
+  Index<Key, Object*> _index;
   std::vector<Segment*> _segment_ring;
   size_t _segment_ring_head = 0;
   size_t _segment_ring_tail = 0;
@@ -167,12 +167,4 @@ class Log {
 };
 
 /// @}
-}  // namespace sphinx::logmem
-
-namespace sphinx {
-using Log = logmem::Log;
-using LogConfig = logmem::LogConfig;
-using Object = logmem::Object;
-using Segment = logmem::Segment;
-using Hash = logmem::Hash;
 }  // namespace sphinx

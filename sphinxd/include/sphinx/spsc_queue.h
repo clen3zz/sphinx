@@ -30,7 +30,7 @@
 ///   Computing (SBAC-PAD), 2013 25th International Symposium on (pp. 144-151).
 ///   IEEE.
 
-namespace sphinx::spsc {
+namespace sphinx {
 
 /// \addtogroup spsc-queue-module
 /// @{
@@ -38,8 +38,8 @@ namespace sphinx::spsc {
 template <typename T, size_t N>
 class Queue {
   static_assert(N > 1, "SPSC queue capacity must be greater than one");
-  alignas(hardware::cache_line_size) std::atomic<size_t> _head = 0;
-  alignas(hardware::cache_line_size) std::atomic<size_t> _tail = 0;
+  alignas(cache_line_size) std::atomic<size_t> _head = 0;
+  alignas(cache_line_size) std::atomic<size_t> _tail = 0;
   std::array<T, N> _data;
 
  public:
@@ -80,4 +80,4 @@ class Queue {
 };
 
 /// @}
-}  // namespace sphinx::spsc
+}  // namespace sphinx

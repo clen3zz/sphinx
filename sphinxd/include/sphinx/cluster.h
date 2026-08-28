@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-namespace sphinx::cluster {
+namespace sphinx {
 
 struct Node {
   std::string host;
@@ -44,11 +44,4 @@ class ConsistentHashRing {
   std::vector<RingEntry> _entries;
 };
 
-}  // namespace sphinx::cluster
-
-namespace sphinx {
-using Node = cluster::Node;
-using RingEntry = cluster::RingEntry;
-using ConsistentHashRing = cluster::ConsistentHashRing;
-using cluster::parse_nodes;
 }  // namespace sphinx

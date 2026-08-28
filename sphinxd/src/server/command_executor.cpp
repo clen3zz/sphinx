@@ -4,13 +4,11 @@
 #include <sphinx/string.h>
 
 #include <utility>
-namespace sphinx::server {
+namespace sphinx {
 namespace {
 
 // 执行存储类修改命令（Set、Add、Replace、Delete、Incr、Decr）
-ExecutionResult execute_storage(logmem::Log& log, const Command& command) {
-  using memcache::Opcode;
-
+ExecutionResult execute_storage(Log& log, const Command& command) {
   switch (command.op) {
     // 1. 写入类命令（Set / Add / Replace）
     case Opcode::Set:
@@ -40,13 +38,13 @@ ExecutionResult execute_storage(logmem::Log& log, const Command& command) {
       const auto [status, val] = command.op == Opcode::Incr ? log.incr(command.key, command.delta)
                                                             : log.decr(command.key, command.delta);
       switch (status) {
-        case logmem::ArithmeticStatus::Success:
+        case ArithmeticStatus::Success:
           return {to_string(val) + "\r\n"};
-        case logmem::ArithmeticStatus::NotFound:
+        case ArithmeticStatus::NotFound:
           return {"NOT_FOUND\r\n"};
-        case logmem::ArithmeticStatus::NonNumeric:
+        case ArithmeticStatus::NonNumeric:
           return {"CLIENT_ERROR cannot increment or decrement non-numeric value\r\n"};
-        case logmem::ArithmeticStatus::StorageFull:
+        case ArithmeticStatus::StorageFull:
           return {"SERVER_ERROR out of memory storing object\r\n"};
       }
       break;
@@ -62,7 +60,7 @@ ExecutionResult execute_storage(logmem::Log& log, const Command& command) {
 }
 
 // 执行读取查询命令（Get / multi-get 分片）
-ExecutionResult execute_get(logmem::Log& log, stats::ServerStats& stats,
+ExecutionResult execute_get(Log& log, ServerStats& stats,
                             const Command& command) {
   std::string response;
 
@@ -100,10 +98,8 @@ ExecutionResult execute_get(logmem::Log& log, stats::ServerStats& stats,
 }  // namespace
 
 // 命令执行统一入口：根据操作码将请求派发到对应的执行子逻辑
-ExecutionResult execute_command(logmem::Log& log, stats::ServerStats& stats,
+ExecutionResult execute_command(Log& log, ServerStats& stats,
                                 const Command& command) {
-  using memcache::Opcode;
-
   switch (command.op) {
     case Opcode::Version:
       return {"VERSION 1.5.16\r\n"};
@@ -126,4 +122,4 @@ ExecutionResult execute_command(logmem::Log& log, stats::ServerStats& stats,
   return {};
 }
 
-}  // namespace sphinx::server
+}  // namespace sphinx

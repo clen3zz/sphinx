@@ -19,7 +19,7 @@
 #include <stdexcept>
 #include <system_error>
 
-namespace sphinx::reactor {
+namespace sphinx {
 
 // Socket 基础抽象类构造函数
 Socket::Socket(int sockfd) : _sockfd{sockfd} {
@@ -294,7 +294,7 @@ bool TcpSocket::on_pollout() {
 
 // 跨线程单向消息通道：无锁 SPSC 环形队列配合溢出链表队列
 struct ReactorGroup::Channel {
-  spsc::Queue<MessagePtr, reactor_message_queue_size> queue;
+  Queue<MessagePtr, reactor_message_queue_size> queue;
   std::mutex overflow_mutex;
   std::deque<MessagePtr> overflow;
 };
@@ -579,4 +579,4 @@ std::unique_ptr<Reactor> make_reactor(const std::string& backend, size_t thread_
   throw std::invalid_argument("unrecognized '" + backend + "' backend");
 }
 
-}  // namespace sphinx::reactor
+}  // namespace sphinx

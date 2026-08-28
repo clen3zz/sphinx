@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-namespace sphinx::buffer {
+namespace sphinx {
 
 class Buffer {
   std::vector<char> _data;
@@ -19,8 +19,4 @@ class Buffer {
   size_t size() const;
   std::string_view string_view() const;
 };
-}  // namespace sphinx::buffer
-
-namespace sphinx {
-using Buffer = buffer::Buffer;
-}
+}  // namespace sphinx

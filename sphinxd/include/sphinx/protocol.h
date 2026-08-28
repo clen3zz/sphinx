@@ -16,7 +16,7 @@
 
 /* #line 72 "sphinxd/src/protocol.rl" */
 
-namespace sphinx::memcache {
+namespace sphinx {
 
 /* #line 20 "sphinxd/include/sphinx/protocol.h" */
 static const signed char _actions[] = {0, 1, 0, 1,  1, 1,  3, 1,  4, 1,  5,  1,  6, 1,  7, 1,  8,
@@ -568,4 +568,4 @@ class Parser {
   }
 };
 
-}  // namespace sphinx::memcache
+}  // namespace sphinx

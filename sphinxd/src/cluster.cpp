@@ -13,7 +13,7 @@
 
 #include "MurmurHash3.h"
 
-namespace sphinx::cluster {
+namespace sphinx {
 namespace {
 
 constexpr uint32_t kMurmurSeed = 1;
@@ -204,4 +204,4 @@ const std::vector<RingEntry>& ConsistentHashRing::entries() const {
   return _entries;
 }
 
-}  // namespace sphinx::cluster
+}  // namespace sphinx

@@ -5,7 +5,7 @@
 
 #include <cstddef>
 
-namespace sphinx::memory {
+namespace sphinx {
 
 class Memory {
   void* _addr;
@@ -25,8 +25,4 @@ class Memory {
  private:
   void release() noexcept;
 };
-}  // namespace sphinx::memory
-
-namespace sphinx {
-using Memory = memory::Memory;
-}
+}  // namespace sphinx

@@ -14,7 +14,7 @@
 #include "config.h"
 #include "connection.h"
 #include "message.h"
-namespace sphinx::server {
+namespace sphinx {
 
 // 单工作线程服务实例类：
 // 封装当前线程的私有 Reactor 事件驱动循环、日志内存存储引擎（Log）、客户端连接表与跨线程消息路由
@@ -37,7 +37,7 @@ class Server final {
 
  private:
   // Reactor 邮箱消息就绪回调（跨线程消息分发）
-  void on_message(const reactor::MessagePtr& data);
+  void on_message(const MessagePtr& data);
 
   // 处理分发给本线程执行的存储/查询命令
   void handle_command(const Command& command);
@@ -57,7 +57,7 @@ class Server final {
 
   // 构造标准命令对象
   Command make_command(const std::shared_ptr<Connection>& connection, uint64_t sequence,
-                       memcache::Opcode op, std::string_view key) const;
+                       Opcode op, std::string_view key) const;
 
   // 根据键的一致性哈希计算目标线程并分发命令
   void dispatch_command(Command command);
@@ -95,8 +95,4 @@ class Server final {
   bool force_mget_queue_failure_once() const;
 };
 
-}  // namespace sphinx::server
-
-namespace sphinx {
-using Server = server::Server;
-}
+}  // namespace sphinx
