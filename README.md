@@ -4,7 +4,7 @@ Sphinx 是一个运行在 Linux 上的 C++17 内存键值缓存。本仓库基�
 [penberg/sphinx](https://github.com/penberg/sphinx) 继续开发，重点展示事件驱动网络、
 多线程分片、日志结构化内存和一致性哈希在缓存系统中的组合方式。
 
-## 原有核心架构
+## 核心架构
 
 - 使用 Linux `epoll` 和每线程一个 Reactor 处理 TCP 连接；
 - 按键哈希把数据分配到进程内不同存储线程，跨线程请求通过消息队列传递；
@@ -20,7 +20,7 @@ Sphinx 是一个运行在 Linux 上的 C++17 内存键值缓存。本仓库基�
 ## 新增功能
 
 - 扩展 Memcached ASCII 协议，支持多键 `get`、`delete`、`incr` / `decr`、`flags` 和相对或绝对过期时间；
-- 新增进程级 `stats`，统计命令数、缓存命中和未命中；
+- 新增进程级 `stats`，统计数据命令数、缓存命中和未命中；
 - 新增一致性哈希集群客户端，实现多节点静态分片、按节点复用连接及连接与 I/O 超时处理；
 - 新增自动化测试、三节点集成测试，以及基于 `memtier_benchmark` 的可复现端到端基准。
 
@@ -54,8 +54,8 @@ Sphinx 实现了以下 Memcached ASCII 协议子集：
 | `get` | 按请求顺序读取一个或多个键 |
 | `delete` | 删除键 |
 | `incr` / `decr` | 对无符号十进制值进行原子增减 |
-| `stats` | 返回进程级命令、命中和未命中统计 |
-| `version` | 返回服务版本 |
+| `stats` | 返回进程级数据命令、命中和未命中统计 |
+| `version` | 返回兼容的 Memcached 版本字符串 |
 
 ## 构建与测试
 
@@ -63,16 +63,18 @@ Ubuntu 24.04 可安装以下依赖：
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake ragel python3 libgtest-dev
+sudo apt install -y build-essential cmake ragel python3 libgtest-dev netcat-openbsd
 ```
 
-构建并运行全部测试：
+构建并运行默认测试：
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
 ```
+
+`memtier_benchmark` 是可选依赖；安装后重新配置，CTest 会自动增加基准冒烟测试。
 
 ## 启动服务
 
@@ -108,8 +110,9 @@ NODES=127.0.0.1:11211,127.0.0.1:11212,127.0.0.1:11213
 
 ## 文档
 
+- [调用链说明](CALL_CHAIN.md)
 - [端到端基准方法与结果](BENCHMARK.md)
 
 ## 来源与许可
 
-本项目基于 [penberg/sphinx](https://github.com/penberg/sphinx)，沿用 Apache License 2.0。
+本项目基于 [penberg/sphinx](https://github.com/penberg/sphinx)，项目代码采用 Apache License 2.0；第三方文件遵循各自的许可声明。
