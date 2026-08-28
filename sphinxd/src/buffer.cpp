@@ -3,7 +3,6 @@
 
 #include <sphinx/buffer.h>
 
-#include <cstddef>
 #include <stdexcept>
 #include <string_view>
 #include <vector>

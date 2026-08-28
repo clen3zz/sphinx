@@ -5,7 +5,6 @@
 #include <sphinx/logmem.h>
 
 #include <chrono>
-#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -61,9 +60,7 @@ size_t Object::size_of(const Key& key, const Blob& blob) {
 
 size_t Object::size_of(size_t key_size, size_t blob_size) {
   if (key_size > std::numeric_limits<uint32_t>::max() ||
-      blob_size > std::numeric_limits<uint32_t>::max() ||
-      key_size > std::numeric_limits<size_t>::max() - sizeof(Object) ||
-      blob_size > std::numeric_limits<size_t>::max() - sizeof(Object) - key_size) {
+      blob_size > std::numeric_limits<uint32_t>::max()) {
     throw std::invalid_argument("object is too large");
   }
   auto raw_size = sizeof(Object) + key_size + blob_size;
@@ -268,8 +265,7 @@ bool Log::try_to_append(Segment* segment, const Key& key, const Blob& blob, uint
   if (!object) {
     return false;
   }
-  auto old = _index.insert_or_assign(object->key(), object);
-  if (old) {
+  if (auto old = _index.insert_or_assign(object->key(), object)) {
     old.value()->expire();
   }
   return true;

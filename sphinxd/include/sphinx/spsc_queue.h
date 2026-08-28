@@ -7,7 +7,6 @@
 
 #include <array>
 #include <atomic>
-#include <cstddef>
 #include <utility>
 
 /// \defgroup spsc-queue-module A bounded, single-producer/single-consumer (SPSC) wait-free and
@@ -44,7 +43,7 @@ class Queue {
   std::array<T, N> _data;
 
  public:
-  bool empty() noexcept {
+  bool empty() const noexcept {
     return _head.load(std::memory_order_acquire) == _tail.load(std::memory_order_acquire);
   }
   template <typename... Args>

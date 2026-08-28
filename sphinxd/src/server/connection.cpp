@@ -13,7 +13,7 @@ std::optional<std::string> Connection::add_multi_get_piece(
   if (it == _pending_multi_gets.end()) {
     return std::nullopt;
   }
-  auto& state = it->second;
+  [[maybe_unused]] auto& [_, state] = *it;
   if (state.pending == 0) {
     return std::nullopt;
   }

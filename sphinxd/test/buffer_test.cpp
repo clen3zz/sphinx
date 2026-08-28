@@ -4,8 +4,6 @@
 #include <gtest/gtest.h>
 #include <sphinx/buffer.h>
 
-#include <algorithm>
-
 TEST(BufferTest, append) {
   using namespace sphinx::buffer;
   Buffer buf;

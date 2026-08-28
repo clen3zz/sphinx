@@ -5,9 +5,10 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
-#include <system_error>
 #include <type_traits>
 #include <utility>
+
+#include "command_executor.h"
 namespace sphinx::server {
 namespace {
 bool is_control_command(sphinx::memcache::Opcode op) {
@@ -158,9 +159,15 @@ size_t Server::process_one(const std::shared_ptr<Connection>& connection, std::s
             enqueue_response(connection, sequence, "CLIENT_ERROR bad data chunk\r\n");
             return;
           }
-          auto op = std::is_same_v<Parsed, SetCommand>
-                        ? Opcode::Set
-                        : (std::is_same_v<Parsed, AddCommand> ? Opcode::Add : Opcode::Replace);
+          constexpr auto op = []() {
+            if constexpr (std::is_same_v<Parsed, SetCommand>) {
+              return Opcode::Set;
+            } else if constexpr (std::is_same_v<Parsed, AddCommand>) {
+              return Opcode::Add;
+            } else {
+              return Opcode::Replace;
+            }
+          }();
           if (command.key.size() > std::numeric_limits<uint32_t>::max() ||
               command.flags > std::numeric_limits<uint32_t>::max() ||
               command.expiration > std::numeric_limits<uint32_t>::max()) {
@@ -172,11 +179,13 @@ size_t Server::process_one(const std::shared_ptr<Connection>& connection, std::s
           outgoing.blob.assign(value);
           outgoing.flags = static_cast<uint32_t>(command.flags);
           outgoing.expiration = normalize_expiration(command.expiration);
-          _stats->increment(op == Opcode::Set
-                                ? sphinx::stats::ServerStats::Counter::CmdSet
-                                : (op == Opcode::Add
-                                       ? sphinx::stats::ServerStats::Counter::CmdAdd
-                                       : sphinx::stats::ServerStats::Counter::CmdReplace));
+          if constexpr (std::is_same_v<Parsed, SetCommand>) {
+            _stats->increment(sphinx::stats::ServerStats::Counter::CmdSet);
+          } else if constexpr (std::is_same_v<Parsed, AddCommand>) {
+            _stats->increment(sphinx::stats::ServerStats::Counter::CmdAdd);
+          } else {
+            _stats->increment(sphinx::stats::ServerStats::Counter::CmdReplace);
+          }
           dispatch_command(std::move(outgoing));
         } else if constexpr (std::is_same_v<Parsed, GetCommand>) {
           if (command.keys.empty()) {

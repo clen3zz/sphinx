@@ -7,18 +7,18 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <limits>
+#include <random>
 #include <string>
 #include <string_view>
 
 static std::string make_random(size_t len) {
   auto make_random_char = []() {
+    thread_local std::minstd_rand rng{1337};
     static const char chars[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    const size_t nr_chars = sizeof(chars) - 1;
-    return chars[static_cast<size_t>(rand()) % nr_chars];
+    constexpr size_t nr_chars = sizeof(chars) - 1;
+    return chars[static_cast<size_t>(rng()) % nr_chars];
   };
   std::string str(len, 0);
   std::generate_n(str.begin(), len, make_random_char);

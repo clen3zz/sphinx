@@ -28,11 +28,11 @@ ExecutionResult execute_storage(sphinx::logmem::Log& log, const Command& command
 
     case Opcode::Incr:
     case Opcode::Decr: {
-      const auto arithmetic = command.op == Opcode::Incr ? log.incr(command.key, command.delta)
-                                                         : log.decr(command.key, command.delta);
-      switch (arithmetic.status) {
+      const auto [status, val] = command.op == Opcode::Incr ? log.incr(command.key, command.delta)
+                                                            : log.decr(command.key, command.delta);
+      switch (status) {
         case sphinx::logmem::ArithmeticStatus::Success:
-          return {sphinx::to_string(arithmetic.value) + "\r\n"};
+          return {sphinx::to_string(val) + "\r\n"};
         case sphinx::logmem::ArithmeticStatus::NotFound:
           return {"NOT_FOUND\r\n"};
         case sphinx::logmem::ArithmeticStatus::NonNumeric:
@@ -53,16 +53,15 @@ ExecutionResult execute_storage(sphinx::logmem::Log& log, const Command& command
 ExecutionResult execute_get(sphinx::logmem::Log& log, sphinx::stats::ServerStats& stats,
                             const Command& command) {
   std::string response;
-  auto search = log.find_value(command.key);
-  if (search) {
+  if (auto search = log.find_value(command.key)) {
     stats.increment(sphinx::stats::ServerStats::Counter::GetHits);
     const auto& value = search.value();
     response.reserve(command.key.size() + value.blob.size() + 48);
     response += "VALUE ";
     response += command.key;
-    response += " ";
+    response += ' ';
     response += sphinx::to_string(value.flags);
-    response += " ";
+    response += ' ';
     response += sphinx::to_string(value.blob.size());
     response += "\r\n";
     response += value.blob;

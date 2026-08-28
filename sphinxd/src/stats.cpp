@@ -3,7 +3,6 @@
 
 #include <sphinx/stats.h>
 
-#include <cstddef>
 #include <iterator>
 #include <utility>
 
@@ -72,11 +71,11 @@ std::string ServerStats::render() const {
   response += "STAT limit_maxbytes ";
   response += std::to_string(_limit_maxbytes);
   response += "\r\n";
-  for (const auto& info : kCounterNames) {
+  for (const auto& [counter_type, name] : kCounterNames) {
     response += "STAT ";
-    response += info.name;
-    response += " ";
-    response += std::to_string(counter(info.counter));
+    response += name;
+    response += ' ';
+    response += std::to_string(counter(counter_type));
     response += "\r\n";
   }
   response += "END\r\n";

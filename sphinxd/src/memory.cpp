@@ -5,7 +5,6 @@
 #include <sys/mman.h>
 
 #include <cerrno>
-#include <cstddef>
 #include <system_error>
 #include <utility>
 

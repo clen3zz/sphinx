@@ -6,13 +6,11 @@
 #include <sphinx/stats.h>
 
 #include <atomic>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string_view>
 #include <unordered_map>
 
-#include "command_executor.h"
 #include "config.h"
 #include "connection.h"
 #include "message.h"
