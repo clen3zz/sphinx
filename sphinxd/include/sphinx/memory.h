@@ -26,3 +26,7 @@ class Memory {
   void release() noexcept;
 };
 }  // namespace sphinx::memory
+
+namespace sphinx {
+using Memory = memory::Memory;
+}

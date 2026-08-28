@@ -167,3 +167,13 @@ std::unique_ptr<Reactor> make_reactor(const std::string& backend, size_t thread_
                                       std::shared_ptr<ReactorGroup> group,
                                       OnMessageFn&& on_message_fn);
 }  // namespace sphinx::reactor
+
+namespace sphinx {
+using Reactor = reactor::Reactor;
+using ReactorGroup = reactor::ReactorGroup;
+using Socket = reactor::Socket;
+using TcpSocket = reactor::TcpSocket;
+using TcpListener = reactor::TcpListener;
+using reactor::make_reactor;
+using reactor::make_tcp_listener;
+}  // namespace sphinx

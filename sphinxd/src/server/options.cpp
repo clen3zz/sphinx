@@ -13,9 +13,13 @@
 
 namespace sphinx::server {
 namespace {
+
+// 打印程序版本号
 void print_version() {
   std::cout << "Sphinx " << SPHINX_VERSION << '\n' << std::flush;
 }
+
+// 打印命令行选项使用说明文档
 void print_usage(const std::string& program) {
   std::cout
       << "Usage: " << program << " [OPTION]...\n"
@@ -33,47 +37,69 @@ void print_usage(const std::string& program) {
       << "      --help                  print this help text and exit\n"
       << "      --version               print Sphinx version and exit\n\n";
 }
+
+// 打印选项解析错误提示
 void print_option_error(const std::string& program, const std::string& option,
                         const std::string& reason) {
   std::cerr << program << ": " << reason << " '" << option << "' option\n";
   std::cerr << "Try '" << program << " --help' for more information\n" << std::flush;
 }
+
+// 解析逗号分隔的 CPU 编号列表字符串（如 "0,1,3"）
 std::set<int> parse_cpu_list(const std::string& raw_cpu_list) {
   std::set<int> cpu_list;
   std::istringstream input{raw_cpu_list};
   std::string token;
+
   while (std::getline(input, token, ',')) {
     auto cpu = std::stoi(token);
+    // 校验 CPU 编号是否在系统合法掩码范围内
     if (cpu < 0 || cpu >= CPU_SETSIZE) {
       throw std::invalid_argument("CPU id is out of range");
     }
     cpu_list.emplace(cpu);
   }
+
   return cpu_list;
 }
+
+// 校验解析后的服务器配置参数是否合法且互相兼容
 void validate(const Config& args) {
   const auto require = [](bool valid, const std::string& message) {
     if (!valid) {
       throw std::invalid_argument(message);
     }
   };
+
+  // 1. 端口与队列长度范围校验
   require(args.tcp_port >= 0 && args.tcp_port <= 65535, "TCP port must be between 0 and 65535");
-  require(args.memory_limit > 0, "memory limit must be positive");
-  require(args.segment_size > 0, "segment size must be positive");
   require(args.listen_backlog > 0, "listen backlog must be positive");
+
+  // 2. 线程数合法性校验（不得超过系统 Reactor 上限）
   require(args.nr_threads > 0 && args.nr_threads <= sphinx::reactor::max_nr_threads,
           "thread count must be between 1 and " + std::to_string(sphinx::reactor::max_nr_threads));
+
+  // 3. 内存与段大小基础正数校验
+  require(args.memory_limit > 0, "memory limit must be positive");
+  require(args.segment_size > 0, "segment size must be positive");
+
+  // 4. 内存分片约束校验（总内存必须可被工作线程数整除，且单线程内存必须整除段大小）
   require(args.memory_limit % args.nr_threads == 0,
           "memory limit (" + std::to_string(args.memory_limit) +
               ") is not divisible by number of threads (" + std::to_string(args.nr_threads) +
               "), which is required for partitioning");
+
   auto per_thread_memory = static_cast<uint64_t>(args.memory_limit / args.nr_threads) * 1024 * 1024;
   auto segment_bytes = static_cast<uint64_t>(args.segment_size) * 1024 * 1024;
   require(segment_bytes <= per_thread_memory && per_thread_memory % segment_bytes == 0,
           "per-thread memory must contain whole segments");
 }
+
 }  // namespace
+
+// 解析命令行长短参数并完成配置校验
 Config parse_options(int argc, char* argv[], const std::string& program) {
+  // 定义支持的长选项配置表
   static const option long_options[] = {
       {"port", required_argument, nullptr, 'p'},
       {"listen", required_argument, nullptr, 'l'},
@@ -92,6 +118,8 @@ Config parse_options(int argc, char* argv[], const std::string& program) {
   Config args;
   int option;
   int long_index;
+
+  // 循环解析各个命令行选项
   // NOLINTNEXTLINE(concurrency-mt-unsafe)
   while ((option = ::getopt_long(argc, argv, "p:l:m:s:b:t:I:i:S", long_options, &long_index)) !=
          -1) {
@@ -137,7 +165,11 @@ Config parse_options(int argc, char* argv[], const std::string& program) {
         std::exit(EXIT_FAILURE);  // NOLINT(concurrency-mt-unsafe)
     }
   }
+
+  // 统一校验参数组合的正确性
   validate(args);
+
   return args;
 }
+
 }  // namespace sphinx::server

@@ -66,3 +66,9 @@ class ClusterClient final {
 };
 
 }  // namespace sphinx::cluster
+
+namespace sphinx {
+using ClusterClient = cluster::ClusterClient;
+using DeleteStatus = cluster::DeleteStatus;
+using ClientError = cluster::ClientError;
+}  // namespace sphinx

@@ -45,3 +45,10 @@ class ConsistentHashRing {
 };
 
 }  // namespace sphinx::cluster
+
+namespace sphinx {
+using Node = cluster::Node;
+using RingEntry = cluster::RingEntry;
+using ConsistentHashRing = cluster::ConsistentHashRing;
+using cluster::parse_nodes;
+}  // namespace sphinx

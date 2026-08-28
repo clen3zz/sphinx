@@ -20,3 +20,7 @@ class Buffer {
   std::string_view string_view() const;
 };
 }  // namespace sphinx::buffer
+
+namespace sphinx {
+using Buffer = buffer::Buffer;
+}

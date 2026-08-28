@@ -168,3 +168,11 @@ class Log {
 
 /// @}
 }  // namespace sphinx::logmem
+
+namespace sphinx {
+using Log = logmem::Log;
+using LogConfig = logmem::LogConfig;
+using Object = logmem::Object;
+using Segment = logmem::Segment;
+using Hash = logmem::Hash;
+}  // namespace sphinx
