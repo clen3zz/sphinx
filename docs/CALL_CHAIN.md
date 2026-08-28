@@ -47,8 +47,9 @@ Sphinx 是一个 Linux 上的 C++17 内存缓存服务，支持一部分 Memcach
 sphinx/
 ├── CMakeLists.txt                   # 顶层构建配置
 ├── README.md                        # 使用说明
-├── BENCHMARK.md                     # 性能测试说明
-├── CALL_CHAIN.md                    # 本文档
+├── docs/
+│   ├── BENCHMARK.md                 # 性能测试说明
+│   └── CALL_CHAIN.md                # 本文档
 ├── scripts/                         # 格式化和基准测试脚本
 └── sphinxd/
     ├── CMakeLists.txt               # 服务端、客户端和测试目标

@@ -1,3 +1,0 @@
-#pragma once
-
-#define SPHINX_VERSION "v@SPHINX_VERSION@-@GIT_COMMIT_HASH@"

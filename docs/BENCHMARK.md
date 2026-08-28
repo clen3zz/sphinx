@@ -86,15 +86,15 @@ QPS 的单位是 operations/s，延迟的单位是 ms。“错误”是协议、
 
 | 负载 | Run | QPS | P50 | P95 | P99 | 错误 | 证据 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| read | 1 | 74,406.71 | 0.415 | 0.735 | 0.927 | 0 | [metadata](benchmark-results/20260824-075457-read-61335-7ba7976f.metadata.json) |
-| read | 2 | 72,853.55 | 0.415 | 0.743 | 0.935 | 0 | [metadata](benchmark-results/20260824-075537-read-62229-2efcccb4.metadata.json) |
-| read | 3 | 73,844.37 | 0.407 | 0.719 | 0.887 | 0 | [metadata](benchmark-results/20260824-075616-read-61334-7d2a5156.metadata.json) |
-| mixed | 1 | 73,142.36 | 0.415 | 0.719 | 0.879 | 0 | [metadata](benchmark-results/20260824-075714-mixed-62352-58cbd476.metadata.json) |
-| mixed | 2 | 73,447.12 | 0.415 | 0.719 | 0.903 | 0 | [metadata](benchmark-results/20260824-075751-mixed-62437-63b40f91.metadata.json) |
-| mixed | 3 | 75,577.14 | 0.415 | 0.719 | 0.895 | 0 | [metadata](benchmark-results/20260824-075827-mixed-62351-8a9fa3a9.metadata.json) |
-| write | 1 | 76,623.90 | 0.407 | 0.703 | 0.879 | 0 | [metadata](benchmark-results/20260824-075918-write-62574-93976f4c.metadata.json) |
-| write | 2 | 76,024.96 | 0.407 | 0.663 | 0.815 | 0 | [metadata](benchmark-results/20260824-075938-write-62609-3ad18933.metadata.json) |
-| write | 3 | 74,478.23 | 0.423 | 0.703 | 0.895 | 0 | [metadata](benchmark-results/20260824-075958-write-62573-350d21ad.metadata.json) |
+| read | 1 | 74,406.71 | 0.415 | 0.735 | 0.927 | 0 | [metadata](../benchmark-results/20260824-075457-read-61335-7ba7976f.metadata.json) |
+| read | 2 | 72,853.55 | 0.415 | 0.743 | 0.935 | 0 | [metadata](../benchmark-results/20260824-075537-read-62229-2efcccb4.metadata.json) |
+| read | 3 | 73,844.37 | 0.407 | 0.719 | 0.887 | 0 | [metadata](../benchmark-results/20260824-075616-read-61334-7d2a5156.metadata.json) |
+| mixed | 1 | 73,142.36 | 0.415 | 0.719 | 0.879 | 0 | [metadata](../benchmark-results/20260824-075714-mixed-62352-58cbd476.metadata.json) |
+| mixed | 2 | 73,447.12 | 0.415 | 0.719 | 0.903 | 0 | [metadata](../benchmark-results/20260824-075751-mixed-62437-63b40f91.metadata.json) |
+| mixed | 3 | 75,577.14 | 0.415 | 0.719 | 0.895 | 0 | [metadata](../benchmark-results/20260824-075827-mixed-62351-8a9fa3a9.metadata.json) |
+| write | 1 | 76,623.90 | 0.407 | 0.703 | 0.879 | 0 | [metadata](../benchmark-results/20260824-075918-write-62574-93976f4c.metadata.json) |
+| write | 2 | 76,024.96 | 0.407 | 0.663 | 0.815 | 0 | [metadata](../benchmark-results/20260824-075938-write-62609-3ad18933.metadata.json) |
+| write | 3 | 74,478.23 | 0.423 | 0.703 | 0.895 | 0 | [metadata](../benchmark-results/20260824-075958-write-62573-350d21ad.metadata.json) |
 
 每个指标分别取三次运行的中位数，不挑选单次最好结果：
 

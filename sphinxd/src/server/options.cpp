@@ -10,8 +10,6 @@
 #include <stdexcept>
 #include <utility>
 
-#include "version.h"
-
 namespace sphinx::server {
 namespace {
 void

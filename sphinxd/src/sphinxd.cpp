@@ -34,8 +34,6 @@ limitations under the License.
 #include <libgen.h>
 #include <sched.h>
 
-#include "version.h"
-
 namespace {
 
 void

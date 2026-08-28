@@ -2,7 +2,17 @@ option(BUILD_BENCHMARKS "Build Sphinx benchmarks" OFF)
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/sphinx)
 
-RAGEL_TARGET(protocol src/protocol.rl ${CMAKE_CURRENT_BINARY_DIR}/include/sphinx/protocol.h)
+set(PROTOCOL_HEADER ${CMAKE_CURRENT_BINARY_DIR}/include/sphinx/protocol.h)
+set(PROTOCOL_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/protocol.rl)
+
+add_custom_command(
+  OUTPUT ${PROTOCOL_HEADER}
+  COMMAND ${RAGEL_EXECUTABLE} -o ${PROTOCOL_HEADER} ${PROTOCOL_SOURCE}
+  DEPENDS ${PROTOCOL_SOURCE}
+  COMMENT "Generating protocol parser with Ragel"
+  VERBATIM
+)
+add_custom_target(generate_protocol DEPENDS ${PROTOCOL_HEADER})
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
   set(SYSTEM_SOURCES src/reactor-epoll.cpp)
@@ -28,8 +38,9 @@ add_executable(sphinxd
     src/server/server.cpp
     src/sphinxd.cpp
     ${SYSTEM_SOURCES}
-    ${RAGEL_protocol_OUTPUTS}
 )
+add_dependencies(sphinxd generate_protocol)
+target_compile_definitions(sphinxd PRIVATE SPHINX_VERSION="v${SPHINX_VERSION}-${GIT_COMMIT_HASH}")
 target_link_libraries(sphinxd pthread)
 
 add_executable(sphinx-cluster
@@ -70,8 +81,8 @@ if(GTEST_FOUND)
       test/spsc_queue_test.cpp
       test/stats_test.cpp
       test/string_test.cpp
-      ${RAGEL_protocol_OUTPUTS}
   )
+  add_dependencies(sphinxd_tests generate_protocol)
   target_link_libraries(sphinxd_tests ${GTEST_BOTH_LIBRARIES} pthread)
   add_test(sphinxd_tests sphinxd_tests)
 endif()
@@ -132,7 +143,7 @@ if(BUILD_BENCHMARKS)
       src/buffer.cpp
       src/logmem.cpp
       src/memory.cpp
-      ${RAGEL_protocol_OUTPUTS}
   )
+  add_dependencies(sphinxd_perf generate_protocol)
   target_link_libraries(sphinxd_perf benchmark pthread)
 endif()

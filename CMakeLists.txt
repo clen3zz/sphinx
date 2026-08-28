@@ -4,9 +4,10 @@ project(Sphinx LANGUAGES CXX)
 
 enable_testing()
 
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR})
-
-find_package(RAGEL 6.6 REQUIRED)
+find_program(RAGEL_EXECUTABLE NAMES ragel)
+if(NOT RAGEL_EXECUTABLE)
+  message(FATAL_ERROR "Ragel is required to build Sphinx")
+endif()
 find_package(GTest)
 
 set(SPHINX_VERSION 0.1.0)
@@ -23,12 +24,5 @@ execute_process(
   OUTPUT_VARIABLE GIT_COMMIT_HASH
   OUTPUT_STRIP_TRAILING_WHITESPACE
 )
-
-configure_file(
-  ${CMAKE_SOURCE_DIR}/version.h.in
-  ${CMAKE_BINARY_DIR}/generated/version.h
-)
-
-include_directories(${CMAKE_BINARY_DIR}/generated)
 
 add_subdirectory(sphinxd)
