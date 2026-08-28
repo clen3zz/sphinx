@@ -346,7 +346,8 @@ uint64_t Server::normalize_expiration(uint64_t expiration) {
   }
   constexpr uint64_t thirty_days = uint64_t{60} * 60 * 24 * 30;
   using namespace std::chrono;
-  auto now = uint64_t(duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
+  auto now =
+      static_cast<uint64_t>(duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
   if (expiration <= thirty_days) {
     return now + expiration;
   }

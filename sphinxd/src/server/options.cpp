@@ -67,8 +67,8 @@ void validate(const Config& args) {
           "memory limit (" + std::to_string(args.memory_limit) +
               ") is not divisible by number of threads (" + std::to_string(args.nr_threads) +
               "), which is required for partitioning");
-  auto per_thread_memory = uint64_t(args.memory_limit / args.nr_threads) * 1024 * 1024;
-  auto segment_bytes = uint64_t(args.segment_size) * 1024 * 1024;
+  auto per_thread_memory = static_cast<uint64_t>(args.memory_limit / args.nr_threads) * 1024 * 1024;
+  auto segment_bytes = static_cast<uint64_t>(args.segment_size) * 1024 * 1024;
   require(segment_bytes <= per_thread_memory && per_thread_memory % segment_bytes == 0,
           "per-thread memory must contain whole segments");
 }

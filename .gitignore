@@ -5,7 +5,10 @@
 compile_commands.json
 
 # IDE and Editor files
-/.idea/
+/.idea/*
+!/.idea/dictionaries/
+/.idea/dictionaries/*
+!/.idea/dictionaries/project.xml
 /.vscode/
 *.swp
 *.swo

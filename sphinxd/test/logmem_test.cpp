@@ -79,9 +79,9 @@ TEST(LogTest, stores_flags_and_expiration) {
   alignas(std::max_align_t) std::array<char, 128> memory;
   LogConfig cfg{memory.data(), memory.size(), 64};
   Log log{cfg};
-  auto now = uint64_t(std::chrono::duration_cast<std::chrono::seconds>(
-                          std::chrono::system_clock::now().time_since_epoch())
-                          .count());
+  auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                                       std::chrono::system_clock::now().time_since_epoch())
+                                       .count());
 
   ASSERT_TRUE(log.append("metadata", "payload", 123, now + 3600));
   auto value = log.find_value("metadata");
@@ -117,9 +117,9 @@ TEST(LogTest, incr_and_decr_update_decimal_value_and_preserve_metadata) {
   using namespace sphinx::logmem;
   alignas(std::max_align_t) std::array<char, 4096> memory;
   Log log{LogConfig{memory.data(), memory.size(), 128}};
-  auto now = uint64_t(std::chrono::duration_cast<std::chrono::seconds>(
-                          std::chrono::system_clock::now().time_since_epoch())
-                          .count());
+  auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                                       std::chrono::system_clock::now().time_since_epoch())
+                                       .count());
 
   ASSERT_TRUE(log.append("counter", "0041", 7, now + 3600));
   auto incremented = log.incr("counter", 1);
@@ -181,9 +181,9 @@ TEST(LogTest, arithmetic_rejects_non_decimal_values_without_mutating_metadata) {
   using namespace sphinx::logmem;
   alignas(std::max_align_t) std::array<char, 8192> memory;
   Log log{LogConfig{memory.data(), memory.size(), 128}};
-  auto now = uint64_t(std::chrono::duration_cast<std::chrono::seconds>(
-                          std::chrono::system_clock::now().time_since_epoch())
-                          .count());
+  auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                                       std::chrono::system_clock::now().time_since_epoch())
+                                       .count());
 
   // 计数器只接受非空 ASCII 十进制数字序列。
   // 特别是，符号、空白和十进制表示法不能在 incr/decr 中被静默规范化。
@@ -192,7 +192,7 @@ TEST(LogTest, arithmetic_rejects_non_decimal_values_without_mutating_metadata) {
   };
   for (size_t i = 0; i < invalid_values.size(); i++) {
     auto key = std::string{"invalid-decimal-"} + std::to_string(i);
-    const auto flags = uint32_t(100 + i);
+    const auto flags = static_cast<uint32_t>(100 + i);
     const auto expiration = now + 3600 + i;
     ASSERT_TRUE(log.append(key, invalid_values[i], flags, expiration));
 

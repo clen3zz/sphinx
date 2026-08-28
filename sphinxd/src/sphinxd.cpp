@@ -46,12 +46,12 @@ void run_server_thread(size_t thread_id, std::optional<int> cpu_id,
       }
     }
 
-    auto memory_size = size_t(config.memory_limit) * 1024 * 1024;
+    auto memory_size = static_cast<size_t>(config.memory_limit) * 1024 * 1024;
     auto memory =
         sphinx::memory::Memory::mmap(memory_size / static_cast<size_t>(config.nr_threads));
     sphinx::logmem::LogConfig log_config;
-    log_config.segment_size = size_t(config.segment_size) * 1024 * 1024;
-    log_config.memory_ptr = reinterpret_cast<char*>(memory.addr());
+    log_config.segment_size = static_cast<size_t>(config.segment_size) * 1024 * 1024;
+    log_config.memory_ptr = static_cast<char*>(memory.addr());
     log_config.memory_size = memory.size();
 
     sphinx::server::Server server{log_config,    config.backend, thread_id,

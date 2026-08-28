@@ -15,7 +15,8 @@ namespace sphinx::logmem {
 
 static uint64_t current_time_seconds() {
   using namespace std::chrono;
-  return uint64_t(duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
+  return static_cast<uint64_t>(
+      duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
 }
 
 static std::optional<uint64_t> parse_uint64_decimal(const Blob& blob) {
@@ -38,10 +39,10 @@ static std::optional<uint64_t> parse_uint64_decimal(const Blob& blob) {
 }
 
 Object::Object(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration)
-    : _key_size{uint32_t(key.size())},
-      _blob_size{uint32_t(blob.size())},
+    : _key_size{static_cast<uint32_t>(key.size())},
+      _blob_size{static_cast<uint32_t>(blob.size())},
       _flags{flags},
-      _expiration{uint32_t(expiration)},
+      _expiration{static_cast<uint32_t>(expiration)},
       _expired{0} {
   if (expiration > std::numeric_limits<uint32_t>::max()) {
     throw std::invalid_argument("expiration is too large");
