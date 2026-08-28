@@ -12,8 +12,8 @@
 namespace sphinx::server {
 namespace {
 
-// 判断是否为无需按键哈希分片的控制类命令（Version、Stats）
-bool is_control_command(memcache::Opcode op) {
+// 判断是否为无需按键哈希分片的查询类命令（Version、Stats）
+bool is_server_info_command(memcache::Opcode op) {
   using memcache::Opcode;
   return op == Opcode::Version || op == Opcode::Stats;
 }
@@ -313,8 +313,8 @@ void Server::dispatch_command(Command command) {
   }
   const auto& connection = connection_it->second;
 
-  // 2. 控制命令留在本线程处理，数据命令根据键哈希计算目标分区线程
-  const auto target = is_control_command(command.op)
+  // 2. 服务器查询命令留在本线程处理，数据命令根据键哈希计算目标分区线程
+  const auto target = is_server_info_command(command.op)
                           ? _reactor->thread_id()
                           : find_target(logmem::Object::hash_of(command.key));
 
