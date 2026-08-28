@@ -30,8 +30,8 @@ void print_usage(const std::string& program) {
       << ")\n  -s, --segment-size number   Segment size in MB (default: " << default_segment_size
       << ")\n  -b, --listen-backlog number Listen backlog size (default: " << default_listen_backlog
       << ")\n  -t, --threads number        number of threads to use (default: "
-      << default_nr_threads << ")\n  -I, --io-backend name       I/O backend (default: "
-      << Reactor::default_backend()
+      << default_nr_threads
+      << ")\n  -I, --io-backend name       I/O backend (default: " << Reactor::default_backend()
       << ")\n  -i, --isolate-cpus list     list of CPUs to isolate application threads\n"
       << "  -S, --sched-fifo            use SCHED_FIFO scheduling policy\n"
       << "      --help                  print this help text and exit\n"

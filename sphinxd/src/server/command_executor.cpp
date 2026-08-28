@@ -60,8 +60,7 @@ ExecutionResult execute_storage(Log& log, const Command& command) {
 }
 
 // 执行读取查询命令（Get / multi-get 分片）
-ExecutionResult execute_get(Log& log, ServerStats& stats,
-                            const Command& command) {
+ExecutionResult execute_get(Log& log, ServerStats& stats, const Command& command) {
   std::string response;
 
   // 查询键是否存在且未过期
@@ -98,8 +97,7 @@ ExecutionResult execute_get(Log& log, ServerStats& stats,
 }  // namespace
 
 // 命令执行统一入口：根据操作码将请求派发到对应的执行子逻辑
-ExecutionResult execute_command(Log& log, ServerStats& stats,
-                                const Command& command) {
+ExecutionResult execute_command(Log& log, ServerStats& stats, const Command& command) {
   switch (command.op) {
     case Opcode::Version:
       return {"VERSION 1.5.16\r\n"};

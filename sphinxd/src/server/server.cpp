@@ -175,107 +175,42 @@ size_t Server::process_one(const std::shared_ptr<Connection>& connection, std::s
 
   // 4. 分配请求序列号并根据具体命令类型分发处理
   const auto sequence = connection->next_request_sequence();
-  size_t consumed = header_size;
-  bool waiting_for_body = false;
+  RequestProgress progress{header_size};
   const auto& parsed = parser.command().value();
 
   std::visit(
       [&](const auto& command) {
         using Parsed = std::decay_t<decltype(command)>;
 
-        // 分支 A：存储类写入命令（Set / Add / Replace）
-        if constexpr (std::is_same_v<Parsed, SetCommand> || std::is_same_v<Parsed, AddCommand> ||
-                      std::is_same_v<Parsed, ReplaceCommand>) {
-          const auto frame_size = command.body.frame_size();
-          if (!frame_size || !command.body.available(data)) {
-            waiting_for_body = true;
-            return;
-          }
-
-          consumed = command.body.offset + *frame_size;
-          if (!command.body.has_valid_terminator(data)) {
-            enqueue_response(connection, sequence, "CLIENT_ERROR bad data chunk\r\n");
-            return;
-          }
-
-          constexpr auto op = []() {
-            if constexpr (std::is_same_v<Parsed, SetCommand>) {
-              return Opcode::Set;
-            } else if constexpr (std::is_same_v<Parsed, AddCommand>) {
-              return Opcode::Add;
-            } else {
-              return Opcode::Replace;
-            }
-          }();
-
-          if (command.key.size() > std::numeric_limits<uint32_t>::max() ||
-              command.flags > std::numeric_limits<uint32_t>::max() ||
-              command.expiration > std::numeric_limits<uint32_t>::max()) {
-            enqueue_response(connection, sequence, "CLIENT_ERROR invalid numeric argument\r\n");
-            return;
-          }
-
-          auto value = data.substr(command.body.offset, static_cast<size_t>(command.body.size));
-          auto outgoing = make_command(connection, sequence, op, command.key);
-          outgoing.blob.assign(value);
-          outgoing.flags = static_cast<uint32_t>(command.flags);
-          outgoing.expiration = normalize_expiration(command.expiration);
-
-          // 递增对应写入指标
-          if constexpr (std::is_same_v<Parsed, SetCommand>) {
-            _stats->increment(ServerStats::Counter::CmdSet);
-          } else if constexpr (std::is_same_v<Parsed, AddCommand>) {
-            _stats->increment(ServerStats::Counter::CmdAdd);
-          } else {
-            _stats->increment(ServerStats::Counter::CmdReplace);
-          }
-
-          dispatch_command(std::move(outgoing));
-
-          // 分支 B：查询命令（Get / multi-get）
+        if constexpr (std::is_same_v<Parsed, SetCommand>) {
+          process_storage_command(connection, sequence, data, command.key, command.flags,
+                                  command.expiration, command.body, Opcode::Set,
+                                  ServerStats::Counter::CmdSet, progress);
+        } else if constexpr (std::is_same_v<Parsed, AddCommand>) {
+          process_storage_command(connection, sequence, data, command.key, command.flags,
+                                  command.expiration, command.body, Opcode::Add,
+                                  ServerStats::Counter::CmdAdd, progress);
+        } else if constexpr (std::is_same_v<Parsed, ReplaceCommand>) {
+          process_storage_command(connection, sequence, data, command.key, command.flags,
+                                  command.expiration, command.body, Opcode::Replace,
+                                  ServerStats::Counter::CmdReplace, progress);
         } else if constexpr (std::is_same_v<Parsed, GetCommand>) {
-          if (command.keys.empty()) {
-            return;
-          }
-
-          _stats->increment(ServerStats::Counter::CmdGet);
-
-          // 单键查询直接分发
-          if (command.keys.size() == 1) {
-            dispatch_command(make_command(connection, sequence, Opcode::Get, command.keys.front()));
-            return;
-          }
-
-          // 多键查询：开启聚合状态跟踪，各键独立路由至目标线程并行读取
-          connection->begin_multi_get(sequence, command.keys.size());
-          for (size_t key_index = 0; key_index < command.keys.size(); ++key_index) {
-            auto outgoing =
-                make_command(connection, sequence, Opcode::Get, command.keys[key_index]);
-            outgoing.multi_get = true;
-            outgoing.key_index = static_cast<uint32_t>(key_index);
-            dispatch_command(std::move(outgoing));
-          }
-
-          // 分支 C：删除命令（Delete）
+          process_get_command(connection, sequence, command);
         } else if constexpr (std::is_same_v<Parsed, DeleteCommand>) {
           _stats->increment(ServerStats::Counter::CmdDelete);
           dispatch_command(make_command(connection, sequence, Opcode::Delete, command.key));
-
-          // 分支 D：原子自增/自减命令（Incr / Decr）
-        } else if constexpr (std::is_same_v<Parsed, IncrCommand> ||
-                             std::is_same_v<Parsed, DecrCommand>) {
-          const auto op = std::is_same_v<Parsed, IncrCommand> ? Opcode::Incr : Opcode::Decr;
-          _stats->increment(op == Opcode::Incr ? ServerStats::Counter::CmdIncr
-                                               : ServerStats::Counter::CmdDecr);
-          auto outgoing = make_command(connection, sequence, op, command.key);
+        } else if constexpr (std::is_same_v<Parsed, IncrCommand>) {
+          _stats->increment(ServerStats::Counter::CmdIncr);
+          auto outgoing = make_command(connection, sequence, Opcode::Incr, command.key);
           outgoing.delta = command.delta;
           dispatch_command(std::move(outgoing));
-
-          // 分支 E：版本命令（Version）
+        } else if constexpr (std::is_same_v<Parsed, DecrCommand>) {
+          _stats->increment(ServerStats::Counter::CmdDecr);
+          auto outgoing = make_command(connection, sequence, Opcode::Decr, command.key);
+          outgoing.delta = command.delta;
+          dispatch_command(std::move(outgoing));
         } else if constexpr (std::is_same_v<Parsed, VersionCommand>) {
           dispatch_command(make_command(connection, sequence, Opcode::Version, {}));
-
-          // 分支 F：统计信息命令（Stats）
         } else if constexpr (std::is_same_v<Parsed, StatsCommand>) {
           dispatch_command(make_command(connection, sequence, Opcode::Stats, {}));
         }
@@ -283,12 +218,68 @@ size_t Server::process_one(const std::shared_ptr<Connection>& connection, std::s
       parsed);
 
   // 若包体未完整到达，回滚请求序列号并等待更多数据
-  if (waiting_for_body) {
+  if (progress.waiting_for_body) {
     connection->rollback_request_sequence();
     return 0;
   }
 
-  return consumed;
+  return progress.consumed;
+}
+
+void Server::process_get_command(const std::shared_ptr<Connection>& connection, uint64_t sequence,
+                                 const GetCommand& command) {
+  if (command.keys.empty()) {
+    return;
+  }
+
+  _stats->increment(ServerStats::Counter::CmdGet);
+
+  if (command.keys.size() == 1) {
+    dispatch_command(make_command(connection, sequence, Opcode::Get, command.keys.front()));
+    return;
+  }
+
+  connection->begin_multi_get(sequence, command.keys.size());
+  for (size_t key_index = 0; key_index < command.keys.size(); ++key_index) {
+    auto outgoing = make_command(connection, sequence, Opcode::Get, command.keys[key_index]);
+    outgoing.multi_get = true;
+    outgoing.key_index = static_cast<uint32_t>(key_index);
+    dispatch_command(std::move(outgoing));
+  }
+}
+
+void Server::process_storage_command(const std::shared_ptr<Connection>& connection,
+                                     uint64_t sequence, std::string_view data, std::string_view key,
+                                     uint64_t flags, uint64_t expiration, const StorageBody& body,
+                                     Opcode op, ServerStats::Counter counter,
+                                     RequestProgress& progress) {
+  const auto frame_size = body.frame_size();
+  if (!frame_size || !body.available(data)) {
+    progress.waiting_for_body = true;
+    return;
+  }
+
+  progress.consumed = body.offset + *frame_size;
+  if (!body.has_valid_terminator(data)) {
+    enqueue_response(connection, sequence, "CLIENT_ERROR bad data chunk\r\n");
+    return;
+  }
+
+  if (key.size() > std::numeric_limits<uint32_t>::max() ||
+      flags > std::numeric_limits<uint32_t>::max() ||
+      expiration > std::numeric_limits<uint32_t>::max()) {
+    enqueue_response(connection, sequence, "CLIENT_ERROR invalid numeric argument\r\n");
+    return;
+  }
+
+  auto value = data.substr(body.offset, static_cast<size_t>(body.size));
+  auto outgoing = make_command(connection, sequence, op, key);
+  outgoing.blob.assign(value);
+  outgoing.flags = static_cast<uint32_t>(flags);
+  outgoing.expiration = normalize_expiration(expiration);
+
+  _stats->increment(counter);
+  dispatch_command(std::move(outgoing));
 }
 
 // 构造 Command 对象
@@ -344,7 +335,6 @@ bool Server::submit_command(size_t target_thread, Command command) {
 }
 
 // 将执行结果作为 Response 投递回连接所在的主调线程
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)：调用处按语义传递线程和连接编号
 void Server::send_response(size_t response_thread, uint64_t connection_id, uint64_t sequence,
                            std::string_view payload, bool multi_get, uint32_t key_index) {
   // 1. 目标为主线程自身，直接入队或聚合

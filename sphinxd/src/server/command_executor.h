@@ -16,7 +16,6 @@ struct ExecutionResult {
 
 // 命令执行分发入口：在目标工作线程上直接访问所属的私有 Log 与全局 Stats
 // Command 结构体中携带了路由与响应所需的元数据
-ExecutionResult execute_command(Log& log, ServerStats& stats,
-                                const Command& command);
+ExecutionResult execute_command(Log& log, ServerStats& stats, const Command& command);
 
 }  // namespace sphinx

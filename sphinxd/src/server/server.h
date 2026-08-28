@@ -19,6 +19,11 @@ namespace sphinx {
 // 单工作线程服务实例类：
 // 封装当前线程的私有 Reactor 事件驱动循环、日志内存存储引擎（Log）、客户端连接表与跨线程消息路由
 class Server final {
+  struct RequestProgress {
+    size_t consumed = 0;
+    bool waiting_for_body = false;
+  };
+
   std::unique_ptr<Reactor> _reactor;    // 线程私有 Reactor 实例
   Log _log;                             // 线程私有日志结构内存存储引擎
   std::shared_ptr<ServerStats> _stats;  // 全局原子统计指标共享指针
@@ -55,9 +60,19 @@ class Server final {
   // 从连接接收缓冲区中解析并执行单个协议请求
   size_t process_one(const std::shared_ptr<Connection>& connection, std::string_view data);
 
+  // Set / Add / Replace 共享相同的数据帧校验和内部命令构造流程
+  void process_storage_command(const std::shared_ptr<Connection>& connection, uint64_t sequence,
+                               std::string_view data, std::string_view key, uint64_t flags,
+                               uint64_t expiration, const StorageBody& body, Opcode op,
+                               ServerStats::Counter counter, RequestProgress& progress);
+
+  // 处理单键与 multi-get 查询
+  void process_get_command(const std::shared_ptr<Connection>& connection, uint64_t sequence,
+                           const GetCommand& command);
+
   // 构造标准命令对象
-  Command make_command(const std::shared_ptr<Connection>& connection, uint64_t sequence,
-                       Opcode op, std::string_view key) const;
+  Command make_command(const std::shared_ptr<Connection>& connection, uint64_t sequence, Opcode op,
+                       std::string_view key) const;
 
   // 根据键的一致性哈希计算目标线程并分发命令
   void dispatch_command(Command command);
@@ -66,7 +81,6 @@ class Server final {
   bool submit_command(size_t target_thread, Command command);
 
   // 将执行结果作为响应回传给发起请求的来源线程
-  // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)：调用处按语义传递线程和连接编号
   void send_response(size_t response_thread, uint64_t connection_id, uint64_t sequence,
                      std::string_view payload, bool multi_get = false, uint32_t key_index = 0);
 

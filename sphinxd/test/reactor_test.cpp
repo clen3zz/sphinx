@@ -76,10 +76,8 @@ TEST(ReactorTest, groupsOwnIndependentMessageChannels) {
   auto first_group = std::make_shared<sphinx::ReactorGroup>(2);
   auto second_group = std::make_shared<sphinx::ReactorGroup>(2);
   TestReactor first_source{0, first_group, [](sphinx::MessagePtr) {}};
-  TestReactor first_target{1, first_group,
-                           [&received](sphinx::MessagePtr) { received++; }};
-  TestReactor second_target{1, second_group,
-                            [&received](sphinx::MessagePtr) { received += 100; }};
+  TestReactor first_target{1, first_group, [&received](sphinx::MessagePtr) { received++; }};
+  TestReactor second_target{1, second_group, [&received](sphinx::MessagePtr) { received += 100; }};
 
   ASSERT_TRUE(first_source.send_msg(1, std::make_shared<IntMessage>(1)));
   ASSERT_TRUE(first_target.poll_messages());
@@ -95,9 +93,8 @@ TEST(ReactorTest, tcpSocketDrainsPartialNonblockingWrites) {
       ::setsockopt(fds[0], SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof(send_buffer_size)), 0);
   bool eof = false;
   auto socket = std::make_shared<sphinx::TcpSocket>(
-      fds[0], [&eof](std::shared_ptr<sphinx::TcpSocket>, std::string_view msg) {
-        eof = msg.empty();
-      });
+      fds[0],
+      [&eof](std::shared_ptr<sphinx::TcpSocket>, std::string_view msg) { eof = msg.empty(); });
   socket->on_pollin();  // 非阻塞读取暂无数据时不属于连接错误。
   ASSERT_FALSE(eof);
   std::string payload(1024 * 1024, 'x');

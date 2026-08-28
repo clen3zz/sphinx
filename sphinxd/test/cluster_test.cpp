@@ -57,8 +57,7 @@ TEST(ClusterConfigTest, RejectsInvalidConfigurations) {
                                             "cache-a:1, cache-b:2",
                                             "[::1]:1"};
   for (const auto& configuration : invalid) {
-    EXPECT_THROW(sphinx::parse_nodes(configuration), std::invalid_argument)
-        << configuration;
+    EXPECT_THROW(sphinx::parse_nodes(configuration), std::invalid_argument) << configuration;
   }
 }
 

@@ -8,12 +8,11 @@ import contextlib
 import io
 import json
 import os
-from pathlib import Path
 import stat
 import sys
 import tempfile
 import unittest
-
+from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))

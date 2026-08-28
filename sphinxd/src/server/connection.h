@@ -85,8 +85,7 @@ class Connection final {
       uint32_t key_index, std::string_view payload, bool failed = false);
 
   // 将响应入队并按序列号顺序尝试写出就绪数据（部分 I/O 由 Reactor 异步写入）
-  WriteStatus enqueue_response(uint64_t sequence, std::string_view payload,
-                               Reactor& reactor);
+  WriteStatus enqueue_response(uint64_t sequence, std::string_view payload, Reactor& reactor);
 
  private:
   // multi-get 聚合状态结构体
@@ -96,13 +95,13 @@ class Connection final {
     std::vector<std::string> pieces;  // 已接收的分片数据缓存
   };
 
-  uint64_t _id;                                      // 连接全局唯一 ID
-  Buffer _receive_buffer;                            // TCP 读入数据缓冲区
+  uint64_t _id;                                           // 连接全局唯一 ID
+  Buffer _receive_buffer;                                 // TCP 读入数据缓冲区
   uint64_t _next_request_sequence = 0;                    // 下一个分发的请求序号
   uint64_t _next_response_sequence = 0;                   // 期待写出的下一个响应序号
   std::map<uint64_t, std::string> _pending_responses;     // 乱序到达暂存的响应队列
   std::map<uint64_t, MultiGetState> _pending_multi_gets;  // 正在聚合的 multi-get 状态字典
-  std::weak_ptr<TcpSocket> _socket;                   // 底层套接字弱引用
+  std::weak_ptr<TcpSocket> _socket;                       // 底层套接字弱引用
   bool _closed = false;                                   // 连接是否已关闭
 };
 
