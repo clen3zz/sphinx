@@ -80,9 +80,8 @@ class Connection final {
   void begin_multi_get(uint64_t sequence, size_t key_count);
 
   // 记录 multi-get 请求的一个分片响应，当且仅当所有分片都就绪时返回拼装后的完整响应体
-  std::optional<std::string> add_multi_get_piece(
-      uint64_t sequence,  // NOLINT(bugprone-easily-swappable-parameters)：参数含义由调用处明确区分
-      uint32_t key_index, std::string_view payload, bool failed = false);
+  std::optional<std::string> add_multi_get_piece(uint64_t sequence, uint32_t key_index,
+                                                 std::string_view payload, bool failed = false);
 
   // 将响应入队并按序列号顺序尝试写出就绪数据（部分 I/O 由 Reactor 异步写入）
   WriteStatus enqueue_response(uint64_t sequence, std::string_view payload, Reactor& reactor);

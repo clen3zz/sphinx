@@ -9,9 +9,8 @@ void Connection::begin_multi_get(uint64_t sequence, size_t key_count) {
 }
 
 // 记录 multi-get 请求的一个分片响应；仅当全部子响应集齐后拼接并返回最终响应
-std::optional<std::string> Connection::add_multi_get_piece(
-    uint64_t sequence,  // NOLINT(bugprone-easily-swappable-parameters)：参数含义由调用处明确区分
-    uint32_t key_index, std::string_view payload, bool failed) {
+std::optional<std::string> Connection::add_multi_get_piece(uint64_t sequence, uint32_t key_index,
+                                                           std::string_view payload, bool failed) {
   // 1. 查找对应的 multi-get 上下文
   auto it = _pending_multi_gets.find(sequence);
   if (it == _pending_multi_gets.end()) {
