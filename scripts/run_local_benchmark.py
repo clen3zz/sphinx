@@ -155,11 +155,11 @@ def _ratio_for(workload: str) -> str:
 
 
 def build_memtier_command(
-    config: BenchmarkConfig,
-    port: int,
-    result_path: Path,
-    *,
-    prefill: bool = False,
+        config: BenchmarkConfig,
+        port: int,
+        result_path: Path,
+        *,
+        prefill: bool = False,
 ) -> list[str]:
     """构造预填充或测量流量所使用的 memtier 命令。"""
 
@@ -207,12 +207,12 @@ def _command_text(command: Sequence[str]) -> str:
 
 
 def wait_for_server(
-    process: subprocess.Popen[Any],
-    host: str,
-    port: int,
-    timeout_seconds: float,
-    *,
-    poll_interval: float = 0.02,
+        process: subprocess.Popen[Any],
+        host: str,
+        port: int,
+        timeout_seconds: float,
+        *,
+        poll_interval: float = 0.02,
 ) -> None:
     """等待子进程接受 TCP 连接，否则带启动诊断信息失败。"""
 
@@ -269,9 +269,9 @@ def stop_process(process: Optional[subprocess.Popen[Any]], timeout_seconds: floa
 
 
 def _run_client(
-    command: Sequence[str],
-    server_process: subprocess.Popen[Any],
-    timeout_seconds: float,
+        command: Sequence[str],
+        server_process: subprocess.Popen[Any],
+        timeout_seconds: float,
 ) -> None:
     """运行 memtier，同时检测服务进程是否在其完成前退出。"""
 
@@ -716,10 +716,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--workload", choices=("read", "mixed", "write"), default="read")
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS)
     parser.add_argument("--memory-limit", "--memory", dest="memory_limit_mb", type=int, default=DEFAULT_MEMORY_LIMIT_MB)
-    parser.add_argument("--segment-size", "--segment", dest="segment_size_mb", type=int, default=DEFAULT_SEGMENT_SIZE_MB)
-    parser.add_argument("--duration", "--test-time", dest="duration_seconds", type=int, default=DEFAULT_DURATION_SECONDS)
+    parser.add_argument("--segment-size", "--segment", dest="segment_size_mb", type=int,
+                        default=DEFAULT_SEGMENT_SIZE_MB)
+    parser.add_argument("--duration", "--test-time", dest="duration_seconds", type=int,
+                        default=DEFAULT_DURATION_SECONDS)
     parser.add_argument("--client-threads", type=int, default=DEFAULT_CLIENT_THREADS)
-    parser.add_argument("--connections", "--connections-per-thread", dest="connections_per_thread", type=int, default=DEFAULT_CONNECTIONS_PER_THREAD)
+    parser.add_argument("--connections", "--connections-per-thread", dest="connections_per_thread", type=int,
+                        default=DEFAULT_CONNECTIONS_PER_THREAD)
     parser.add_argument("--key-space", type=int, default=DEFAULT_KEY_SPACE)
     parser.add_argument("--value-size", type=int, default=DEFAULT_VALUE_SIZE)
     parser.add_argument("--memtier", "--memtier-executable", dest="memtier_executable", default="memtier_benchmark")

@@ -130,7 +130,7 @@ def main() -> None:
         raise SystemExit(
             "usage: cluster_network_test.py /path/to/sphinxd [/path/to/sphinx-cluster] "
             "[/path/to/cluster-client-integration-driver]"
-    )
+        )
     server_executable = sys.argv[1]
     cli_executable = sys.argv[2] if len(sys.argv) >= 3 else str(Path(server_executable).with_name("sphinx-cluster"))
     driver_executable = sys.argv[3] if len(sys.argv) == 4 else None

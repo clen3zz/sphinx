@@ -291,7 +291,7 @@ def run_protocol_extensions(address, threads):
             raise AssertionError("decr did not clamp at zero")
         client.send(b"incr ext-text 1\r\n")
         if client.storage_response() != (
-            "CLIENT_ERROR cannot increment or decrement non-numeric value\r\n"
+                "CLIENT_ERROR cannot increment or decrement non-numeric value\r\n"
         ):
             raise AssertionError("incr accepted a non-numeric value")
         client.send(b"incr absent-counter 1\r\n")
@@ -544,7 +544,8 @@ def run_pipeline(address, count=256):
         for i in range(count):
             key = f"pipe-{i}".encode()
             value = f"value-{i}".encode()
-            commands.append(b"set " + key + b" " + str(i % 1000).encode() + b" 0 " + str(len(value)).encode() + b"\r\n" + value + b"\r\n")
+            commands.append(b"set " + key + b" " + str(i % 1000).encode() + b" 0 " + str(
+                len(value)).encode() + b"\r\n" + value + b"\r\n")
         client.send(b"".join(commands))
         for _ in range(count):
             if client.storage_response() != "STORED\r\n":
@@ -592,7 +593,8 @@ def run_concurrent(address, worker):
         for _ in range(count):
             if client.storage_response() != "STORED\r\n":
                 raise AssertionError("concurrent set failed")
-        client.send(b"".join(b"get worker-" + str(worker).encode() + b"-" + str(i).encode() + b"\r\n" for i in range(count)))
+        client.send(
+            b"".join(b"get worker-" + str(worker).encode() + b"-" + str(i).encode() + b"\r\n" for i in range(count)))
         for i in range(count):
             if client.get_response() != (f"worker-{worker}-{i}", 3, f"v-{worker}-{i}".encode()):
                 raise AssertionError("concurrent get failed")

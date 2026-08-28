@@ -130,7 +130,7 @@ time.sleep(0.02)
         return benchmark.BenchmarkConfig(**values)
 
     def _run_with_fake_processes(
-        self, mode: str = "ok", **config_overrides: object
+            self, mode: str = "ok", **config_overrides: object
     ) -> benchmark.BenchmarkResult:
         pid_file = self.root / "server.pid"
         log_file = self.root / "memtier.log"
