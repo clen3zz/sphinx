@@ -28,7 +28,7 @@ struct Config {
 
   // 并发与底层调度配置
   int nr_threads = default_nr_threads;                                // 工作线程数
-  std::string backend = sphinx::reactor::Reactor::default_backend();  // I/O 多路复用后端
+  std::string backend = reactor::Reactor::default_backend();  // I/O 多路复用后端
   std::set<int> isolate_cpus;  // 需避开绑定的被隔离 CPU 核心 ID 集合
   bool sched_fifo = false;     // 是否启用 SCHED_FIFO 实时调度策略
 };

@@ -28,6 +28,7 @@
       <w>mmap</w>
       <w>murmur</w>
       <w>murmurhash</w>
+      <w>nullopt</w>
       <w>opcode</w>
       <w>optarg</w>
       <w>opterr</w>

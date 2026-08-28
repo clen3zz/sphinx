@@ -294,7 +294,7 @@ bool TcpSocket::on_pollout() {
 
 // 跨线程单向消息通道：无锁 SPSC 环形队列配合溢出链表队列
 struct ReactorGroup::Channel {
-  sphinx::spsc::Queue<MessagePtr, reactor_message_queue_size> queue;
+  spsc::Queue<MessagePtr, reactor_message_queue_size> queue;
   std::mutex overflow_mutex;
   std::deque<MessagePtr> overflow;
 };

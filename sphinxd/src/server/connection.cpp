@@ -55,7 +55,7 @@ std::optional<std::string> Connection::add_multi_get_piece(
 
 // 将响应按序列号入队，并按严格连续顺序写出就绪的响应
 Connection::WriteStatus Connection::enqueue_response(uint64_t sequence, std::string_view payload,
-                                                     sphinx::reactor::Reactor& reactor) {
+                                                     reactor::Reactor& reactor) {
   // 1. 连接已关闭则拒绝入队
   if (_closed) {
     return WriteStatus::SocketUnavailable;

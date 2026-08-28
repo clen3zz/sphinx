@@ -135,7 +135,7 @@ struct ArithmeticResult {
 
 /// A log of objects.
 class Log {
-  sphinx::index::Index<Key, Object*> _index;
+  index::Index<Key, Object*> _index;
   std::vector<Segment*> _segment_ring;
   size_t _segment_ring_head = 0;
   size_t _segment_ring_tail = 0;

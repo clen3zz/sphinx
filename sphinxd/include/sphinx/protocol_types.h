@@ -24,7 +24,7 @@ struct StorageBody {
   // 可能无法放入 size_t，追加 CRLF 时也不能发生整数回绕。
   std::optional<size_t> frame_size() const noexcept {
     constexpr auto max_size = std::numeric_limits<size_t>::max();
-    if (size > static_cast<uint64_t>(max_size - 2)) {
+    if (size > max_size - 2) {
       return std::nullopt;
     }
     return static_cast<size_t>(size) + 2;
@@ -49,7 +49,7 @@ struct StorageBody {
     if (!has_valid_terminator(input)) {
       return std::nullopt;
     }
-    return input.substr(offset, static_cast<size_t>(size));
+    return input.substr(offset, size);
   }
 };
 

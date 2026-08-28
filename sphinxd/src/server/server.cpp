@@ -148,7 +148,7 @@ void Server::recv(const std::shared_ptr<Connection>& connection,
 
 // 解析并调度单条 Memcached 协议命令
 size_t Server::process_one(const std::shared_ptr<Connection>& connection, std::string_view data) {
-  using namespace sphinx::memcache;
+  using namespace memcache;
   Parser parser;
   const auto header_size = parser.parse(data);
 

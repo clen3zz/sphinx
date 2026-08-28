@@ -8,8 +8,8 @@ namespace sphinx::server {
 namespace {
 
 // 执行存储类修改命令（Set、Add、Replace、Delete、Incr、Decr）
-ExecutionResult execute_storage(sphinx::logmem::Log& log, const Command& command) {
-  using sphinx::memcache::Opcode;
+ExecutionResult execute_storage(logmem::Log& log, const Command& command) {
+  using memcache::Opcode;
 
   switch (command.op) {
     // 1. 写入类命令（Set / Add / Replace）
@@ -40,13 +40,13 @@ ExecutionResult execute_storage(sphinx::logmem::Log& log, const Command& command
       const auto [status, val] = command.op == Opcode::Incr ? log.incr(command.key, command.delta)
                                                             : log.decr(command.key, command.delta);
       switch (status) {
-        case sphinx::logmem::ArithmeticStatus::Success:
-          return {sphinx::to_string(val) + "\r\n"};
-        case sphinx::logmem::ArithmeticStatus::NotFound:
+        case logmem::ArithmeticStatus::Success:
+          return {to_string(val) + "\r\n"};
+        case logmem::ArithmeticStatus::NotFound:
           return {"NOT_FOUND\r\n"};
-        case sphinx::logmem::ArithmeticStatus::NonNumeric:
+        case logmem::ArithmeticStatus::NonNumeric:
           return {"CLIENT_ERROR cannot increment or decrement non-numeric value\r\n"};
-        case sphinx::logmem::ArithmeticStatus::StorageFull:
+        case logmem::ArithmeticStatus::StorageFull:
           return {"SERVER_ERROR out of memory storing object\r\n"};
       }
       break;
@@ -62,29 +62,29 @@ ExecutionResult execute_storage(sphinx::logmem::Log& log, const Command& command
 }
 
 // 执行读取查询命令（Get / multi-get 分片）
-ExecutionResult execute_get(sphinx::logmem::Log& log, sphinx::stats::ServerStats& stats,
+ExecutionResult execute_get(logmem::Log& log, stats::ServerStats& stats,
                             const Command& command) {
   std::string response;
 
   // 查询键是否存在且未过期
   if (auto search = log.find_value(command.key)) {
     // 命中：原子更新统计指标，格式化 VALUE 响应行与正文
-    stats.increment(sphinx::stats::ServerStats::Counter::GetHits);
+    stats.increment(ServerStats::Counter::GetHits);
     const auto& value = search.value();
     response.reserve(command.key.size() + value.blob.size() + 48);
 
     response += "VALUE ";
     response += command.key;
     response += ' ';
-    response += sphinx::to_string(value.flags);
+    response += to_string(value.flags);
     response += ' ';
-    response += sphinx::to_string(value.blob.size());
+    response += to_string(value.blob.size());
     response += "\r\n";
     response += value.blob;
     response += "\r\n";
   } else {
     // 未命中：原子递增未命中统计计数
-    stats.increment(sphinx::stats::ServerStats::Counter::GetMisses);
+    stats.increment(ServerStats::Counter::GetMisses);
   }
 
   // multi-get 的各个子分片无需附加独立的 END\r\n，由 Connection 聚合后统一追加
@@ -100,9 +100,9 @@ ExecutionResult execute_get(sphinx::logmem::Log& log, sphinx::stats::ServerStats
 }  // namespace
 
 // 命令执行统一入口：根据操作码将请求派发到对应的执行子逻辑
-ExecutionResult execute_command(sphinx::logmem::Log& log, sphinx::stats::ServerStats& stats,
+ExecutionResult execute_command(logmem::Log& log, stats::ServerStats& stats,
                                 const Command& command) {
-  using sphinx::memcache::Opcode;
+  using memcache::Opcode;
 
   switch (command.op) {
     case Opcode::Version:
