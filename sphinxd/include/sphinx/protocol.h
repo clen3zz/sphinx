@@ -202,17 +202,11 @@ class Parser {
   uint64_t delta_ = 0;
 
  public:
-  const std::optional<ParsedCommand>& command() const noexcept {
-    return _command;
-  }
+  const std::optional<ParsedCommand>& command() const noexcept { return _command; }
 
-  ParseStatus status() const noexcept {
-    return _status;
-  }
+  ParseStatus status() const noexcept { return _status; }
 
-  bool number_overflow() const noexcept {
-    return number_overflow_;
-  }
+  bool number_overflow() const noexcept { return number_overflow_; }
 
   Parser() {
     /* #line 451 "sphinxd/include/sphinx/protocol.h" */

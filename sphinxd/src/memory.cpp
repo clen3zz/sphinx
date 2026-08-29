@@ -24,13 +24,11 @@ Memory Memory::mmap(size_t size) {
 }
 
 // 构造函数：接管指定地址与大小的已映射内存
-Memory::Memory(void* ptr, size_t size) : _addr{ptr}, _size{size} {
-}
+Memory::Memory(void* ptr, size_t size) : _addr{ptr}, _size{size} {}
 
 // 移动构造函数：转移内存所有权，并将源对象重置为空
 Memory::Memory(Memory&& other) noexcept
-    : _addr{std::exchange(other._addr, nullptr)}, _size{std::exchange(other._size, 0)} {
-}
+    : _addr{std::exchange(other._addr, nullptr)}, _size{std::exchange(other._size, 0)} {}
 
 // 移动赋值操作符：释放旧资源并接管源对象的内存所有权
 Memory& Memory::operator=(Memory&& other) noexcept {
@@ -47,19 +45,13 @@ Memory& Memory::operator=(Memory&& other) noexcept {
 }
 
 // 获取映射内存的起始地址
-void* Memory::addr() const {
-  return _addr;
-}
+void* Memory::addr() const { return _addr; }
 
 // 获取映射内存的总字节大小
-size_t Memory::size() const {
-  return _size;
-}
+size_t Memory::size() const { return _size; }
 
 // 析构函数：RAII 自动解映射并释放内存资源
-Memory::~Memory() {
-  release();
-}
+Memory::~Memory() { release(); }
 
 // 释放内存映射（系统调用 munmap）并清空内部状态
 void Memory::release() noexcept {

@@ -30,8 +30,7 @@ struct Command : Message {
         sequence{request},
         source_thread{thread},
         op{opcode},
-        key{std::move(command_key)} {
-  }
+        key{std::move(command_key)} {}
 };
 
 // 跨线程响应消息：统一表示单个命令的完整响应或 multi-get 命令的子分片响应
@@ -48,8 +47,7 @@ struct Response : Message {
         sequence{request},
         payload{std::move(response_payload)},
         multi_get{is_multi_get},
-        key_index{response_key_index} {
-  }
+        key_index{response_key_index} {}
 };
 
 }  // namespace sphinx

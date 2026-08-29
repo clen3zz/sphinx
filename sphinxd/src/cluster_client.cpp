@@ -21,9 +21,7 @@ namespace {
 constexpr size_t kMaxResponseLine = size_t{64} * 1024;
 
 // 获取系统 errno 对应的可读错误信息
-std::string errno_message(int err) {
-  return std::generic_category().message(err);
-}
+std::string errno_message(int err) { return std::generic_category().message(err); }
 
 // 抛出包含节点标识与具体细节的 ClientError 异常
 [[noreturn]] void throw_node_error(std::string_view target, std::string_view detail) {
@@ -31,9 +29,7 @@ std::string errno_message(int err) {
 }
 
 // 为字符串添加单引号包裹
-std::string quote(std::string_view value) {
-  return "'" + std::string{value} + "'";
-}
+std::string quote(std::string_view value) { return "'" + std::string{value} + "'"; }
 
 // 解析十进制整数字符串，解析失败时抛出错误
 uint64_t parse_decimal(std::string_view target, const char* field, std::string_view value) {
@@ -63,19 +59,14 @@ void validate_timeout(std::chrono::milliseconds timeout) {
 class TcpTransport final {
  public:
   TcpTransport(const Node& node, std::chrono::milliseconds timeout)
-      : _target{node.id()}, _host{node.host}, _port{node.port}, _timeout{timeout} {
-  }
+      : _target{node.id()}, _host{node.host}, _port{node.port}, _timeout{timeout} {}
 
-  ~TcpTransport() {
-    close();
-  }
+  ~TcpTransport() { close(); }
 
   TcpTransport(const TcpTransport&) = delete;
   TcpTransport& operator=(const TcpTransport&) = delete;
 
-  std::string_view target() const {
-    return _target;
-  }
+  std::string_view target() const { return _target; }
 
   // 阻塞且带超时地发送全部消息字节
   void write_all(std::string_view message) {
@@ -342,8 +333,7 @@ size_t parse_value_header(std::string_view target, const std::string& response,
 class ClusterClient::MemcachedConnection final {
  public:
   MemcachedConnection(const Node& node, std::chrono::milliseconds timeout)
-      : _transport{node, timeout} {
-  }
+      : _transport{node, timeout} {}
 
   MemcachedConnection(const MemcachedConnection&) = delete;
   MemcachedConnection& operator=(const MemcachedConnection&) = delete;
@@ -434,9 +424,7 @@ ClusterClient::ClusterClient(const std::vector<Node>& nodes, std::chrono::millis
 ClusterClient::~ClusterClient() = default;
 
 // 根据 key 查询路由的责任节点
-Node ClusterClient::route(std::string_view key) const {
-  return _ring.route(key);
-}
+Node ClusterClient::route(std::string_view key) const { return _ring.route(key); }
 
 // 获取或懒加载创建与指定节点的持久连接
 ClusterClient::MemcachedConnection& ClusterClient::connection_for(const Node& node) {

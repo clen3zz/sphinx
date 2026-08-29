@@ -40,13 +40,11 @@ static_assert(std::size(kCounterNames) == static_cast<size_t>(Counter::Count));
 ServerStats::ServerStats(Config config)
     : _version{std::move(config.version)},
       _threads{config.threads},
-      _limit_maxbytes{config.limit_maxbytes} {
-}
+      _limit_maxbytes{config.limit_maxbytes} {}
 
 // 便利构造函数：传入版本字符串、工作线程数以及最大内存限制
 ServerStats::ServerStats(std::string version, uint64_t threads, uint64_t limit_maxbytes)
-    : ServerStats(Config{std::move(version), threads, limit_maxbytes}) {
-}
+    : ServerStats(Config{std::move(version), threads, limit_maxbytes}) {}
 
 // 原子累加指定类型的计数器
 void ServerStats::increment(Counter counter, uint64_t amount) noexcept {

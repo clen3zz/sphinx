@@ -83,14 +83,10 @@ void validate_nodes(const std::vector<Node>& nodes) {
 }  // namespace
 
 // 返回节点全局唯一标识符（格式为 host:port）
-std::string Node::id() const {
-  return host + ":" + std::to_string(port);
-}
+std::string Node::id() const { return host + ":" + std::to_string(port); }
 
 // 节点相等性比较运算符
-bool Node::operator==(const Node& other) const {
-  return host == other.host && port == other.port;
-}
+bool Node::operator==(const Node& other) const { return host == other.host && port == other.port; }
 
 // 解析形如 "host1:port1,host2:port2" 的集群节点规格字符串
 std::vector<Node> parse_nodes(std::string_view specification) {
@@ -172,8 +168,7 @@ ConsistentHashRing::ConsistentHashRing(std::vector<Node> nodes) : _nodes(std::mo
 
 // 基于节点字符串规格构造哈希环
 ConsistentHashRing::ConsistentHashRing(std::string_view specification)
-    : ConsistentHashRing(parse_nodes(specification)) {
-}
+    : ConsistentHashRing(parse_nodes(specification)) {}
 
 // 根据键的一致性哈希路由到负责的目标节点
 Node ConsistentHashRing::route(std::string_view key) const {
@@ -195,13 +190,9 @@ Node ConsistentHashRing::route(std::string_view key) const {
 }
 
 // 获取实体节点列表引用
-const std::vector<Node>& ConsistentHashRing::nodes() const {
-  return _nodes;
-}
+const std::vector<Node>& ConsistentHashRing::nodes() const { return _nodes; }
 
 // 获取哈希环上排序后的所有虚拟节点条目
-const std::vector<RingEntry>& ConsistentHashRing::entries() const {
-  return _entries;
-}
+const std::vector<RingEntry>& ConsistentHashRing::entries() const { return _entries; }
 
 }  // namespace sphinx

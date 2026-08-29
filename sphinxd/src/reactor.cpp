@@ -22,38 +22,26 @@
 namespace sphinx {
 
 // Socket 基础抽象类构造函数
-Socket::Socket(int sockfd) : _sockfd{sockfd} {
-}
+Socket::Socket(int sockfd) : _sockfd{sockfd} {}
 
 // 析构函数：RAII 自动关闭底层套接字文件描述符
-Socket::~Socket() {
-  ::close(_sockfd);
-}
+Socket::~Socket() { ::close(_sockfd); }
 
 // 获取底层文件描述符
-int Socket::fd() const {
-  return _sockfd;
-}
+int Socket::fd() const { return _sockfd; }
 
 // TcpListener 构造函数：接管监听套接字并绑定新连接回调函数
 TcpListener::TcpListener(int sockfd, TcpAcceptFn&& accept_fn)
-    : _sockfd{sockfd}, _accept_fn{accept_fn} {
-}
+    : _sockfd{sockfd}, _accept_fn{accept_fn} {}
 
 // 析构函数：关闭监听套接字
-TcpListener::~TcpListener() {
-  ::close(_sockfd);
-}
+TcpListener::~TcpListener() { ::close(_sockfd); }
 
 // 监听套接字读事件就绪回调：循环接收所有就绪的新客户端连接
-void TcpListener::on_pollin() {
-  accept();
-}
+void TcpListener::on_pollin() { accept(); }
 
 // 监听套接字无需关注写就绪
-bool TcpListener::on_pollout() {
-  return true;
-}
+bool TcpListener::on_pollout() { return true; }
 
 // 非阻塞循环 accept 所有挂起的新连接
 void TcpListener::accept() {
@@ -89,9 +77,7 @@ void TcpListener::accept() {
 }
 
 // 获取监听套接字描述符
-int TcpListener::fd() const {
-  return _sockfd;
-}
+int TcpListener::fd() const { return _sockfd; }
 
 // 辅助函数：根据网卡地址与端口解析网络地址结构体列表
 static addrinfo* lookup_addresses(const std::string& iface, int port, int sock_type) {
@@ -159,8 +145,7 @@ std::shared_ptr<TcpListener> make_tcp_listener(const std::string& iface, int por
 }
 
 // TcpSocket 构造函数
-TcpSocket::TcpSocket(int sockfd, TcpRecvFn&& recv_fn) : Socket{sockfd}, _recv_fn{recv_fn} {
-}
+TcpSocket::TcpSocket(int sockfd, TcpRecvFn&& recv_fn) : Socket{sockfd}, _recv_fn{recv_fn} {}
 
 TcpSocket::~TcpSocket() = default;
 
@@ -173,9 +158,7 @@ void TcpSocket::set_tcp_nodelay(bool nodelay) {
 }
 
 // 检查套接字是否已断开关闭
-bool TcpSocket::closed() const {
-  return _closed;
-}
+bool TcpSocket::closed() const { return _closed; }
 
 // 同步尝试发送数据；若无法立即全部发送则缓存至发送队列并返回 false（需 Reactor 异步写）
 bool TcpSocket::send(const char* msg, size_t len) {
@@ -355,9 +338,7 @@ ReactorGroup::~ReactorGroup() {
   }
 }
 
-size_t ReactorGroup::nr_threads() const noexcept {
-  return _nr_threads;
-}
+size_t ReactorGroup::nr_threads() const noexcept { return _nr_threads; }
 
 // 获取从源线程到目标线程的单向通信通道
 ReactorGroup::Channel& ReactorGroup::channel(size_t destination, size_t source) {
@@ -425,9 +406,7 @@ void ReactorGroup::set_thread_sleeping(size_t thread_id, bool sleeping) {
 }
 
 // 默认 I/O 多路复用后端
-std::string Reactor::default_backend() {
-  return "epoll";
-}
+std::string Reactor::default_backend() { return "epoll"; }
 
 // Reactor 基类构造函数
 Reactor::Reactor(size_t thread_id, std::shared_ptr<ReactorGroup> group, OnMessageFn&& on_message_fn)
@@ -451,13 +430,9 @@ Reactor::Reactor(size_t thread_id, std::shared_ptr<ReactorGroup> group, OnMessag
   _efd = _group->eventfd(_thread_id);
 }
 
-size_t Reactor::thread_id() const {
-  return _thread_id;
-}
+size_t Reactor::thread_id() const { return _thread_id; }
 
-size_t Reactor::nr_threads() const {
-  return _nr_threads;
-}
+size_t Reactor::nr_threads() const { return _nr_threads; }
 
 // 向目标工作线程发送跨线程消息（有界无锁队列满时直接返回失败）
 bool Reactor::send_msg(size_t remote_id, const MessagePtr& message) {

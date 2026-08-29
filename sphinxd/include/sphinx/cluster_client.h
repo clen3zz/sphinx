@@ -20,8 +20,7 @@ enum class DeleteStatus : std::uint8_t { Deleted, NotFound };
 
 class ClientError : public std::runtime_error {
  public:
-  explicit ClientError(const std::string& message) : std::runtime_error(message) {
-  }
+  explicit ClientError(const std::string& message) : std::runtime_error(message) {}
 };
 
 /// 为静态配置的缓存节点集合提供同步客户端。

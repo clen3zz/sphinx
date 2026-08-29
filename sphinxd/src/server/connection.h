@@ -24,18 +24,13 @@ class Connection final {
     SocketClosed,       // 写入检测到 Socket 已关闭
   };
 
-  explicit Connection(uint64_t id) : _id{id} {
-  }
+  explicit Connection(uint64_t id) : _id{id} {}
 
   // 获取连接唯一 ID
-  uint64_t id() const noexcept {
-    return _id;
-  }
+  uint64_t id() const noexcept { return _id; }
 
   // 连接是否已标记关闭
-  bool closed() const noexcept {
-    return _closed;
-  }
+  bool closed() const noexcept { return _closed; }
 
   // 标记连接关闭并清理所有挂起的响应与 multi-get 聚合状态
   void mark_closed() {
@@ -45,29 +40,19 @@ class Connection final {
   }
 
   // 设置关联的底层 TCP Socket 弱引用
-  void set_socket(const std::shared_ptr<TcpSocket>& socket) {
-    _socket = socket;
-  }
+  void set_socket(const std::shared_ptr<TcpSocket>& socket) { _socket = socket; }
 
   // 获取关联的底层 TCP Socket（提升为 shared_ptr）
-  std::shared_ptr<TcpSocket> socket() const {
-    return _socket.lock();
-  }
+  std::shared_ptr<TcpSocket> socket() const { return _socket.lock(); }
 
   // 获取接收缓冲区可变引用
-  Buffer& receive_buffer() {
-    return _receive_buffer;
-  }
+  Buffer& receive_buffer() { return _receive_buffer; }
 
   // 获取接收缓冲区常量引用
-  const Buffer& receive_buffer() const {
-    return _receive_buffer;
-  }
+  const Buffer& receive_buffer() const { return _receive_buffer; }
 
   // 生成递增的下一个请求序号
-  uint64_t next_request_sequence() noexcept {
-    return _next_request_sequence++;
-  }
+  uint64_t next_request_sequence() noexcept { return _next_request_sequence++; }
 
   // 回滚请求序号（用于解析错误或失败回滚）
   void rollback_request_sequence() noexcept {

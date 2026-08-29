@@ -103,35 +103,23 @@ Hash Object::hash_of(const Key& key) {
 }
 
 // 获取当前对象的实际对齐大小
-size_t Object::size() const {
-  return Object::size_of(_key_size, _blob_size);
-}
+size_t Object::size() const { return Object::size_of(_key_size, _blob_size); }
 
 // 主动标记对象为已过期失效
-void Object::expire() {
-  _expired = 1;
-}
+void Object::expire() { _expired = 1; }
 
 // 检查对象是否已失效（已标记失效或已超过指定的过期时间戳）
 bool Object::is_expired(uint64_t now) const {
   return _expired != 0 || (_expiration != 0 && _expiration <= now);
 }
 
-uint32_t Object::flags() const {
-  return _flags;
-}
+uint32_t Object::flags() const { return _flags; }
 
-uint64_t Object::expiration() const {
-  return _expiration;
-}
+uint64_t Object::expiration() const { return _expiration; }
 
-Key Object::key() const {
-  return Key{key_start(), _key_size};
-}
+Key Object::key() const { return Key{key_start(), _key_size}; }
 
-Blob Object::blob() const {
-  return Blob{blob_start(), _blob_size};
-}
+Blob Object::blob() const { return Blob{blob_start(), _blob_size}; }
 
 // 获取 Key 在对象尾部连续内存中的起始指针
 const char* Object::key_start() const {
@@ -140,9 +128,7 @@ const char* Object::key_start() const {
 }
 
 // 获取 Blob 在对象尾部连续内存中的起始指针
-const char* Object::blob_start() const {
-  return key_start() + _key_size;
-}
+const char* Object::blob_start() const { return key_start() + _key_size; }
 
 // Segment 构造函数：初始化段内空闲写入指针与段末尾界限
 Segment::Segment(size_t size) : _pos{nullptr}, _end{nullptr} {
@@ -155,19 +141,13 @@ Segment::Segment(size_t size) : _pos{nullptr}, _end{nullptr} {
 }
 
 // 段当前是否尚未写入任何对象
-bool Segment::is_empty() const {
-  return _pos == start();
-}
+bool Segment::is_empty() const { return _pos == start(); }
 
 // 获取段可用数据区域总容量（扣除 Segment 头）
-size_t Segment::size() const {
-  return static_cast<size_t>(_end - start());
-}
+size_t Segment::size() const { return static_cast<size_t>(_end - start()); }
 
 // 重置段写入指针至起始位置（清空段）
-void Segment::reset() {
-  _pos = start();
-}
+void Segment::reset() { _pos = start(); }
 
 // 向段内追加单个对象（空间不足则返回 nullptr）
 Object* Segment::append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration) {
@@ -207,13 +187,9 @@ Object* Segment::next_object(Object* object) const {
 }
 
 // 段数据区起始指针
-char* Segment::start() {
-  return reinterpret_cast<char*>(this) + sizeof(Segment);
-}
+char* Segment::start() { return reinterpret_cast<char*>(this) + sizeof(Segment); }
 
-const char* Segment::start() const {
-  return reinterpret_cast<const char*>(this) + sizeof(Segment);
-}
+const char* Segment::start() const { return reinterpret_cast<const char*>(this) + sizeof(Segment); }
 
 // Log 构造函数：在预先 mmap 的大块连续内存上划分并初始化环形段列表
 Log::Log(const LogConfig& config) : _config{config} {

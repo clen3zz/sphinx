@@ -19,12 +19,9 @@ class Eventfd : public Pollable {
   int _efd;  // 关联的底层 eventfd 文件描述符
 
  public:
-  explicit Eventfd(int efd) : _efd{efd} {
-  }
+  explicit Eventfd(int efd) : _efd{efd} {}
 
-  int fd() const override {
-    return _efd;
-  }
+  int fd() const override { return _efd; }
 
   // 读就绪时清空 eventfd 计数器
   void on_pollin() override {
@@ -35,9 +32,7 @@ class Eventfd : public Pollable {
   }
 
   // eventfd 为通知唤醒机制，无需关注写就绪
-  bool on_pollout() override {
-    return false;
-  }
+  bool on_pollout() override { return false; }
 };
 
 }  // namespace
@@ -66,8 +61,7 @@ EpollReactor::EpollReactor(size_t thread_id, std::shared_ptr<ReactorGroup> group
 // 快速构造函数：自动创建 ReactorGroup
 EpollReactor::EpollReactor(size_t thread_id, size_t nr_threads, OnMessageFn&& on_message_fn)
     : EpollReactor{thread_id, std::make_shared<ReactorGroup>(nr_threads),
-                   std::move(on_message_fn)} {
-}
+                   std::move(on_message_fn)} {}
 
 // 析构函数：释放 epoll 句柄
 EpollReactor::~EpollReactor() {

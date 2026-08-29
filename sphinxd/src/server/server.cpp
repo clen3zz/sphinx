@@ -13,9 +13,7 @@ namespace sphinx {
 namespace {
 
 // 判断是否为无需按键哈希分片的查询类命令（Version、Stats）
-bool is_server_info_command(Opcode op) {
-  return op == Opcode::Version || op == Opcode::Stats;
-}
+bool is_server_info_command(Opcode op) { return op == Opcode::Version || op == Opcode::Stats; }
 
 }  // namespace
 
@@ -27,8 +25,7 @@ Server::Server(const LogConfig& log_config, const std::string& backend, size_t t
                             [this](const MessagePtr& data) { on_message(data); })},
       _log{log_config},
       _stats{std::move(stats)},
-      _mget_queue_failure_used{std::move(mget_queue_failure_used)} {
-}
+      _mget_queue_failure_used{std::move(mget_queue_failure_used)} {}
 
 // 绑定监听地址与端口，启动工作线程的 Reactor 事件循环
 void Server::serve(const Config& config) {

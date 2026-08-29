@@ -35,8 +35,6 @@ class Index {
     _index.emplace(key, value);
     return old;
   }
-  void erase(const Key& key) {
-    _index.erase(key);
-  }
+  void erase(const Key& key) { _index.erase(key); }
 };
 }  // namespace sphinx

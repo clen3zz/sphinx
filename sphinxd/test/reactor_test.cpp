@@ -11,8 +11,7 @@
 namespace {
 
 struct IntMessage final : sphinx::Message {
-  explicit IntMessage(int initial_value) : value{initial_value} {
-  }
+  explicit IntMessage(int initial_value) : value{initial_value} {}
 
   int value;
 };
@@ -21,8 +20,7 @@ class TestReactor final : public sphinx::EpollReactor {
  public:
   TestReactor(size_t thread_id, std::shared_ptr<sphinx::ReactorGroup> group,
               sphinx::OnMessageFn&& on_message_fn)
-      : EpollReactor{thread_id, std::move(group), std::move(on_message_fn)} {
-  }
+      : EpollReactor{thread_id, std::move(group), std::move(on_message_fn)} {}
 
   using EpollReactor::poll_messages;
 };

@@ -59,9 +59,7 @@ class FakeServer final {
   FakeServer(const FakeServer&) = delete;
   FakeServer& operator=(const FakeServer&) = delete;
 
-  uint16_t port() const {
-    return _port;
-  }
+  uint16_t port() const { return _port; }
 
   void start() {
     _thread = std::thread{[this] {
@@ -125,9 +123,7 @@ class TwoConnectionServer final {
   TwoConnectionServer(const TwoConnectionServer&) = delete;
   TwoConnectionServer& operator=(const TwoConnectionServer&) = delete;
 
-  uint16_t port() const {
-    return _port;
-  }
+  uint16_t port() const { return _port; }
 
   void start() {
     _thread = std::thread{[this] {
@@ -211,9 +207,7 @@ std::string read_request(int fd) {
   return request;
 }
 
-std::string node_spec(uint16_t port) {
-  return "127.0.0.1:" + std::to_string(port);
-}
+std::string node_spec(uint16_t port) { return "127.0.0.1:" + std::to_string(port); }
 
 TEST(ClusterClientTest, HandlesPartialResponsesAndBinaryValues) {
   FakeServer server{[](int client) {

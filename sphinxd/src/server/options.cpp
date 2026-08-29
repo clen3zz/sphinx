@@ -15,9 +15,7 @@ namespace sphinx {
 namespace {
 
 // 打印程序版本号
-void print_version() {
-  std::cout << "Sphinx " << SPHINX_VERSION << '\n' << std::flush;
-}
+void print_version() { std::cout << "Sphinx " << SPHINX_VERSION << '\n' << std::flush; }
 
 // 打印命令行选项使用说明文档
 void print_usage(const std::string& program) {

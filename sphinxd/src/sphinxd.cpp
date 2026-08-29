@@ -75,8 +75,7 @@ class CpuAffinity final {
   std::optional<int> _next_id;
 
  public:
-  explicit CpuAffinity(std::set<int> isolated) : _isolated{std::move(isolated)} {
-  }
+  explicit CpuAffinity(std::set<int> isolated) : _isolated{std::move(isolated)} {}
 
   // 获取下一个可用的 CPU 核心编号
   int next_cpu_id() {

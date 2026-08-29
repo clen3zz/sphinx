@@ -10,9 +10,7 @@
 namespace sphinx {
 
 // 检查缓冲区是否为空
-bool Buffer::is_empty() const {
-  return _data.empty();
-}
+bool Buffer::is_empty() const { return _data.empty(); }
 
 // 向缓冲区尾部追加数据
 void Buffer::append(std::string_view data) {
@@ -37,14 +35,10 @@ void Buffer::remove_prefix(size_t n) {
 }
 
 // 获取缓冲区底层原始数据指针
-const char* Buffer::data() const {
-  return _data.data();
-}
+const char* Buffer::data() const { return _data.data(); }
 
 // 获取当前缓冲区已存储的字节数
-size_t Buffer::size() const {
-  return _data.size();
-}
+size_t Buffer::size() const { return _data.size(); }
 
 // 构造并返回当前缓冲区内容的只读 string_view 视图
 std::string_view Buffer::string_view() const {
