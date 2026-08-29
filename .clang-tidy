@@ -19,12 +19,17 @@ Checks: >
   readability-container-size-empty,
   readability-simplify-boolean-expr,
   readability-make-member-function-const,
+  readability-inconsistent-declaration-parameter-name,
+  google-explicit-constructor,
+  google-readability-casting,
+  google-build-namespaces,
+  modernize-use-using,
   misc-redundant-expression,
   misc-unused-using-decls,
   -bugprone-easily-swappable-parameters,
   -performance-enum-size,
   -portability-avoid-pragma-once
-WarningsAsErrors: ''
+WarningsAsErrors: 'bugprone-*,concurrency-*,clang-analyzer-*'
 HeaderFilterRegex: '.*/sphinxd/(include|src)/.*'
 ExcludeHeaderFilterRegex: '.*/(third_party/.*|MurmurHash3\.(h|cpp)|sphinxd/include/sphinx/protocol\.h)'
 FormatStyle: file
