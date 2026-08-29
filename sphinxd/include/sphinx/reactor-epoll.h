@@ -9,10 +9,12 @@
 
 namespace sphinx {
 
+// 基于 Linux epoll 机制的高性能 Reactor 事件驱动实现
 class EpollReactor : public Reactor {
-  std::unordered_map<int, std::shared_ptr<Pollable>> _pollables;
-  std::unordered_map<int, uint32_t> _epoll_events;
-  int _epollfd;
+  std::unordered_map<int, std::shared_ptr<Pollable>>
+      _pollables;  // 被监听的文件描述符到对应 Pollable 可轮询对象的映射表
+  std::unordered_map<int, uint32_t> _epoll_events;  // 各文件描述符当前注册在 epoll 监听中的事件掩码
+  int _epollfd;                                     // Linux epoll 实例的文件描述符
 
  public:
   EpollReactor(size_t thread_id, std::shared_ptr<ReactorGroup> group, OnMessageFn&& on_message_fn);

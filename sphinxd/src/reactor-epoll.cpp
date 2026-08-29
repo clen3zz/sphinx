@@ -16,7 +16,7 @@ namespace {
 
 // Eventfd 可轮询对象包装：用于跨线程唤醒 Reactor 事件循环
 class Eventfd : public Pollable {
-  int _efd;
+  int _efd;  // 关联的底层 eventfd 文件描述符
 
  public:
   explicit Eventfd(int efd) : _efd{efd} {
@@ -34,6 +34,7 @@ class Eventfd : public Pollable {
     }
   }
 
+  // eventfd 为通知唤醒机制，无需关注写就绪
   bool on_pollout() override {
     return false;
   }
@@ -77,30 +78,36 @@ EpollReactor::~EpollReactor() {
 
 // 注册 TCP 监听器（关注读事件）
 void EpollReactor::accept(std::shared_ptr<TcpListener>&& listener) {
+  // 1. 入参校验
   if (!listener) {
     throw std::invalid_argument("cannot register a null listener");
   }
 
+  // 2. 注册 EPOLLIN 读事件并存入内部 Pollable 管理表
   update_epoll(listener.get(), EPOLLIN);
   _pollables.emplace(listener->fd(), std::move(listener));
 }
 
 // 注册套接字读事件（数据接收）
 void EpollReactor::recv(std::shared_ptr<Socket>&& socket) {
+  // 1. 入参校验
   if (!socket) {
     throw std::invalid_argument("cannot register a null socket");
   }
 
+  // 2. 注册 EPOLLIN 读事件并存入内部 Pollable 管理表
   update_epoll(socket.get(), EPOLLIN);
   _pollables.emplace(socket->fd(), std::move(socket));
 }
 
 // 注册套接字写事件（异步排队写出）
 void EpollReactor::send(std::shared_ptr<Socket> socket) {
+  // 1. 入参校验
   if (!socket) {
     throw std::invalid_argument("cannot register a null socket");
   }
 
+  // 2. 注册读写事件（EPOLLIN | EPOLLOUT）并存入内部 Pollable 管理表
   update_epoll(socket.get(), EPOLLIN | EPOLLOUT);
   _pollables.emplace(socket->fd(), socket);
 }
@@ -173,6 +180,7 @@ void EpollReactor::run() {
       auto fd = event->data.fd;
       auto it = _pollables.find(fd);
 
+      // 若该描述符未在 Pollable 表中（可能在处理其他事件时已被移除），从 epoll 中注销防悬挂
       if (it == _pollables.end()) {
         ::epoll_ctl(_epollfd, EPOLL_CTL_DEL, fd, nullptr);
         continue;
@@ -180,17 +188,17 @@ void EpollReactor::run() {
 
       auto pollable = it->second;
 
-      // 读事件或异常断开事件处理
+      // 4.1 处理读就绪及对端异常断开/挂起事件
       if ((event->events & (EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP)) != 0) {
         pollable->on_pollin();
       }
 
-      // 若在 on_pollin 处理过程中该 fd 已被注销，跳过后续写事件
+      // 4.2 若在 on_pollin 处理过程中该 fd 已被注销，跳过后续写事件
       if (_pollables.find(fd) == _pollables.end()) {
         continue;
       }
 
-      // 写就绪事件处理
+      // 4.3 处理写就绪事件：若发送缓冲区已全部清空，退回仅关注读事件
       if ((event->events & EPOLLOUT) != 0) {
         if (pollable->on_pollout()) {
           // 发送缓冲区已全部清空，退回仅关注读事件
@@ -203,6 +211,7 @@ void EpollReactor::run() {
 
 // 增量添加或修改 epoll 监听的事件类型
 void EpollReactor::update_epoll(Pollable* pollable, uint32_t events) {
+  // 1. 查找当前已注册的事件；若事件未改变直接返回，若已注册则改为 EPOLL_CTL_MOD
   int op = EPOLL_CTL_ADD;
   auto it = _epoll_events.find(pollable->fd());
 
@@ -213,14 +222,17 @@ void EpollReactor::update_epoll(Pollable* pollable, uint32_t events) {
     op = EPOLL_CTL_MOD;
   }
 
+  // 2. 组装 epoll_event 结构体，默认附加 EPOLLRDHUP 监听对端半关闭
   ::epoll_event ev = {};
   ev.data.fd = pollable->fd();
   ev.events = events | EPOLLRDHUP;
 
+  // 3. 调用 epoll_ctl 更新内核监听事件树
   if (::epoll_ctl(_epollfd, op, pollable->fd(), &ev) < 0) {
     throw std::system_error(errno, std::system_category(), "epoll_ctl");
   }
 
+  // 4. 记录或更新该描述符当前已注册的事件掩码
   _epoll_events.insert_or_assign(pollable->fd(), events);
 }
 

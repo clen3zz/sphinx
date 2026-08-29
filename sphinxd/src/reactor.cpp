@@ -58,29 +58,32 @@ bool TcpListener::on_pollout() {
 // 非阻塞循环 accept 所有挂起的新连接
 void TcpListener::accept() {
   while (true) {
-    // 采用 accept4 原子创建非阻塞与进程退出自动关闭的连接套接字
+    // 1. 采用 accept4 原子创建非阻塞与进程退出自动关闭的连接套接字
     int connfd = ::accept4(_sockfd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
 
     if (connfd >= 0) {
       try {
+        // 成功建立新连接，交付给上层 accept 回调处理
         _accept_fn(connfd);
       } catch (...) {
+        // 若回调抛出异常，关闭套接字防止描述符泄漏
         ::close(connfd);
         throw;
       }
       continue;
     }
 
-    // 信号中断则立即重试
+    // 2. 信号中断则立即重试
     if (errno == EINTR) {
       continue;
     }
 
-    // 队列已无更多就绪连接，退出循环
+    // 3. 队列已无更多就绪连接，退出循环
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
       return;
     }
 
+    // 4. 其他底层系统调用错误，抛出系统异常
     throw std::system_error(errno, std::system_category(), "accept4");
   }
 }
@@ -92,12 +95,14 @@ int TcpListener::fd() const {
 
 // 辅助函数：根据网卡地址与端口解析网络地址结构体列表
 static addrinfo* lookup_addresses(const std::string& iface, int port, int sock_type) {
+  // 1. 设置地址解析提示参数（IPv4、TCP 流式协议、被动监听及自动地址配置）
   addrinfo hints = {};
   hints.ai_family = AF_INET;
   hints.ai_socktype = sock_type;
   hints.ai_protocol = 0;
   hints.ai_flags = AI_PASSIVE | AI_ADDRCONFIG;
 
+  // 2. 执行网络地址解析
   addrinfo* ret = nullptr;
   int err = getaddrinfo(iface.c_str(), std::to_string(port).c_str(), &hints, &ret);
   if (err != 0) {
@@ -139,6 +144,7 @@ std::shared_ptr<TcpListener> make_tcp_listener(const std::string& iface, int por
 
     freeaddrinfo(addresses);
 
+    // 5. 成功完成绑定监听，返回封装的 TcpListener 智能指针
     try {
       return std::make_shared<TcpListener>(sockfd, std::move(accept_fn));
     } catch (...) {
@@ -148,6 +154,7 @@ std::shared_ptr<TcpListener> make_tcp_listener(const std::string& iface, int por
   }
 
   freeaddrinfo(addresses);
+  // 6. 所有可用地址均未成功建立监听，抛出异常
   throw std::runtime_error("Failed to listen to interface: '" + iface + "'");
 }
 
@@ -172,6 +179,7 @@ bool TcpSocket::closed() const {
 
 // 同步尝试发送数据；若无法立即全部发送则缓存至发送队列并返回 false（需 Reactor 异步写）
 bool TcpSocket::send(const char* msg, size_t len) {
+  // 1. 检查连接状态与入参合法性
   if (_closed) {
     return true;
   }
@@ -179,25 +187,25 @@ bool TcpSocket::send(const char* msg, size_t len) {
     return true;
   }
 
-  // 若发送队列中已有积压数据，必须按序先排队后发送
+  // 2. 若发送队列中已有积压数据，必须按序先排队后发送
   if (!_tx_buf.empty()) {
     _tx_buf.insert(_tx_buf.end(), msg, msg + len);
     return false;
   }
 
-  // 尝试非阻塞系统调用发送
+  // 3. 尝试非阻塞系统调用发送
   ssize_t nr;
   do {
     nr = ::send(_sockfd, msg, len, MSG_NOSIGNAL | MSG_DONTWAIT);
   } while (nr < 0 && errno == EINTR);
 
-  // 对端异常重置或套接字无效
+  // 4. 对端异常重置或套接字无效
   if (nr < 0 && (errno == ECONNRESET || errno == EPIPE || errno == ENOTCONN || errno == EBADF)) {
     _closed = true;
     return true;
   }
 
-  // 内核发送缓冲区已满
+  // 5. 内核发送缓冲区已满，将数据追加至发送缓冲区等待异步写就绪通知
   if (nr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
     _tx_buf.insert(_tx_buf.end(), msg, msg + len);
     return false;
@@ -207,12 +215,13 @@ bool TcpSocket::send(const char* msg, size_t len) {
     throw std::system_error(errno, std::system_category(), "send");
   }
 
-  // 部分写入，将剩余数据缓存至发送缓冲区
+  // 6. 部分写入，将剩余未写完数据缓存至发送缓冲区
   if (nr == 0 || static_cast<size_t>(nr) < len) {
     _tx_buf.insert(_tx_buf.end(), msg + nr, msg + len);
     return false;
   }
 
+  // 7. 全部数据均已成功写出
   return true;
 }
 
@@ -221,60 +230,66 @@ void TcpSocket::on_pollin() {
   constexpr size_t rx_buf_size = size_t{256} * 1024;
   std::array<char, rx_buf_size> rx_buf;
 
+  // 循环非阻塞读取数据，直到缓冲区读空或连接关闭
   while (true) {
     ssize_t nr = ::recv(_sockfd, rx_buf.data(), rx_buf.size(), MSG_DONTWAIT);
 
-    // 成功读取到有效数据
+    // 1. 成功读取到有效数据，通知上层数据接收回调
     if (nr > 0) {
       _recv_fn(this->shared_from_this(),
                std::string_view{rx_buf.data(), static_cast<std::string_view::size_type>(nr)});
       return;
     }
 
-    // 读到 EOF 说明对端已正常关闭连接
+    // 2. 读到 EOF 说明对端已正常关闭连接，标记关闭并发送空数据通知上层
     if (nr == 0) {
       _closed = true;
       _recv_fn(this->shared_from_this(), std::string_view{});
       return;
     }
 
-    // 信号中断重试
+    // 3. 信号中断重试
     if (errno == EINTR) {
       continue;
     }
 
-    // 缓冲区已读空
+    // 4. 缓冲区已读空，退出本次轮询
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
       return;
     }
 
-    // 连接发生异常重置或失效
+    // 5. 连接发生异常重置或失效，标记关闭并通知上层
     if (errno == ECONNRESET || errno == ENOTCONN || errno == EBADF) {
       _closed = true;
       _recv_fn(this->shared_from_this(), std::string_view{});
       return;
     }
 
+    // 6. 其他严重 I/O 错误抛出异常
     throw std::system_error(errno, std::system_category(), "recv");
   }
 }
 
 // 写事件就绪回调：继续发送未写完的缓冲区数据
 bool TcpSocket::on_pollout() {
+  // 1. 若连接已关闭或发送缓冲区为空，无需继续写出
   if (_closed || _tx_buf.empty()) {
     return true;
   }
 
+  // 2. 循环尝试将发送缓冲区中的积压数据写至底层套接字
   ssize_t nr;
   do {
     nr = ::send(_sockfd, _tx_buf.data(), _tx_buf.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
   } while (nr < 0 && errno == EINTR);
 
+  // 3. 处理异常断开或套接字失效
   if (nr < 0 && (errno == ECONNRESET || errno == EPIPE || errno == ENOTCONN || errno == EBADF)) {
     _closed = true;
     return true;
   }
 
+  // 4. 内核写缓冲区满，等待下一次写就绪通知
   if (nr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
     return false;
   }
@@ -287,16 +302,16 @@ bool TcpSocket::on_pollout() {
     return false;
   }
 
-  // 擦除已成功写入的部分
+  // 5. 擦除已成功写入的部分数据，并返回缓冲区是否已全部清空
   _tx_buf.erase(_tx_buf.begin(), _tx_buf.begin() + nr);
   return _tx_buf.empty();
 }
 
 // 跨线程单向消息通道：无锁 SPSC 环形队列配合溢出链表队列
 struct ReactorGroup::Channel {
-  Queue<MessagePtr, reactor_message_queue_size> queue;
-  std::mutex overflow_mutex;
-  std::deque<MessagePtr> overflow;
+  Queue<MessagePtr, reactor_message_queue_size> queue;  // 有界单生产者/单消费者无锁环形队列
+  std::mutex overflow_mutex;                            // 保护溢出队列并发操作的互斥锁
+  std::deque<MessagePtr> overflow;                      // 环形队列满时暂存积压消息的双端队列
 };
 
 // 校验线程数合法性
@@ -313,10 +328,12 @@ ReactorGroup::ReactorGroup(size_t nr_threads)
       _eventfds(_nr_threads, -1),
       _thread_is_sleeping(_nr_threads),
       _channels(_nr_threads * _nr_threads) {
+  // 遍历初始化每个线程的休眠标记以及跨线程唤醒用的 eventfd（支持非阻塞和进程退出自动关闭）
   for (size_t id = 0; id < nr_threads; id++) {
     _thread_is_sleeping[id].store(false, std::memory_order_relaxed);
     _eventfds[id] = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
 
+    // 若某一 eventfd 创建失败，回滚清理此前已打开的文件描述符防止泄漏
     if (_eventfds[id] < 0) {
       auto saved_errno = errno;
       for (size_t close_id = 0; close_id < id; close_id++) {
@@ -362,17 +379,20 @@ void ReactorGroup::initialize_thread(size_t thread_id) {
     throw std::invalid_argument("invalid reactor thread id");
   }
 
+  // 1. 加互斥锁保护通信通道矩阵的线程安全初始化
   std::scoped_lock lock{_channels_mutex};
   for (size_t peer = 0; peer < _nr_threads; peer++) {
     if (peer == thread_id) {
       continue;
     }
 
+    // 2. 初始化当前线程发往对端线程的出站通道（outgoing）
     auto& outgoing = _channels[peer * _nr_threads + thread_id];
     if (!outgoing) {
       outgoing = std::make_unique<Channel>();
     }
 
+    // 3. 初始化对端线程发往当前线程的入站通道（incoming）
     auto& incoming = _channels[thread_id * _nr_threads + peer];
     if (!incoming) {
       incoming = std::make_unique<Channel>();
@@ -415,15 +435,18 @@ Reactor::Reactor(size_t thread_id, std::shared_ptr<ReactorGroup> group, OnMessag
       _thread_id{thread_id},
       _nr_threads{0},
       _on_message_fn{std::move(on_message_fn)} {
+  // 1. 校验反应堆组有效性
   if (!_group) {
     throw std::invalid_argument("reactor group cannot be null");
   }
 
+  // 2. 校验当前线程 ID 合法性
   _nr_threads = _group->nr_threads();
   if (thread_id >= _nr_threads) {
     throw std::invalid_argument("invalid reactor thread id");
   }
 
+  // 3. 初始化本线程相关的双向通信通道并绑定本线程专用的 eventfd
   _group->initialize_thread(_thread_id);
   _efd = _group->eventfd(_thread_id);
 }
@@ -448,6 +471,7 @@ bool Reactor::send_msg_deferred(size_t remote_id, const MessagePtr& message) {
 
 // 跨线程消息发送具体实现
 bool Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool defer_if_full) {
+  // 1. 基础入参合法性校验（禁止向自身发消息，校验目标线程有效性及消息指针非空）
   if (remote_id == _thread_id) {
     throw std::invalid_argument("Attempting to send message to self");
   }
@@ -455,8 +479,10 @@ bool Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool de
     throw std::invalid_argument("invalid reactor message target");
   }
 
+  // 2. 获取源线程发往目标线程的专用单向通道
   auto& channel = _group->channel(remote_id, _thread_id);
 
+  // 3. 加通道互斥锁进行消息入队
   {
     std::scoped_lock lock{channel.overflow_mutex};
 
@@ -474,13 +500,14 @@ bool Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool de
     }
   }
 
-  // 标记对端线程待唤醒
+  // 4. 记录对端线程待唤醒位，待当前事件循环轮次统一唤醒
   _pending_wakeups.set(remote_id);
   return true;
 }
 
 // 批量唤醒所有有待处理消息且当前正在休眠的对端线程
 void Reactor::wake_up_pending() {
+  // 遍历位图；仅当目标线程处于休眠状态时才执行 eventfd 写操作进行精准唤醒
   for (size_t id = 0; id < _pending_wakeups.size(); id++) {
     if (_pending_wakeups.test(id) && _group->is_thread_sleeping(id)) {
       _group->set_thread_sleeping(id, false);
@@ -488,6 +515,7 @@ void Reactor::wake_up_pending() {
     }
   }
 
+  // 清空本轮待唤醒标记位图
   _pending_wakeups.reset();
 }
 
@@ -510,10 +538,12 @@ bool Reactor::has_messages() {
     }
 
     auto& channel = _group->channel(_thread_id, other);
+    // 1. 检查无锁 SPSC 环形队列中是否有消息
     if (channel.queue.front() != nullptr) {
       return true;
     }
 
+    // 2. 检查溢出队列中是否有消息
     std::scoped_lock lock{channel.overflow_mutex};
     if (!channel.overflow.empty()) {
       return true;

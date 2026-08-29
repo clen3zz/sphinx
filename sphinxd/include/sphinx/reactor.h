@@ -39,7 +39,7 @@ struct Pollable {
 
 class Socket : public Pollable {
  protected:
-  int _sockfd;
+  int _sockfd;  // 底层套接字文件描述符
 
  public:
   explicit Socket(int sockfd);
@@ -54,8 +54,8 @@ class Socket : public Pollable {
 };
 
 class TcpListener : public Pollable {
-  int _sockfd;
-  TcpAcceptFn _accept_fn;
+  int _sockfd;             // 监听套接字文件描述符
+  TcpAcceptFn _accept_fn;  // 接收新客户端连接时的处理回调函数
 
  public:
   explicit TcpListener(int sockfd, TcpAcceptFn&& accept_fn);
@@ -80,8 +80,8 @@ class TcpSocket;
 using TcpRecvFn = std::function<void(std::shared_ptr<TcpSocket>, std::string_view)>;
 
 class TcpSocket : public Socket, public std::enable_shared_from_this<TcpSocket> {
-  TcpRecvFn _recv_fn;
-  std::vector<char> _tx_buf;
+  TcpRecvFn _recv_fn;         // 数据读取接收或连接断开时的回调函数
+  std::vector<char> _tx_buf;  // 发送缓冲区（暂存未完全发送的积压数据）
 
  public:
   explicit TcpSocket(int sockfd, TcpRecvFn&& recv_fn);
@@ -93,7 +93,7 @@ class TcpSocket : public Socket, public std::enable_shared_from_this<TcpSocket> 
   bool on_pollout() override;
 
  private:
-  bool _closed = false;
+  bool _closed = false;  // 连接是否已关闭或失效标记
 };
 
 constexpr int max_nr_threads = 64;
@@ -104,11 +104,12 @@ constexpr size_t reactor_message_queue_size = 10000;
 class ReactorGroup {
   struct Channel;
 
-  size_t _nr_threads;
-  std::vector<int> _eventfds;
-  std::vector<std::atomic<bool>> _thread_is_sleeping;
-  std::vector<std::unique_ptr<Channel>> _channels;
-  std::mutex _channels_mutex;
+  size_t _nr_threads;          // 组内管理的 Reactor 工作线程总数
+  std::vector<int> _eventfds;  // 各工作线程关联的 eventfd 描述符列表（用于异步唤醒）
+  std::vector<std::atomic<bool>> _thread_is_sleeping;  // 各工作线程的休眠状态原子标记列表
+  std::vector<std::unique_ptr<Channel>>
+      _channels;               // 跨线程通信通道矩阵（大小为 _nr_threads * _nr_threads）
+  std::mutex _channels_mutex;  // 保护通道矩阵并发分配初始化的互斥锁
 
   Channel& channel(size_t destination, size_t source);
   void initialize_thread(size_t thread_id);
@@ -131,12 +132,12 @@ class ReactorGroup {
 
 class Reactor {
  protected:
-  std::shared_ptr<ReactorGroup> _group;
-  int _efd = -1;
-  size_t _thread_id;
-  size_t _nr_threads;
-  std::bitset<max_nr_threads> _pending_wakeups;
-  OnMessageFn _on_message_fn;
+  std::shared_ptr<ReactorGroup> _group;  // 所属反应堆组的共享指针
+  int _efd = -1;                         // 当前工作线程绑定的用于跨线程唤醒的 eventfd 描述符
+  size_t _thread_id;                     // 当前反应堆的线程编号（从 0 开始）
+  size_t _nr_threads;                    // 反应堆组包含的总工作线程数
+  std::bitset<max_nr_threads> _pending_wakeups;  // 记录待批量唤醒的目标对端线程位图
+  OnMessageFn _on_message_fn;                    // 接收到跨线程消息时的业务处理回调
 
  public:
   static std::string default_backend();
