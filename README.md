@@ -43,8 +43,14 @@ TCP 客户端
 
 ### 依赖安装
 
-- **Ubuntu/Debian**: `sudo apt install -y build-essential cmake ninja-build ccache python3 libgtest-dev netcat-openbsd`
-- **Fedora**: `sudo dnf install -y gcc-c++ cmake ninja-build ccache python3 gtest-devel nc`
+项目提供依赖安装脚本，支持 Ubuntu、Debian 和 Fedora：
+
+```bash
+./scripts/install_dependencies.sh
+```
+
+脚本会安装编译器、CMake、Ninja、ccache、GoogleTest、Python 和网络测试所需工具。
+`memtier_benchmark` 仅用于可选的基准测试，不属于核心构建依赖。
 
 ### 编译与测试
 
