@@ -12,7 +12,6 @@
 #include <unistd.h>
 
 #include <array>
-#include <cstring>
 #include <deque>
 #include <mutex>
 #include <new>

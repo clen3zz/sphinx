@@ -4,7 +4,6 @@
 #include <sphinx/protocol.h>
 #include <sphinx/reactor.h>
 
-#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>

@@ -5,7 +5,6 @@
 
 #include <sphinx/protocol_types.h>
 
-#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <optional>
