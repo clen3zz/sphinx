@@ -10,7 +10,7 @@
 TEST(IndexTest, overwriteReturnsOldValueAndRebindsViewKey) {
   sphinx::Index<std::string_view, int> index;
   std::string first = "same";
-  std::string second = "same";
+  std::string const second = "same";
   ASSERT_FALSE(index.insert_or_assign(first, 1).has_value());
   auto old = index.insert_or_assign(second, 2);
   ASSERT_TRUE(old.has_value());

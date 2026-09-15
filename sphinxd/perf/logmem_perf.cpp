@@ -21,15 +21,15 @@ static std::string make_random(size_t len) {
 }
 
 static void Log_append_expiring(benchmark::State& state) {
-  size_t mem_size = size_t{2} * 1024 * 1024;
-  size_t segment_size = size_t{1} * 1024 * 1024;
-  sphinx::Memory memory = sphinx::Memory::mmap(mem_size);
+  size_t const mem_size = size_t{2} * 1024 * 1024;
+  size_t const segment_size = size_t{1} * 1024 * 1024;
+  sphinx::Memory const memory = sphinx::Memory::mmap(mem_size);
   sphinx::LogConfig cfg;
   cfg.segment_size = segment_size;
   cfg.memory_ptr = reinterpret_cast<char*>(memory.addr());
   cfg.memory_size = memory.size();
-  sphinx::Log log{cfg};
-  std::string key = make_random(8);
+  sphinx::Log const log{cfg};
+  std::string const key = make_random(8);
   std::string blob = make_random(state.range(0));
   for (auto _ : state) {
     log.append(key, blob);

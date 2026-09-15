@@ -21,7 +21,7 @@ constexpr std::array<Counter, 9> kCounters = {
 };
 
 TEST(ServerStatsTest, CountersStartAtZero) {
-  ServerStats stats{"v-test", 4, 64 * 1024 * 1024};
+  ServerStats const stats{"v-test", 4, uint64_t{64} * 1024 * 1024};
 
   for (auto counter : kCounters) {
     EXPECT_EQ(stats.counter(counter), 0U);

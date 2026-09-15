@@ -8,7 +8,7 @@
 #include <string>
 
 TEST(StringTest, to_string) {
-  std::minstd_rand rng{1337};
+  std::minstd_rand rng{std::random_device{}()};
   for (int i = 0; i < 100; i++) {
     ASSERT_EQ(std::to_string(i), sphinx::to_string(static_cast<unsigned long>(i)));
     auto v = static_cast<int>(rng());

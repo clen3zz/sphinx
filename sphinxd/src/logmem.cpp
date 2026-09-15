@@ -27,12 +27,12 @@ static std::optional<uint64_t> parse_uint64_decimal(const Blob& blob) {
   }
 
   uint64_t value = 0;
-  for (char digit : blob) {
+  for (char const digit : blob) {
     if (digit < '0' || digit > '9') {
       return std::nullopt;
     }
 
-    auto numeric_digit = static_cast<uint64_t>(digit - '0');
+    const auto numeric_digit = static_cast<uint64_t>(digit - '0');
     if (value > (std::numeric_limits<uint64_t>::max() - numeric_digit) / 10) {
       return std::nullopt;
     }
@@ -68,7 +68,7 @@ Object::Object(const Key& key, const Blob& blob, uint32_t flags, uint64_t expira
 
 // 计算给定 Key 与 Blob 构造 Object 所需的总对齐字节数
 size_t Object::size_of(const Key& key, const Blob& blob) {
-  return Object::size_of(key.size(), blob.size());
+  return size_of(key.size(), blob.size());
 }
 
 // 计算指定长度下的 Object 内存对齐尺寸
@@ -78,7 +78,7 @@ size_t Object::size_of(size_t key_size, size_t blob_size) {
     throw std::invalid_argument("object is too large");
   }
 
-  auto raw_size = sizeof(Object) + key_size + blob_size;
+  const auto raw_size = sizeof(Object) + key_size + blob_size;
   constexpr auto alignment = alignof(Object);
   if (raw_size > std::numeric_limits<size_t>::max() - (alignment - 1)) {
     throw std::invalid_argument("object is too large");
@@ -103,7 +103,7 @@ Hash Object::hash_of(const Key& key) {
 }
 
 // 获取当前对象的实际对齐大小
-size_t Object::size() const { return Object::size_of(_key_size, _blob_size); }
+size_t Object::size() const { return size_of(_key_size, _blob_size); }
 
 // 主动标记对象为已过期失效
 void Object::expire() { _expired = 1; }
@@ -123,7 +123,7 @@ Blob Object::blob() const { return Blob{blob_start(), _blob_size}; }
 
 // 获取 Key 在对象尾部连续内存中的起始指针
 const char* Object::key_start() const {
-  const char* obj_start = reinterpret_cast<const char*>(this);
+  const auto* obj_start = reinterpret_cast<const char*>(this);
   return obj_start + sizeof(Object);
 }
 
@@ -151,11 +151,11 @@ void Segment::reset() { _pos = start(); }
 
 // 向段内追加单个对象（空间不足则返回 nullptr）
 Object* Segment::append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration) {
-  size_t object_size = Object::size_of(key, blob);
-  size_t remaining = static_cast<size_t>(_end - _pos);
+  const auto object_size = Object::size_of(key, blob);
+  const auto remaining = static_cast<size_t>(_end - _pos);
 
   if (remaining >= object_size) {
-    Object* object = new (_pos) Object(key, blob, flags, expiration);
+    auto* object = new (_pos) Object(key, blob, flags, expiration);
     _pos += object_size;
     return object;
   }
@@ -193,9 +193,9 @@ const char* Segment::start() const { return reinterpret_cast<const char*>(this) 
 
 // Log 构造函数：在预先 mmap 的大块连续内存上划分并初始化环形段列表
 Log::Log(const LogConfig& config) : _config{config} {
-  auto seg_size = _config.segment_size;
-  auto mem_ptr = _config.memory_ptr;
-  auto mem_size = _config.memory_size;
+  const auto seg_size = _config.segment_size;
+  auto* const mem_ptr = _config.memory_ptr;
+  const auto mem_size = _config.memory_size;
 
   // 1. 内存参数合法性与对齐约束校验
   if (mem_ptr == nullptr || mem_size == 0) {
@@ -217,8 +217,7 @@ Log::Log(const LogConfig& config) : _config{config} {
   // 2. 依次在内存块上 placement new 构造各个 Segment 对象并加入环形队列
   _segment_ring.reserve(mem_size / seg_size);
   for (size_t seg_off = 0; seg_off < mem_size; seg_off += seg_size) {
-    char* seg_ptr = mem_ptr + seg_off;
-    Segment* seg = new (seg_ptr) Segment(seg_size);
+    auto* const seg = new (mem_ptr + seg_off) Segment(seg_size);
     _segment_ring.emplace_back(seg);
   }
 }
@@ -258,7 +257,7 @@ std::optional<Value> Log::find_value(const Key& key) {
 
 // 追加写入键值对（若存储已满则循环回收旧段直到成功或不可回收）
 bool Log::append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration) {
-  size_t object_size = Object::size_of(key, blob);
+  size_t const object_size = Object::size_of(key, blob);
 
   // 对象尺寸不得超出单个段的上限
   if (object_size > _config.segment_size) {
@@ -313,12 +312,12 @@ bool Log::try_to_append(Segment* segment, const Key& key, const Blob& blob, uint
 
 // 删除指定键
 bool Log::remove(const Key& key) {
-  auto value_opt = _index.find(key);
+  const auto value_opt = _index.find(key);
   if (!value_opt) {
     return false;
   }
 
-  auto* object = value_opt.value();
+  auto* const object = value_opt.value();
 
   // 若对象已经逻辑过期，执行惰性清理后返回 false（未命中）
   if (object->is_expired(current_time_seconds())) {
@@ -349,13 +348,13 @@ ArithmeticResult Log::decr(const Key& key, uint64_t delta) {
 // 统一计数器更新逻辑（自增/自减计算与重新追加写入）
 ArithmeticResult Log::update_counter(const Key& key, uint64_t delta, bool increment) {
   // 1. 查询当前键值
-  auto current = find_value(key);
+  const auto current = find_value(key);
   if (!current) {
     return {ArithmeticStatus::NotFound, 0};
   }
 
   // 2. 解析十进制整数字符串
-  auto parsed = parse_uint64_decimal(current->blob);
+  const auto parsed = parse_uint64_decimal(current->blob);
   if (!parsed) {
     return {ArithmeticStatus::NonNumeric, 0};
   }
@@ -369,7 +368,7 @@ ArithmeticResult Log::update_counter(const Key& key, uint64_t delta, bool increm
   }
 
   // 4. 将新数值作为新对象追加写入日志内存
-  auto encoded = std::to_string(updated);
+  const auto encoded = std::to_string(updated);
   if (!append(key, encoded, current->flags, current->expiration)) {
     return {ArithmeticStatus::StorageFull, 0};
   }
@@ -405,7 +404,7 @@ size_t Log::expire(Segment* segment) {
     obj = segment->next_object(obj);
   }
 
-  size_t nr_reclaimed = segment->size();
+  size_t const nr_reclaimed = segment->size();
   segment->reset();
 
   return nr_reclaimed;

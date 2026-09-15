@@ -68,7 +68,7 @@ class TcpListener : public Pollable {
   bool on_pollout() override;
 
  private:
-  void accept();
+  void accept() const;
 };
 
 std::shared_ptr<TcpListener> make_tcp_listener(const std::string& iface, int port, int backlog,
@@ -85,7 +85,7 @@ class TcpSocket : public Socket, public std::enable_shared_from_this<TcpSocket> 
  public:
   explicit TcpSocket(int sockfd, TcpRecvFn&& recv_fn);
   ~TcpSocket() override;
-  void set_tcp_nodelay(bool nodelay);
+  void set_tcp_nodelay(bool nodelay) const;
   bool send(const char* msg, size_t len) override;
   bool closed() const;
   void on_pollin() override;
@@ -110,7 +110,7 @@ class ReactorGroup {
       _channels;               // 跨线程通信通道矩阵（大小为 _nr_threads * _nr_threads）
   std::mutex _channels_mutex;  // 保护通道矩阵并发分配初始化的互斥锁
 
-  Channel& channel(size_t destination, size_t source);
+  Channel& channel(size_t destination, size_t source) const;
   void initialize_thread(size_t thread_id);
   int eventfd(size_t thread_id) const;
   bool is_thread_sleeping(size_t thread_id) const;
@@ -157,9 +157,9 @@ class Reactor {
 
  protected:
   void wake_up_pending();
-  void wake_up(size_t thread_id);
+  void wake_up(size_t thread_id) const;
   bool send_msg_impl(size_t remote_id, const MessagePtr& message, bool defer_if_full);
-  bool has_messages();
+  bool has_messages() const;
   bool poll_messages();
 };
 

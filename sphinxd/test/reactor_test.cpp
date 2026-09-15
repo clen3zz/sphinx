@@ -30,9 +30,9 @@ class TestReactor final : public sphinx::EpollReactor {
 TEST(ReactorTest, messageCanBeQueuedBeforeRemoteReactorStarts) {
   size_t received = 0;
   auto group = std::make_shared<sphinx::ReactorGroup>(2);
-  TestReactor source{0, group, [](sphinx::MessagePtr) {}};
+  TestReactor source{0, group, [](const sphinx::MessagePtr&) {}};
   ASSERT_TRUE(source.send_msg(1, std::make_shared<IntMessage>(1)));
-  TestReactor target{1, group, [&received](sphinx::MessagePtr message) {
+  TestReactor target{1, group, [&received](const sphinx::MessagePtr& message) {
                        received++;
                        ASSERT_EQ(std::dynamic_pointer_cast<IntMessage>(message)->value, 1);
                      }};
@@ -43,8 +43,8 @@ TEST(ReactorTest, messageCanBeQueuedBeforeRemoteReactorStarts) {
 TEST(ReactorTest, fullBoundedQueueReturnsBackpressureAndDrains) {
   size_t received = 0;
   auto group = std::make_shared<sphinx::ReactorGroup>(2);
-  TestReactor source{0, group, [](sphinx::MessagePtr) {}};
-  TestReactor target{1, group, [&received](sphinx::MessagePtr) { received++; }};
+  TestReactor source{0, group, [](const sphinx::MessagePtr&) {}};
+  TestReactor target{1, group, [&received](const sphinx::MessagePtr&) { received++; }};
 
   size_t sent = 0;
   bool rejected = false;
@@ -73,9 +73,10 @@ TEST(ReactorTest, groupsOwnIndependentMessageChannels) {
   size_t received = 0;
   auto first_group = std::make_shared<sphinx::ReactorGroup>(2);
   auto second_group = std::make_shared<sphinx::ReactorGroup>(2);
-  TestReactor first_source{0, first_group, [](sphinx::MessagePtr) {}};
-  TestReactor first_target{1, first_group, [&received](sphinx::MessagePtr) { received++; }};
-  TestReactor second_target{1, second_group, [&received](sphinx::MessagePtr) { received += 100; }};
+  TestReactor first_source{0, first_group, [](const sphinx::MessagePtr&) {}};
+  TestReactor first_target{1, first_group, [&received](const sphinx::MessagePtr&) { received++; }};
+  TestReactor second_target{1, second_group,
+                            [&received](const sphinx::MessagePtr&) { received += 100; }};
 
   ASSERT_TRUE(first_source.send_msg(1, std::make_shared<IntMessage>(1)));
   ASSERT_TRUE(first_target.poll_messages());
@@ -85,17 +86,18 @@ TEST(ReactorTest, groupsOwnIndependentMessageChannels) {
 
 TEST(ReactorTest, tcpSocketDrainsPartialNonblockingWrites) {
   int fds[2];
-  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, fds), 0);
+  ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, fds), 0);
   int send_buffer_size = 1024;
-  ASSERT_EQ(
-      ::setsockopt(fds[0], SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof(send_buffer_size)), 0);
+  ASSERT_EQ(setsockopt(fds[0], SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof(send_buffer_size)),
+            0);
   bool eof = false;
   auto socket = std::make_shared<sphinx::TcpSocket>(
-      fds[0],
-      [&eof](std::shared_ptr<sphinx::TcpSocket>, std::string_view msg) { eof = msg.empty(); });
+      fds[0], [&eof](const std::shared_ptr<sphinx::TcpSocket>&, std::string_view msg) {
+        eof = msg.empty();
+      });
   socket->on_pollin();  // 非阻塞读取暂无数据时不属于连接错误。
   ASSERT_FALSE(eof);
-  std::string payload(1024 * 1024, 'x');
+  std::string payload(size_t{1024} * 1024, 'x');
   ASSERT_FALSE(socket->send(payload.data(), payload.size()));
 
   std::string received;
@@ -103,7 +105,7 @@ TEST(ReactorTest, tcpSocketDrainsPartialNonblockingWrites) {
   for (size_t attempt = 0; attempt < 10000 && received.size() < payload.size(); attempt++) {
     char buf[8192];
     while (true) {
-      auto nr = ::recv(fds[1], buf, sizeof(buf), MSG_DONTWAIT);
+      auto nr = recv(fds[1], buf, sizeof(buf), MSG_DONTWAIT);
       if (nr > 0) {
         received.append(buf, static_cast<size_t>(nr));
         continue;
@@ -120,7 +122,7 @@ TEST(ReactorTest, tcpSocketDrainsPartialNonblockingWrites) {
   }
   ASSERT_EQ(received, payload);
 
-  ::close(fds[1]);
+  close(fds[1]);
   socket->on_pollin();
   ASSERT_TRUE(eof);
 }

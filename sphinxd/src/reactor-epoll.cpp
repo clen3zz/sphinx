@@ -26,7 +26,7 @@ class Eventfd : public Pollable {
   // 读就绪时清空 eventfd 计数器
   void on_pollin() override {
     eventfd_t unused;
-    if (::eventfd_read(_efd, &unused) < 0 && errno != EAGAIN && errno != EINTR) {
+    if (eventfd_read(_efd, &unused) < 0 && errno != EAGAIN && errno != EINTR) {
       throw std::system_error(errno, std::system_category(), "eventfd_read");
     }
   }
@@ -40,7 +40,7 @@ class Eventfd : public Pollable {
 // 基于 epoll 的 Reactor 实现构造函数
 EpollReactor::EpollReactor(size_t thread_id, std::shared_ptr<ReactorGroup> group,
                            OnMessageFn&& on_message_fn)
-    : Reactor{thread_id, std::move(group), std::move(on_message_fn)}, _epollfd{::epoll_create1(0)} {
+    : Reactor{thread_id, std::move(group), std::move(on_message_fn)}, _epollfd{epoll_create1(0)} {
   // 1. 创建 epoll 句柄
   if (_epollfd < 0) {
     throw std::system_error(errno, std::system_category(), "epoll_create1");
@@ -114,13 +114,13 @@ void EpollReactor::close(std::shared_ptr<Socket> socket) {
 
   // 1. 从 epoll 监听树中移除
   _epoll_events.erase(socket->fd());
-  if (::epoll_ctl(_epollfd, EPOLL_CTL_DEL, socket->fd(), nullptr) < 0 && errno != ENOENT &&
+  if (epoll_ctl(_epollfd, EPOLL_CTL_DEL, socket->fd(), nullptr) < 0 && errno != ENOENT &&
       errno != EBADF) {
     throw std::system_error(errno, std::system_category(), "epoll_ctl");
   }
 
   // 2. 双向关闭套接字传输
-  if (::shutdown(socket->fd(), SHUT_RDWR) < 0) {
+  if (shutdown(socket->fd(), SHUT_RDWR) < 0) {
     if (errno != ENOTCONN && errno != EINVAL && errno != EBADF) {
       throw std::system_error(errno, std::system_category(), "close");
     }
@@ -143,7 +143,7 @@ void EpollReactor::run() {
     // 2. 消费线程邮箱消息；若有未处理消息则非阻塞轮询，否则准备挂起休眠
     if (poll_messages()) {
       // 存在未处理消息：推测后续可能还有新请求，采用 0 超时非阻塞探测，避免睡眠开销
-      nr_events = ::epoll_wait(_epollfd, events.data(), events.size(), 0);
+      nr_events = epoll_wait(_epollfd, events.data(), events.size(), 0);
     } else {
       // 无消息：标记当前线程即将休眠
       _group->set_thread_sleeping(_thread_id, true);
@@ -155,7 +155,7 @@ void EpollReactor::run() {
       }
 
       // 阻塞等待 I/O 事件或被 eventfd 唤醒
-      nr_events = ::epoll_wait(_epollfd, events.data(), events.size(), -1);
+      nr_events = epoll_wait(_epollfd, events.data(), events.size(), -1);
       _group->set_thread_sleeping(_thread_id, false);
     }
 
@@ -170,13 +170,13 @@ void EpollReactor::run() {
 
     // 4. 遍历并分发触发的 I/O 就绪事件
     for (int i = 0; i < nr_events; i++) {
-      epoll_event* event = &events[static_cast<size_t>(i)];
-      auto fd = event->data.fd;
-      auto it = _pollables.find(fd);
+      const auto* event = &events[static_cast<size_t>(i)];
+      const auto fd = event->data.fd;
+      const auto it = _pollables.find(fd);
 
       // 若该描述符未在 Pollable 表中（可能在处理其他事件时已被移除），从 epoll 中注销防悬挂
       if (it == _pollables.end()) {
-        ::epoll_ctl(_epollfd, EPOLL_CTL_DEL, fd, nullptr);
+        epoll_ctl(_epollfd, EPOLL_CTL_DEL, fd, nullptr);
         continue;
       }
 
@@ -204,10 +204,10 @@ void EpollReactor::run() {
 }
 
 // 增量添加或修改 epoll 监听的事件类型
-void EpollReactor::update_epoll(Pollable* pollable, uint32_t events) {
+void EpollReactor::update_epoll(const Pollable* pollable, uint32_t events) {
   // 1. 查找当前已注册的事件；若事件未改变直接返回，若已注册则改为 EPOLL_CTL_MOD
   int op = EPOLL_CTL_ADD;
-  auto it = _epoll_events.find(pollable->fd());
+  const auto it = _epoll_events.find(pollable->fd());
 
   if (it != _epoll_events.end()) {
     if (events == it->second) {
@@ -217,12 +217,12 @@ void EpollReactor::update_epoll(Pollable* pollable, uint32_t events) {
   }
 
   // 2. 组装 epoll_event 结构体，默认附加 EPOLLRDHUP 监听对端半关闭
-  ::epoll_event ev = {};
+  epoll_event ev = {};
   ev.data.fd = pollable->fd();
   ev.events = events | EPOLLRDHUP;
 
   // 3. 调用 epoll_ctl 更新内核监听事件树
-  if (::epoll_ctl(_epollfd, op, pollable->fd(), &ev) < 0) {
+  if (epoll_ctl(_epollfd, op, pollable->fd(), &ev) < 0) {
     throw std::system_error(errno, std::system_category(), "epoll_ctl");
   }
 

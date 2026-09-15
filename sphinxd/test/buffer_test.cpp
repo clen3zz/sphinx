@@ -7,7 +7,7 @@
 TEST(BufferTest, append) {
   sphinx::Buffer buf;
   ASSERT_TRUE(buf.size() == 0);
-  std::string value = "The quick brown fox jumps over the lazy dog";
+  std::string const value = "The quick brown fox jumps over the lazy dog";
   buf.append(value);
   ASSERT_EQ(value.size(), buf.size());
   ASSERT_EQ(value, buf.string_view());

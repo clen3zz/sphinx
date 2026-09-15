@@ -75,8 +75,7 @@ class TcpTransport final {
     while (offset < message.size()) {
       wait_for(_fd, POLLOUT);
 
-      const auto count =
-          ::send(_fd, message.data() + offset, message.size() - offset, MSG_NOSIGNAL);
+      const auto count = send(_fd, message.data() + offset, message.size() - offset, MSG_NOSIGNAL);
 
       if (count > 0) {
         offset += static_cast<size_t>(count);
@@ -150,16 +149,17 @@ class TcpTransport final {
     const auto port = std::to_string(_port);
     addrinfo* addresses = nullptr;
 
-    const auto status = ::getaddrinfo(_host.c_str(), port.c_str(), &hints, &addresses);
+    const auto status = getaddrinfo(_host.c_str(), port.c_str(), &hints, &addresses);
     if (status != 0) {
-      throw_node_error(_target, std::string{"cannot resolve host: "} + ::gai_strerror(status));
+      throw_node_error(_target, std::string{"cannot resolve host: "} + gai_strerror(status));
     }
 
-    std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> address_guard{addresses, &::freeaddrinfo};
+    std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> const address_guard{addresses,
+                                                                           &freeaddrinfo};
 
     // 2. 遍历解析到的地址依次尝试建立连接
     std::string last_error{"connection failed"};
-    for (auto* address = addresses; address != nullptr; address = address->ai_next) {
+    for (const auto* address = addresses; address != nullptr; address = address->ai_next) {
       if (const auto fd = connect_to(address, &last_error); fd >= 0) {
         _fd = fd;
         return;
@@ -170,8 +170,8 @@ class TcpTransport final {
   }
 
   // 对指定目标地址执行非阻塞 connect 并结合 poll 等待三次握手完成
-  int connect_to(const addrinfo* address, std::string* last_error) {
-    const auto fd = ::socket(address->ai_family, address->ai_socktype, address->ai_protocol);
+  int connect_to(const addrinfo* address, std::string* last_error) const {
+    const auto fd = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
     if (fd < 0) {
       *last_error = errno_message(errno);
       return -1;
@@ -184,13 +184,15 @@ class TcpTransport final {
     };
 
     // 设置非阻塞
-    const auto flags = ::fcntl(fd, F_GETFL, 0);
-    if (flags < 0 || ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+    const auto flags = fcntl(fd, F_GETFL, 0);
+    const auto nonblocking_flags =
+        static_cast<int>(static_cast<unsigned int>(flags) | static_cast<unsigned int>(O_NONBLOCK));
+    if (flags < 0 || fcntl(fd, F_SETFL, nonblocking_flags) < 0) {
       return fail(errno);
     }
 
     // 发起连接
-    const auto result = ::connect(fd, address->ai_addr, address->ai_addrlen);
+    const auto result = connect(fd, address->ai_addr, address->ai_addrlen);
     if (result < 0 && errno != EINPROGRESS) {
       return fail(errno);
     }
@@ -206,7 +208,7 @@ class TcpTransport final {
 
       int error = 0;
       socklen_t error_size = sizeof(error);
-      if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &error_size) < 0 || error != 0) {
+      if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &error_size) < 0 || error != 0) {
         return fail(error == 0 ? errno : error);
       }
     }
@@ -221,7 +223,7 @@ class TcpTransport final {
         std::clamp<int64_t>(_timeout.count(), int64_t{1}, std::numeric_limits<int>::max());
 
     while (true) {
-      const auto result = ::poll(&descriptor, 1, static_cast<int>(timeout));
+      const auto result = poll(&descriptor, 1, static_cast<int>(timeout));
 
       if (result <= 0) {
         if (result == 0) {
@@ -233,7 +235,10 @@ class TcpTransport final {
         throw_node_error(_target, errno_message(errno));
       }
 
-      if ((descriptor.revents & (events | POLLERR | POLLHUP | POLLNVAL)) != 0) {
+      const auto ready_events = static_cast<unsigned int>(descriptor.revents);
+      const auto requested_events = static_cast<unsigned int>(events) |
+                                    static_cast<unsigned int>(POLLERR | POLLHUP | POLLNVAL);
+      if ((ready_events & requested_events) != 0) {
         return;
       }
     }
@@ -245,7 +250,7 @@ class TcpTransport final {
     wait_for(_fd, POLLIN);
 
     char buffer[16 * 1024];
-    const auto count = ::recv(_fd, buffer, sizeof(buffer), 0);
+    const auto count = recv(_fd, buffer, sizeof(buffer), 0);
 
     if (count > 0) {
       _read_buffer.append(buffer, static_cast<size_t>(count));
@@ -323,7 +328,7 @@ size_t parse_value_header(std::string_view target, const std::string& response,
     throw_node_error(target, "value length is too large");
   }
 
-  return static_cast<size_t>(bytes);
+  return bytes;
 }
 
 }  // namespace

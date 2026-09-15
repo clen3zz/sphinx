@@ -9,7 +9,7 @@ namespace sphinx {
 
 // 默认网络与系统运行参数
 inline constexpr int default_tcp_port = 11211;
-inline constexpr const char* default_listen_addr = "0.0.0.0";
+inline constexpr auto default_listen_addr = "0.0.0.0";
 inline constexpr int default_memory_limit = 64;  // 默认内存配额（MB）
 inline constexpr int default_segment_size = 2;   // 默认分段大小（MB）
 inline constexpr int default_listen_backlog = 1024;

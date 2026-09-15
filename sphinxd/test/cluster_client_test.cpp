@@ -22,27 +22,27 @@ class FakeServer final {
   using Handler = std::function<void(int)>;
 
   explicit FakeServer(Handler handler) : _handler{std::move(handler)} {
-    _listener = ::socket(AF_INET, SOCK_STREAM, 0);
+    _listener = socket(AF_INET, SOCK_STREAM, 0);
     if (_listener < 0) {
       throw std::runtime_error{"socket failed"};
     }
     int reuse = 1;
-    if (::setsockopt(_listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0) {
+    if (setsockopt(_listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0) {
       throw std::runtime_error{"setsockopt failed"};
     }
     sockaddr_in address = {};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = 0;
-    if (::bind(_listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    if (bind(_listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
       throw std::runtime_error{"bind failed"};
     }
     socklen_t address_size = sizeof(address);
-    if (::getsockname(_listener, reinterpret_cast<sockaddr*>(&address), &address_size) != 0) {
+    if (getsockname(_listener, reinterpret_cast<sockaddr*>(&address), &address_size) != 0) {
       throw std::runtime_error{"getsockname failed"};
     }
     _port = ntohs(address.sin_port);
-    if (::listen(_listener, 4) != 0) {
+    if (listen(_listener, 4) != 0) {
       throw std::runtime_error{"listen failed"};
     }
   }
@@ -52,7 +52,7 @@ class FakeServer final {
       _thread.join();
     }
     if (_listener >= 0) {
-      ::close(_listener);
+      close(_listener);
     }
   }
 
@@ -65,12 +65,12 @@ class FakeServer final {
     _thread = std::thread{[this] {
       sockaddr_in address = {};
       socklen_t address_size = sizeof(address);
-      const int client = ::accept(_listener, reinterpret_cast<sockaddr*>(&address), &address_size);
+      const int client = accept(_listener, reinterpret_cast<sockaddr*>(&address), &address_size);
       if (client < 0) {
         return;
       }
       _handler(client);
-      ::close(client);
+      close(client);
     }};
   }
 
@@ -86,27 +86,27 @@ void send_chunks(int fd, std::string_view value);
 class TwoConnectionServer final {
  public:
   TwoConnectionServer() {
-    _listener = ::socket(AF_INET, SOCK_STREAM, 0);
+    _listener = socket(AF_INET, SOCK_STREAM, 0);
     if (_listener < 0) {
       throw std::runtime_error{"socket failed"};
     }
     int reuse = 1;
-    if (::setsockopt(_listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0) {
+    if (setsockopt(_listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0) {
       throw std::runtime_error{"setsockopt failed"};
     }
     sockaddr_in address = {};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = 0;
-    if (::bind(_listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    if (bind(_listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
       throw std::runtime_error{"bind failed"};
     }
     socklen_t address_size = sizeof(address);
-    if (::getsockname(_listener, reinterpret_cast<sockaddr*>(&address), &address_size) != 0) {
+    if (getsockname(_listener, reinterpret_cast<sockaddr*>(&address), &address_size) != 0) {
       throw std::runtime_error{"getsockname failed"};
     }
     _port = ntohs(address.sin_port);
-    if (::listen(_listener, 2) != 0) {
+    if (listen(_listener, 2) != 0) {
       throw std::runtime_error{"listen failed"};
     }
   }
@@ -116,7 +116,7 @@ class TwoConnectionServer final {
       _thread.join();
     }
     if (_listener >= 0) {
-      ::close(_listener);
+      close(_listener);
     }
   }
 
@@ -130,21 +130,20 @@ class TwoConnectionServer final {
       for (int connection_index = 0; connection_index < 2; connection_index++) {
         sockaddr_in address = {};
         socklen_t address_size = sizeof(address);
-        const int client =
-            ::accept(_listener, reinterpret_cast<sockaddr*>(&address), &address_size);
+        const int client = accept(_listener, reinterpret_cast<sockaddr*>(&address), &address_size);
         if (client < 0) {
           return;
         }
         char request[128];
-        const auto count = ::recv(client, request, sizeof(request), 0);
+        const auto count = recv(client, request, sizeof(request), 0);
         if (count <= 0) {
-          ::close(client);
+          close(client);
           return;
         }
         if (connection_index == 1) {
           send_chunks(client, "END\r\n");
         }
-        ::close(client);
+        close(client);
       }
     }};
   }
@@ -158,7 +157,7 @@ class TwoConnectionServer final {
 bool read_until(int fd, std::string* buffer, std::string_view delimiter) {
   char chunk[4096];
   while (buffer->find(delimiter) == std::string::npos) {
-    const auto count = ::recv(fd, chunk, sizeof(chunk), 0);
+    const auto count = recv(fd, chunk, sizeof(chunk), 0);
     if (count <= 0) {
       return false;
     }
@@ -172,7 +171,7 @@ void send_chunks(int fd, std::string_view value) {
        {value.substr(0, value.size() / 3), value.substr(value.size() / 3, value.size() / 3),
         value.substr(value.size() / 3 * 2)}) {
     if (!chunk.empty()) {
-      const auto count = ::send(fd, chunk.data(), chunk.size(), MSG_NOSIGNAL);
+      const auto count = send(fd, chunk.data(), chunk.size(), MSG_NOSIGNAL);
       if (count != static_cast<ssize_t>(chunk.size())) {
         throw std::runtime_error{"send failed"};
       }
@@ -198,7 +197,7 @@ std::string read_request(int fd) {
   const auto complete_size = header_end + 2 + static_cast<size_t>(bytes) + 2;
   while (request.size() < complete_size) {
     char chunk[128];
-    const auto count = ::recv(fd, chunk, sizeof(chunk), 0);
+    const auto count = recv(fd, chunk, sizeof(chunk), 0);
     if (count <= 0) {
       throw std::runtime_error{"client closed while sending request"};
     }
@@ -237,7 +236,7 @@ TEST(ClusterClientTest, HandlesPartialResponsesAndBinaryValues) {
 TEST(ClusterClientTest, GetMissReturnsNullopt) {
   FakeServer server{[](int client) {
     char request[128];
-    ASSERT_GT(::recv(client, request, sizeof(request), 0), 0);
+    ASSERT_GT(recv(client, request, sizeof(request), 0), 0);
     send_chunks(client, "END\r\n");
   }};
   server.start();
@@ -279,7 +278,7 @@ TEST(ClusterClientTest, ConnectionReuseAvoidsASecondAccept) {
 TEST(ClusterClientTest, EarlyCloseIsAnErrorRatherThanAGetMiss) {
   FakeServer server{[](int client) {
     char ignored[64];
-    (void)::recv(client, ignored, sizeof(ignored), 0);
+    (void)recv(client, ignored, sizeof(ignored), 0);
   }};
   server.start();
 
@@ -295,7 +294,7 @@ TEST(ClusterClientTest, EarlyCloseIsAnErrorRatherThanAGetMiss) {
 TEST(ClusterClientTest, MalformedResponseIsAnError) {
   FakeServer server{[](int client) {
     char ignored[64];
-    (void)::recv(client, ignored, sizeof(ignored), 0);
+    (void)recv(client, ignored, sizeof(ignored), 0);
     send_chunks(client, "NOT_A_MEMCACHED_RESPONSE\r\n");
   }};
   server.start();
@@ -312,7 +311,7 @@ TEST(ClusterClientTest, MalformedResponseIsAnError) {
 TEST(ClusterClientTest, RejectsNonDecimalFlagsAndIncludesNode) {
   FakeServer server{[](int client) {
     char request[128];
-    ASSERT_GT(::recv(client, request, sizeof(request), 0), 0);
+    ASSERT_GT(recv(client, request, sizeof(request), 0), 0);
     send_chunks(client, "VALUE key not-decimal 3\r\nfoo\r\nEND\r\n");
   }};
   server.start();
@@ -342,7 +341,7 @@ TEST(ClusterClientTest, DefaultTimeoutIsTwoSeconds) {
 TEST(ClusterClientTest, TimeoutIsBoundedAndIncludesNode) {
   FakeServer server{[](int client) {
     char ignored[64];
-    (void)::recv(client, ignored, sizeof(ignored), 0);
+    (void)recv(client, ignored, sizeof(ignored), 0);
     std::this_thread::sleep_for(std::chrono::milliseconds{200});
   }};
   server.start();

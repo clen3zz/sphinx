@@ -116,10 +116,10 @@ TEST(ConsistentHashRingTest, ThreeNodesEachReceiveAKey) {
   bool found_b = false;
   bool found_c = false;
   for (int index = 0; index < 10000; index++) {
-    const Node node = ring.route("fixed-key-" + std::to_string(index));
-    found_a = found_a || node.host == "cache-a";
-    found_b = found_b || node.host == "cache-b";
-    found_c = found_c || node.host == "cache-c";
+    const auto [host, port] = ring.route("fixed-key-" + std::to_string(index));
+    found_a = found_a || host == "cache-a";
+    found_b = found_b || host == "cache-b";
+    found_c = found_c || host == "cache-c";
   }
   EXPECT_TRUE(found_a);
   EXPECT_TRUE(found_b);

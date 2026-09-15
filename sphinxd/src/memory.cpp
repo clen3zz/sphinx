@@ -57,7 +57,7 @@ Memory::~Memory() { release(); }
 void Memory::release() noexcept {
   // 仅在有效映射时执行解映射操作
   if (_addr != nullptr && _size != 0) {
-    ::munmap(_addr, _size);
+    munmap(_addr, _size);
   }
 
   _addr = nullptr;

@@ -1,9 +1,11 @@
 <component name="ProjectDictionaryState">
   <dictionary name="project">
     <words>
+      <w>REUSEPORT</w>
       <w>addr</w>
       <w>allkeys</w>
       <w>asan</w>
+      <w>cacert</w>
       <w>ccache</w>
       <w>cerrno</w>
       <w>connfd</w>

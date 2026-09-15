@@ -78,7 +78,7 @@ class Server final {
   void dispatch_command(Command command);
 
   // 向指定目标线程的 Reactor 邮箱提交命令
-  bool submit_command(size_t target_thread, Command command);
+  bool submit_command(size_t target_thread, Command command) const;
 
   // 将执行结果作为响应回传给发起请求的来源线程
   void send_response(size_t response_thread, uint64_t connection_id, uint64_t sequence,

@@ -542,6 +542,8 @@ class Parser {
 
               break;
             }
+            default:
+              break;
           }
           _nacts -= 1;
           _acts += 1;

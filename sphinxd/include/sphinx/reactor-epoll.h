@@ -27,6 +27,6 @@ class EpollReactor : public Reactor {
   void run() override;
 
  private:
-  void update_epoll(Pollable* pollable, uint32_t events);
+  void update_epoll(const Pollable* pollable, uint32_t events);
 };
 }  // namespace sphinx

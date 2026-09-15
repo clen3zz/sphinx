@@ -22,7 +22,7 @@ using sphinx::StatsCommand;
 using sphinx::VersionCommand;
 
 template <typename Command>
-const Command* command_as(const sphinx::Parser& parser) {
+const Command* command_as(const Parser& parser) {
   const auto& parsed = parser.command();
   if (!parsed) {
     return nullptr;
@@ -31,7 +31,7 @@ const Command* command_as(const sphinx::Parser& parser) {
 }
 
 template <typename Command>
-bool has_command(const sphinx::Parser& parser) {
+bool has_command(const Parser& parser) {
   const auto& parsed = parser.command();
   if (!parsed) {
     return false;
@@ -42,7 +42,7 @@ bool has_command(const sphinx::Parser& parser) {
 }  // namespace
 
 TEST(ProtocolTest, parse_error) {
-  std::string msg = "foo";
+  std::string const msg = "foo";
   Parser parser;
   parser.parse(msg);
   ASSERT_EQ(parser.status(), ParseStatus::Incomplete);
@@ -50,7 +50,7 @@ TEST(ProtocolTest, parse_error) {
 }
 
 TEST(ProtocolTest, parse_set) {
-  std::string msg = "set foo 0 0 3\r\nbar\r\n";
+  std::string const msg = "set foo 0 0 3\r\nbar\r\n";
   Parser parser;
   parser.parse(msg);
   ASSERT_TRUE(parser.command().has_value());
@@ -58,7 +58,7 @@ TEST(ProtocolTest, parse_set) {
 }
 
 TEST(ProtocolTest, parsed_command_is_typed_and_describes_storage_body) {
-  std::string msg = "set foo 7 11 3\r\nbar\r\n";
+  std::string const msg = "set foo 7 11 3\r\nbar\r\n";
   Parser parser;
   const auto header_size = parser.parse(msg);
 
@@ -95,7 +95,7 @@ TEST(ProtocolTest, parsed_command_owns_get_keys) {
 }
 
 TEST(ProtocolTest, parse_get) {
-  std::string msg = "get foo\r\n";
+  std::string const msg = "get foo\r\n";
   Parser parser;
   parser.parse(msg);
   ASSERT_TRUE(parser.command().has_value());
@@ -103,7 +103,7 @@ TEST(ProtocolTest, parse_get) {
 }
 
 TEST(ProtocolTest, parse_many) {
-  std::string raw_msg = "set foo 0 0 3\r\nbar\r\nget foo\r\n";
+  std::string const raw_msg = "set foo 0 0 3\r\nbar\r\nget foo\r\n";
   std::string_view msg = raw_msg;
   {
     Parser parser;

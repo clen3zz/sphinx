@@ -55,7 +55,7 @@ void Server::on_message(const MessagePtr& data) {
 
 // 执行分配给当前线程的命令并回传响应
 void Server::handle_command(const Command& command) {
-  auto result = execute_command(_log, *_stats, command);
+  const auto result = execute_command(_log, *_stats, command);
   send_response(command.source_thread, command.connection_id, command.sequence, result.payload,
                 command.multi_get, command.key_index);
 }
@@ -109,8 +109,8 @@ void Server::recv(const std::shared_ptr<Connection>& connection,
 
   // 4. 循环解析并处理所有完整的命令帧
   while (true) {
-    auto view = connection->receive_buffer().string_view();
-    auto line_end = view.find('\n');
+    const auto view = connection->receive_buffer().string_view();
+    const auto line_end = view.find('\n');
     if (line_end == std::string_view::npos) {
       return;
     }
@@ -121,7 +121,7 @@ void Server::recv(const std::shared_ptr<Connection>& connection,
     }
 
     // 尝试解析并执行单条命令
-    auto consumed = process_one(connection, view);
+    const auto consumed = process_one(connection, view);
     if (consumed == std::numeric_limits<size_t>::max()) {
       close_connection(connection, socket);
       return;
@@ -149,7 +149,7 @@ size_t Server::process_one(const std::shared_ptr<Connection>& connection, std::s
     const bool arithmetic_overflow = parsed && (std::holds_alternative<IncrCommand>(*parsed) ||
                                                 std::holds_alternative<DecrCommand>(*parsed));
     if (arithmetic_overflow) {
-      auto sequence = connection->next_request_sequence();
+      const auto sequence = connection->next_request_sequence();
       enqueue_response(connection, sequence, "CLIENT_ERROR invalid numeric argument\r\n");
       return header_size;
     }
@@ -165,7 +165,7 @@ size_t Server::process_one(const std::shared_ptr<Connection>& connection, std::s
 
   // 3. 语法非法或无法识别的命令
   if (parser.status() == ParseStatus::Invalid || !parser.command()) {
-    auto sequence = connection->next_request_sequence();
+    const auto sequence = connection->next_request_sequence();
     enqueue_response(connection, sequence, "ERROR\r\n");
     return header_size;
   }
@@ -269,7 +269,7 @@ void Server::process_storage_command(const std::shared_ptr<Connection>& connecti
     return;
   }
 
-  auto value = data.substr(body.offset, static_cast<size_t>(body.size));
+  const auto value = data.substr(body.offset, body.size);
   auto outgoing = make_command(connection, sequence, op, key);
   outgoing.blob.assign(value);
   outgoing.flags = static_cast<uint32_t>(flags);
@@ -288,7 +288,7 @@ Command Server::make_command(const std::shared_ptr<Connection>& connection, uint
 // 调度命令：路由给本线程或跨线程投递至目标工作线程
 void Server::dispatch_command(Command command) {
   // 1. 验证目标连接是否仍然存活
-  auto connection_it = _connections.find(command.connection_id);
+  const auto connection_it = _connections.find(command.connection_id);
   if (connection_it == _connections.end()) {
     return;
   }
@@ -321,13 +321,13 @@ void Server::dispatch_command(Command command) {
 }
 
 // 向目标工作线程投递 Command 消息
-bool Server::submit_command(size_t target_thread, Command command) {
+bool Server::submit_command(size_t target_thread, Command command) const {
   // 支持测试环境下的 multi-get 队列满故障模拟
   if (command.multi_get && force_mget_queue_failure_once()) {
     return false;
   }
 
-  auto message = std::make_shared<Command>(std::move(command));
+  const auto message = std::make_shared<Command>(std::move(command));
   return _reactor->send_msg(target_thread, message);
 }
 
@@ -348,8 +348,8 @@ void Server::send_response(size_t response_thread, uint64_t connection_id, uint6
   }
 
   // 2. 目标为其他线程，构造跨线程 Response 消息
-  auto message = std::make_shared<Response>(connection_id, sequence, std::string{payload},
-                                            multi_get, key_index);
+  const auto message = std::make_shared<Response>(connection_id, sequence, std::string{payload},
+                                                  multi_get, key_index);
 
   // 优先采用延迟投递，避免数据线程阻塞等待连接线程
   if (_reactor->send_msg_deferred(response_thread, message)) {
@@ -370,8 +370,7 @@ void Server::send_response(size_t response_thread, uint64_t connection_id, uint6
 // 记录 multi-get 聚合结果，所有分片就绪后写出完整响应
 void Server::complete_multi_get(const std::shared_ptr<Connection>& connection, uint64_t sequence,
                                 uint32_t key_index, std::string_view payload, bool failed) {
-  auto response = connection->add_multi_get_piece(sequence, key_index, payload, failed);
-  if (response) {
+  if (const auto response = connection->add_multi_get_piece(sequence, key_index, payload, failed)) {
     enqueue_response(connection, sequence, response.value());
   }
 }
@@ -379,10 +378,10 @@ void Server::complete_multi_get(const std::shared_ptr<Connection>& connection, u
 // 将响应按 sequence 入队并写出，处理可能的套接字关闭
 void Server::enqueue_response(const std::shared_ptr<Connection>& connection, uint64_t sequence,
                               std::string_view payload) {
-  auto status = connection->enqueue_response(sequence, payload, *_reactor);
+  const auto status = connection->enqueue_response(sequence, payload, *_reactor);
 
   if (status == Connection::WriteStatus::SocketClosed) {
-    auto socket = connection->socket();
+    const auto socket = connection->socket();
     if (socket) {
       close_connection(connection, socket);
     } else {
@@ -407,7 +406,7 @@ void Server::close_connection(const std::shared_ptr<Connection>& connection,
 
 // 从当前线程的连接表中移除指定连接
 void Server::remove_connection(const std::shared_ptr<Connection>& connection) {
-  auto it = _connections.find(connection->id());
+  const auto it = _connections.find(connection->id());
   if (it != _connections.end() && it->second == connection) {
     _connections.erase(it);
   }
@@ -422,7 +421,7 @@ uint64_t Server::normalize_expiration(uint64_t expiration) {
   // 依据协议规范，30 天以内的值作为相对当前时间的秒数，超过则视为绝对 UNIX 时间戳
   constexpr uint64_t thirty_days = uint64_t{60} * 60 * 24 * 30;
   using namespace std::chrono;
-  auto now =
+  const auto now =
       static_cast<uint64_t>(duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
 
   if (expiration <= thirty_days) {
@@ -434,7 +433,7 @@ uint64_t Server::normalize_expiration(uint64_t expiration) {
 
 // 根据键的哈希值对线程数取模，计算分片目标工作线程 ID
 size_t Server::find_target(const Hash& hash) const {
-  auto nr_threads = _reactor->nr_threads();
+  const auto nr_threads = _reactor->nr_threads();
   if (nr_threads == 1) {
     return _reactor->thread_id();
   }

@@ -33,7 +33,7 @@ void run_server_thread(size_t thread_id, std::optional<int> cpu_id, const sphinx
       cpu_set_t cpuset;
       CPU_ZERO(&cpuset);
       CPU_SET(*cpu_id, &cpuset);
-      auto error = ::pthread_setaffinity_np(::pthread_self(), sizeof(cpu_set_t), &cpuset);
+      auto error = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
       if (error != 0) {
         throw std::system_error(error, std::system_category(), "pthread_setaffinity_np");
       }
@@ -41,9 +41,9 @@ void run_server_thread(size_t thread_id, std::optional<int> cpu_id, const sphinx
 
     // 2. 实时调度策略配置（启用 SCHED_FIFO 以降低长尾延迟）
     if (config.sched_fifo) {
-      ::sched_param param = {};
+      sched_param param = {};
       param.sched_priority = 1;
-      auto error = ::pthread_setschedparam(::pthread_self(), SCHED_FIFO, &param);
+      auto error = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
       if (error != 0) {
         throw std::system_error(errno, std::system_category(), "pthread_setschedparam");
       }
@@ -94,7 +94,7 @@ class CpuAffinity final {
 int main(int argc, char* argv[]) {
   try {
     // 1. 命令行参数解析
-    std::string program = ::basename(argv[0]);
+    std::string const program = basename(argv[0]);
     auto config = sphinx::parse_options(argc, argv, program);
 
     // 2. 全局统计指标初始化

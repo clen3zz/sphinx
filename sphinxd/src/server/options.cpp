@@ -87,8 +87,9 @@ void validate(const Config& args) {
               ") is not divisible by number of threads (" + std::to_string(args.nr_threads) +
               "), which is required for partitioning");
 
-  auto per_thread_memory = static_cast<uint64_t>(args.memory_limit / args.nr_threads) * 1024 * 1024;
-  auto segment_bytes = static_cast<uint64_t>(args.segment_size) * 1024 * 1024;
+  const auto per_thread_memory =
+      static_cast<uint64_t>(args.memory_limit / args.nr_threads) * 1024 * 1024;
+  const auto segment_bytes = static_cast<uint64_t>(args.segment_size) * 1024 * 1024;
   require(segment_bytes <= per_thread_memory && per_thread_memory % segment_bytes == 0,
           "per-thread memory must contain whole segments");
 }
@@ -119,8 +120,7 @@ Config parse_options(int argc, char* argv[], const std::string& program) {
 
   // 循环解析各个命令行选项
   // NOLINTNEXTLINE(concurrency-mt-unsafe)
-  while ((option = ::getopt_long(argc, argv, "p:l:m:s:b:t:I:i:S", long_options, &long_index)) !=
-         -1) {
+  while ((option = getopt_long(argc, argv, "p:l:m:s:b:t:I:i:S", long_options, &long_index)) != -1) {
     switch (option) {
       case 'p':
         args.tcp_port = std::stoi(optarg);

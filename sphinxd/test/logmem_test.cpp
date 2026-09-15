@@ -19,7 +19,7 @@ using sphinx::LogConfig;
 
 static std::string make_random(size_t len) {
   auto make_random_char = []() {
-    thread_local std::minstd_rand rng{1337};
+    thread_local std::minstd_rand rng{std::random_device{}()};
     static constexpr char chars[] =
         "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     constexpr size_t nr_chars = sizeof(chars) - 1;
@@ -62,8 +62,8 @@ TEST(LogTest, append_expires) {
 }
 
 TEST(LogTest, overwrite_rebinds_index_before_segment_reclamation) {
-  alignas(std::max_align_t) std::array<char, 4 * 64> memory;
-  LogConfig cfg{memory.data(), memory.size(), 64};
+  alignas(std::max_align_t) std::array<char, size_t{4} * 64> memory;
+  LogConfig const cfg{memory.data(), memory.size(), 64};
   Log log{cfg};
 
   // 每个对象占用一个段。反复覆盖同一个键可同时验证索引键重绑定和旧段回收。
@@ -78,7 +78,7 @@ TEST(LogTest, overwrite_rebinds_index_before_segment_reclamation) {
 
 TEST(LogTest, stores_flags_and_expiration) {
   alignas(std::max_align_t) std::array<char, 128> memory;
-  LogConfig cfg{memory.data(), memory.size(), 64};
+  LogConfig const cfg{memory.data(), memory.size(), 64};
   Log log{cfg};
   auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
                                        std::chrono::system_clock::now().time_since_epoch())
@@ -121,18 +121,18 @@ TEST(LogTest, incr_and_decr_update_decimal_value_and_preserve_metadata) {
                                        .count());
 
   ASSERT_TRUE(log.append("counter", "0041", 7, now + 3600));
-  auto incremented = log.incr("counter", 1);
-  ASSERT_EQ(incremented.status, ArithmeticStatus::Success);
-  ASSERT_EQ(incremented.value, 42U);
+  const auto [incremented_status, incremented_value] = log.incr("counter", 1);
+  ASSERT_EQ(incremented_status, ArithmeticStatus::Success);
+  ASSERT_EQ(incremented_value, 42U);
   auto after_increment = log.find_value("counter");
   ASSERT_TRUE(after_increment.has_value());
   ASSERT_EQ(after_increment->blob, "42");
   ASSERT_EQ(after_increment->flags, 7U);
   ASSERT_EQ(after_increment->expiration, now + 3600);
 
-  auto decremented = log.decr("counter", 100);
-  ASSERT_EQ(decremented.status, ArithmeticStatus::Success);
-  ASSERT_EQ(decremented.value, 0U);
+  const auto [decremented_status, decremented_value] = log.decr("counter", 100);
+  ASSERT_EQ(decremented_status, ArithmeticStatus::Success);
+  ASSERT_EQ(decremented_value, 0U);
   ASSERT_EQ(log.find("counter").value(), "0");
 }
 
@@ -141,15 +141,15 @@ TEST(LogTest, incr_wraps_and_decr_saturates) {
   Log log{LogConfig{memory.data(), memory.size(), 128}};
 
   ASSERT_TRUE(log.append("counter", std::to_string(std::numeric_limits<uint64_t>::max())));
-  auto wrapped = log.incr("counter", 1);
-  ASSERT_EQ(wrapped.status, ArithmeticStatus::Success);
-  ASSERT_EQ(wrapped.value, 0U);
+  const auto [wrapped_status, wrapped_value] = log.incr("counter", 1);
+  ASSERT_EQ(wrapped_status, ArithmeticStatus::Success);
+  ASSERT_EQ(wrapped_value, 0U);
   ASSERT_EQ(log.find("counter").value(), "0");
 
   ASSERT_TRUE(log.append("counter", "3"));
-  auto saturated = log.decr("counter", 4);
-  ASSERT_EQ(saturated.status, ArithmeticStatus::Success);
-  ASSERT_EQ(saturated.value, 0U);
+  const auto [saturated_status, saturated_value] = log.decr("counter", 4);
+  ASSERT_EQ(saturated_status, ArithmeticStatus::Success);
+  ASSERT_EQ(saturated_value, 0U);
   ASSERT_EQ(log.find("counter").value(), "0");
 }
 
@@ -159,8 +159,8 @@ TEST(LogTest, arithmetic_rejects_missing_expired_and_non_numeric_values) {
 
   ASSERT_EQ(log.incr("missing", 1).status, ArithmeticStatus::NotFound);
   ASSERT_TRUE(log.append("text", "12x"));
-  auto invalid = log.decr("text", 1);
-  ASSERT_EQ(invalid.status, ArithmeticStatus::NonNumeric);
+  const auto [invalid_status, invalid_value] = log.decr("text", 1);
+  ASSERT_EQ(invalid_status, ArithmeticStatus::NonNumeric);
   ASSERT_EQ(log.find("text").value(), "12x");
 
   ASSERT_TRUE(log.append("empty", ""));
@@ -192,10 +192,10 @@ TEST(LogTest, arithmetic_rejects_non_decimal_values_without_mutating_metadata) {
     const auto expiration = now + 3600 + i;
     ASSERT_TRUE(log.append(key, invalid_values[i], flags, expiration));
 
-    auto incremented = log.incr(key, 1);
-    ASSERT_EQ(incremented.status, ArithmeticStatus::NonNumeric);
-    auto decremented = log.decr(key, 1);
-    ASSERT_EQ(decremented.status, ArithmeticStatus::NonNumeric);
+    const auto [incremented_status, incremented_value] = log.incr(key, 1);
+    ASSERT_EQ(incremented_status, ArithmeticStatus::NonNumeric);
+    const auto [decremented_status, decremented_value] = log.decr(key, 1);
+    ASSERT_EQ(decremented_status, ArithmeticStatus::NonNumeric);
 
     auto unchanged = log.find_value(key);
     ASSERT_TRUE(unchanged.has_value());

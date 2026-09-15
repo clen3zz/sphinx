@@ -20,7 +20,7 @@ static std::string make_random(size_t len) {
 }
 
 static void Buffer_append(benchmark::State& state) {
-  sphinx::Buffer buf;
+  sphinx::Buffer const buf;
   std::string value = make_random(state.range(0));
   for (auto _ : state) {
     buf.append(value);

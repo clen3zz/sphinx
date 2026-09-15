@@ -24,7 +24,7 @@ namespace sphinx {
 Socket::Socket(int sockfd) : _sockfd{sockfd} {}
 
 // 析构函数：RAII 自动关闭底层套接字文件描述符
-Socket::~Socket() { ::close(_sockfd); }
+Socket::~Socket() { close(_sockfd); }
 
 // 获取底层文件描述符
 int Socket::fd() const { return _sockfd; }
@@ -34,7 +34,7 @@ TcpListener::TcpListener(int sockfd, TcpAcceptFn&& accept_fn)
     : _sockfd{sockfd}, _accept_fn{accept_fn} {}
 
 // 析构函数：关闭监听套接字
-TcpListener::~TcpListener() { ::close(_sockfd); }
+TcpListener::~TcpListener() { close(_sockfd); }
 
 // 监听套接字读事件就绪回调：循环接收所有就绪的新客户端连接
 void TcpListener::on_pollin() { accept(); }
@@ -43,10 +43,10 @@ void TcpListener::on_pollin() { accept(); }
 bool TcpListener::on_pollout() { return true; }
 
 // 非阻塞循环 accept 所有挂起的新连接
-void TcpListener::accept() {
+void TcpListener::accept() const {
   while (true) {
     // 1. 采用 accept4 原子创建非阻塞与进程退出自动关闭的连接套接字
-    int connfd = ::accept4(_sockfd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    const int connfd = accept4(_sockfd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
 
     if (connfd >= 0) {
       try {
@@ -54,7 +54,7 @@ void TcpListener::accept() {
         _accept_fn(connfd);
       } catch (...) {
         // 若回调抛出异常，关闭套接字防止描述符泄漏
-        ::close(connfd);
+        close(connfd);
         throw;
       }
       continue;
@@ -88,8 +88,9 @@ static addrinfo* lookup_addresses(const std::string& iface, int port, int sock_t
   hints.ai_flags = AI_PASSIVE | AI_ADDRCONFIG;
 
   // 2. 执行网络地址解析
+  // NOLINTNEXTLINE(misc-const-correctness): getaddrinfo writes through addrinfo**.
   addrinfo* ret = nullptr;
-  int err = getaddrinfo(iface.c_str(), std::to_string(port).c_str(), &hints, &ret);
+  const int err = getaddrinfo(iface.c_str(), std::to_string(port).c_str(), &hints, &ret);
   if (err != 0) {
     throw std::runtime_error("'" + iface + "': " + gai_strerror(err));
   }
@@ -102,28 +103,31 @@ std::shared_ptr<TcpListener> make_tcp_listener(const std::string& iface, int por
                                                TcpAcceptFn&& accept_fn) {
   auto* addresses = lookup_addresses(iface, port, SOCK_STREAM);
 
-  for (addrinfo* rp = addresses; rp != nullptr; rp = rp->ai_next) {
+  for (const addrinfo* rp = addresses; rp != nullptr; rp = rp->ai_next) {
     // 1. 创建非阻塞 TCP 套接字
-    int sockfd =
-        ::socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC, rp->ai_protocol);
+    int const sockfd = socket(rp->ai_family,
+                              static_cast<int>(static_cast<unsigned int>(rp->ai_socktype) |
+                                               static_cast<unsigned int>(SOCK_NONBLOCK) |
+                                               static_cast<unsigned int>(SOCK_CLOEXEC)),
+                              rp->ai_protocol);
     if (sockfd < 0) {
       continue;
     }
 
     // 2. 配置 SO_REUSEADDR 与 SO_REUSEPORT（支持多线程独立绑定同端口实现内核级负载均衡）
     int one = 1;
-    ::setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    ::setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
 
     // 3. 绑定目标地址与端口
-    if (::bind(sockfd, rp->ai_addr, rp->ai_addrlen) < 0) {
-      ::close(sockfd);
+    if (bind(sockfd, rp->ai_addr, rp->ai_addrlen) < 0) {
+      close(sockfd);
       continue;
     }
 
     // 4. 开启监听
-    if (::listen(sockfd, backlog) < 0) {
-      ::close(sockfd);
+    if (listen(sockfd, backlog) < 0) {
+      close(sockfd);
       continue;
     }
 
@@ -133,7 +137,7 @@ std::shared_ptr<TcpListener> make_tcp_listener(const std::string& iface, int por
     try {
       return std::make_shared<TcpListener>(sockfd, std::move(accept_fn));
     } catch (...) {
-      ::close(sockfd);
+      close(sockfd);
       throw;
     }
   }
@@ -149,8 +153,8 @@ TcpSocket::TcpSocket(int sockfd, TcpRecvFn&& recv_fn) : Socket{sockfd}, _recv_fn
 TcpSocket::~TcpSocket() = default;
 
 // 设置 TCP_NODELAY 禁用 Nagle 算法，降低网络长尾延迟
-void TcpSocket::set_tcp_nodelay(bool nodelay) {
-  int value = nodelay ? 1 : 0;
+void TcpSocket::set_tcp_nodelay(bool nodelay) const {
+  const int value = nodelay ? 1 : 0;
   if (setsockopt(_sockfd, SOL_TCP, TCP_NODELAY, &value, sizeof(value)) < 0) {
     throw std::system_error(errno, std::system_category(), "setsockopt");
   }
@@ -214,7 +218,7 @@ void TcpSocket::on_pollin() {
 
   // 循环非阻塞读取数据，直到缓冲区读空或连接关闭
   while (true) {
-    ssize_t nr = ::recv(_sockfd, rx_buf.data(), rx_buf.size(), MSG_DONTWAIT);
+    const ssize_t nr = recv(_sockfd, rx_buf.data(), rx_buf.size(), MSG_DONTWAIT);
 
     // 1. 成功读取到有效数据，通知上层数据接收回调
     if (nr > 0) {
@@ -317,9 +321,9 @@ ReactorGroup::ReactorGroup(size_t nr_threads)
 
     // 若某一 eventfd 创建失败，回滚清理此前已打开的文件描述符防止泄漏
     if (_eventfds[id] < 0) {
-      auto saved_errno = errno;
+      const auto saved_errno = errno;
       for (size_t close_id = 0; close_id < id; close_id++) {
-        ::close(_eventfds[close_id]);
+        close(_eventfds[close_id]);
         _eventfds[close_id] = -1;
       }
       throw std::system_error(saved_errno, std::system_category(), "eventfd");
@@ -331,7 +335,7 @@ ReactorGroup::ReactorGroup(size_t nr_threads)
 ReactorGroup::~ReactorGroup() {
   for (auto& efd : _eventfds) {
     if (efd >= 0) {
-      ::close(efd);
+      close(efd);
       efd = -1;
     }
   }
@@ -340,7 +344,7 @@ ReactorGroup::~ReactorGroup() {
 size_t ReactorGroup::nr_threads() const noexcept { return _nr_threads; }
 
 // 获取从源线程到目标线程的单向通信通道
-ReactorGroup::Channel& ReactorGroup::channel(size_t destination, size_t source) {
+ReactorGroup::Channel& ReactorGroup::channel(size_t destination, size_t source) const {
   if (destination >= _nr_threads || source >= _nr_threads) {
     throw std::invalid_argument("invalid reactor message target");
   }
@@ -360,7 +364,7 @@ void ReactorGroup::initialize_thread(size_t thread_id) {
   }
 
   // 1. 加互斥锁保护通信通道矩阵的线程安全初始化
-  std::scoped_lock lock{_channels_mutex};
+  std::scoped_lock const lock{_channels_mutex};
   for (size_t peer = 0; peer < _nr_threads; peer++) {
     if (peer == thread_id) {
       continue;
@@ -453,12 +457,11 @@ bool Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool de
     throw std::invalid_argument("invalid reactor message target");
   }
 
-  // 2. 获取源线程发往目标线程的专用单向通道
-  auto& channel = _group->channel(remote_id, _thread_id);
-
-  // 3. 加通道互斥锁进行消息入队
+  // 2. 加通道互斥锁进行消息入队
   {
-    std::scoped_lock lock{channel.overflow_mutex};
+    // 获取源线程发往目标线程的专用单向通道
+    auto& channel = _group->channel(remote_id, _thread_id);
+    std::scoped_lock const lock{channel.overflow_mutex};
 
     // 一旦出现溢出消息，后续消息也放入溢出队列，确保目的端观察到的顺序与队列保持严格一致
     if (channel.overflow.empty() && channel.queue.try_to_emplace(message)) {
@@ -494,9 +497,9 @@ void Reactor::wake_up_pending() {
 }
 
 // 向目标线程的 eventfd 写入数据以触发其 epoll_wait 唤醒
-void Reactor::wake_up(size_t thread_id) {
-  auto efd = _group->eventfd(thread_id);
-  if (::eventfd_write(efd, 1) < 0) {
+void Reactor::wake_up(size_t thread_id) const {
+  const auto efd = _group->eventfd(thread_id);
+  if (eventfd_write(efd, 1) < 0) {
     if (errno == EAGAIN) {
       return;
     }
@@ -505,7 +508,7 @@ void Reactor::wake_up(size_t thread_id) {
 }
 
 // 探测当前线程的所有入站通道是否含有未消费消息
-bool Reactor::has_messages() {
+bool Reactor::has_messages() const {
   for (size_t other = 0; other < _nr_threads; other++) {
     if (other == _thread_id) {
       continue;
@@ -518,7 +521,7 @@ bool Reactor::has_messages() {
     }
 
     // 2. 检查溢出队列中是否有消息
-    std::scoped_lock lock{channel.overflow_mutex};
+    std::scoped_lock const lock{channel.overflow_mutex};
     if (!channel.overflow.empty()) {
       return true;
     }
@@ -555,7 +558,7 @@ bool Reactor::poll_messages() {
     while (true) {
       MessagePtr message;
       {
-        std::scoped_lock lock{channel.overflow_mutex};
+        std::scoped_lock const lock{channel.overflow_mutex};
         if (channel.overflow.empty()) {
           break;
         }
