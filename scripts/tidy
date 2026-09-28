@@ -14,17 +14,36 @@ if [ ! -f "$build_dir/compile_commands.json" ]; then
 fi
 
 jobs=$(nproc 2>/dev/null || echo 4)
+if [ "$jobs" -gt 4 ]; then
+  jobs=4
+fi
 
-python3 - "$build_dir/compile_commands.json" <<'PY' |
+file_list=$(mktemp)
+tidy_log=$(mktemp)
+trap 'rm -f -- "$file_list" "$tidy_log"' EXIT
+
+python3 - "$build_dir/compile_commands.json" > "$file_list" <<'PY'
 import json
 import os
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as source:
     commands = json.load(source)
+seen = set()
 for command in commands:
     path = os.path.realpath(command["file"])
-    if "/sphinxd/src/" in path or "/examples/mysql_sphinx/src/" in path:
+    if path not in seen and ("/sphinxd/src/" in path or "/examples/mysql_sphinx/src/" in path):
+        seen.add(path)
         print(path, end="\0")
 PY
-  xargs -0 -r -P "$jobs" -n 1 clang-tidy --quiet --config-file=.clang-tidy -p "$build_dir"
+
+if ! xargs -0 -r -P "$jobs" -n 1 clang-tidy --quiet --config-file=.clang-tidy \
+    -p "$build_dir" < "$file_list" > "$tidy_log" 2>&1; then
+  cat "$tidy_log" >&2
+  exit 1
+fi
+if grep -q 'error:' "$tidy_log"; then
+  cat "$tidy_log" >&2
+  exit 1
+fi
+grep -E ': warning:' "$tidy_log" || true
