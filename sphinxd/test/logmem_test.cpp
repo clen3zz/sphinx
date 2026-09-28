@@ -12,10 +12,16 @@
 #include <random>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 using sphinx::ArithmeticStatus;
 using sphinx::Log;
 using sphinx::LogConfig;
+
+static_assert(!std::is_copy_constructible_v<Log>);
+static_assert(!std::is_copy_assignable_v<Log>);
+static_assert(!std::is_move_constructible_v<Log>);
+static_assert(!std::is_move_assignable_v<Log>);
 
 static std::string make_random(size_t len) {
   auto make_random_char = []() {

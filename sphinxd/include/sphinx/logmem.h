@@ -147,7 +147,12 @@ class Log {
 
  public:
   /// \brief 构造一个 \ref Log 实例。
+  /// config.memory_ptr 所指向的内存必须在 Log 整个生命周期内保持有效。
   explicit Log(const LogConfig& config);
+  Log(const Log&) = delete;
+  Log& operator=(const Log&) = delete;
+  Log(Log&&) = delete;
+  Log& operator=(Log&&) = delete;
   /// \brief 从日志中查找给定 \ref key 对应的数据（blob）。
   std::optional<Blob> find(const Key& key) const;
   /// \brief 查找值及其 Memcached 元数据。
