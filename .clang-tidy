@@ -30,7 +30,7 @@ Checks: >
   -performance-enum-size,
   -portability-avoid-pragma-once
 WarningsAsErrors: 'bugprone-*,concurrency-*,clang-analyzer-*'
-HeaderFilterRegex: '.*/(sphinxd|product-service)/(include|src)/.*'
+HeaderFilterRegex: '.*/(sphinxd|product-service)/(include|src|test)/.*'
 ExcludeHeaderFilterRegex: '.*/(third_party/.*|MurmurHash3\.(h|cpp)|sphinxd/include/sphinx/protocol\.h)'
 FormatStyle: file
 CheckOptions:

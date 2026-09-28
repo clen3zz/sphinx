@@ -49,6 +49,7 @@ if sys.argv[2] == "--require-mysql":
 
 project_dir = os.path.realpath(os.getcwd())
 product_src = os.path.join(project_dir, "product-service", "src")
+product_test = os.path.join(project_dir, "product-service", "test")
 server_src = os.path.join(project_dir, "sphinxd", "src")
 required = {
     os.path.join(product_src, name)
@@ -64,6 +65,18 @@ if sys.argv[2] == "--require-mysql":
             "product_main.cpp",
         )
     )
+    required.update(
+        os.path.join(product_test, name)
+        for name in (
+            "product_codec_test.cpp",
+            "product_service_test.cpp",
+            "mysql_product_store_integration_test.cpp",
+        )
+    )
+
+directories = (server_src, product_src)
+if sys.argv[2] == "--require-mysql":
+    directories += (product_test,)
 
 selected = set()
 for command in commands:
@@ -71,8 +84,7 @@ for command in commands:
     if not os.path.isabs(path):
         path = os.path.join(command["directory"], path)
     path = os.path.realpath(path)
-    if any(path.startswith(directory + os.sep) for directory in
-           (server_src, product_src)):
+    if any(path.startswith(directory + os.sep) for directory in directories):
         selected.add(path)
 
 missing = sorted(required - selected)

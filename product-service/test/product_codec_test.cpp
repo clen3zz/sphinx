@@ -21,7 +21,10 @@ TEST(ProductCodecTest, UsesStableBigEndianV1Frame) {
   expected += "tea";
   EXPECT_EQ(sphinx::encode_product_cache(product), expected);
   const auto decoded = sphinx::decode_product_cache(expected);
-  ASSERT_TRUE(decoded);
+  if (!decoded) {
+    ADD_FAILURE() << "valid cache frame did not decode";
+    return;
+  }
   EXPECT_EQ(decoded->id, product.id);
   EXPECT_EQ(decoded->name, product.name);
   EXPECT_EQ(decoded->price_cents, product.price_cents);

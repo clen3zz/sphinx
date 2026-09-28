@@ -222,7 +222,10 @@ TEST(ProductServiceTest, HitDoesNotReadDatabase) {
   const auto result = service.get(1);
   EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
   EXPECT_EQ(result.cache_source, sphinx::CacheSource::Hit);
-  ASSERT_TRUE(result.product);
+  if (!result.product) {
+    ADD_FAILURE() << "cache hit returned no product";
+    return;
+  }
   EXPECT_EQ(result.product->name, "tea");
   EXPECT_EQ(store.finds, 0);
 }
@@ -238,8 +241,16 @@ TEST(ProductServiceTest, MissReadsDatabaseAndFillsWithRelativeTtl) {
   EXPECT_EQ(store.finds, 1);
   EXPECT_EQ(cache.puts, 1);
   EXPECT_EQ(cache.last_ttl, 45U);
-  ASSERT_TRUE(cache.value);
-  EXPECT_EQ(sphinx::decode_product_cache(*cache.value)->version, 1U);
+  if (!cache.value) {
+    ADD_FAILURE() << "database result was not cached";
+    return;
+  }
+  const auto decoded = sphinx::decode_product_cache(*cache.value);
+  if (!decoded) {
+    ADD_FAILURE() << "cached product did not decode";
+    return;
+  }
+  EXPECT_EQ(decoded->version, 1U);
 }
 
 TEST(ProductServiceTest, CacheFailureBypassesAndDatabaseFailureIsUnavailable) {
@@ -264,7 +275,10 @@ TEST(ProductServiceTest, CorruptOrWrongIdCacheValueIsErasedAndReplaced) {
   EXPECT_EQ(result.cache_source, sphinx::CacheSource::Corrupt);
   EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
   EXPECT_EQ(cache.erases, 1);
-  ASSERT_TRUE(result.product);
+  if (!result.product) {
+    ADD_FAILURE() << "database read returned no product";
+    return;
+  }
   EXPECT_EQ(result.product->version, 2U);
 }
 
@@ -285,7 +299,10 @@ TEST(ProductServiceTest, FreshReadBypassesStaleCacheForCommitReconciliation) {
   const auto result = service.get(1, true);
   EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
   EXPECT_EQ(result.cache_source, sphinx::CacheSource::Bypass);
-  ASSERT_TRUE(result.product);
+  if (!result.product) {
+    ADD_FAILURE() << "fresh read returned no product";
+    return;
+  }
   EXPECT_EQ(result.product->version, 2U);
   EXPECT_EQ(cache.gets, 0);
   EXPECT_EQ(store.finds, 1);
@@ -375,7 +392,7 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
   EXPECT_EQ(update_result.status, sphinx::ProductStatus::Ok);
   EXPECT_TRUE(update_result.product);
   if (update_result.product) {
-    EXPECT_EQ(update_result.product->version, 2U);
+    EXPECT_EQ(update_result.product.value().version, 2U);
   }
   EXPECT_FALSE(cache_state->get());
 
@@ -387,9 +404,15 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
   if (old_read_error) {
     std::rethrow_exception(old_read_error);
   }
-  ASSERT_TRUE(old_read_result);
+  if (!old_read_result) {
+    ADD_FAILURE() << "old read returned no result";
+    return;
+  }
   ASSERT_EQ(old_read_result->status, sphinx::ProductStatus::Ok);
-  ASSERT_TRUE(old_read_result->product);
+  if (!old_read_result->product) {
+    ADD_FAILURE() << "old read returned no product";
+    return;
+  }
   EXPECT_EQ(old_read_result->product->version, 1U);
   EXPECT_EQ(cache_state->remaining_ttl(), std::chrono::seconds{ttl_seconds});
 
@@ -398,7 +421,10 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
   sphinx::ProductService later_reader{later_read_store, later_read_cache, {ttl_seconds}};
   auto stale_hit = later_reader.get(product_id);
   ASSERT_EQ(stale_hit.status, sphinx::ProductStatus::Ok);
-  ASSERT_TRUE(stale_hit.product);
+  if (!stale_hit.product) {
+    ADD_FAILURE() << "stale cache hit returned no product";
+    return;
+  }
   EXPECT_EQ(stale_hit.cache_source, sphinx::CacheSource::Hit);
   EXPECT_EQ(stale_hit.product->version, 1U);
   EXPECT_EQ(database->find_calls(), 1);
@@ -406,7 +432,10 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
   cache_state->advance(std::chrono::seconds{ttl_seconds - 1});
   stale_hit = later_reader.get(product_id);
   ASSERT_EQ(stale_hit.status, sphinx::ProductStatus::Ok);
-  ASSERT_TRUE(stale_hit.product);
+  if (!stale_hit.product) {
+    ADD_FAILURE() << "stale cache hit returned no product";
+    return;
+  }
   EXPECT_EQ(stale_hit.cache_source, sphinx::CacheSource::Hit);
   EXPECT_EQ(stale_hit.product->version, 1U);
   EXPECT_EQ(cache_state->remaining_ttl(), std::chrono::seconds{1});
@@ -414,7 +443,10 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
   cache_state->advance(std::chrono::seconds{1});
   const auto refreshed = later_reader.get(product_id);
   ASSERT_EQ(refreshed.status, sphinx::ProductStatus::Ok);
-  ASSERT_TRUE(refreshed.product);
+  if (!refreshed.product) {
+    ADD_FAILURE() << "refreshed read returned no product";
+    return;
+  }
   EXPECT_EQ(refreshed.cache_source, sphinx::CacheSource::Miss);
   EXPECT_EQ(refreshed.product->version, 2U);
   EXPECT_EQ(refreshed.product->name, "new");
@@ -422,7 +454,10 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
 
   const auto fresh_hit = later_reader.get(product_id);
   ASSERT_EQ(fresh_hit.status, sphinx::ProductStatus::Ok);
-  ASSERT_TRUE(fresh_hit.product);
+  if (!fresh_hit.product) {
+    ADD_FAILURE() << "fresh cache hit returned no product";
+    return;
+  }
   EXPECT_EQ(fresh_hit.cache_source, sphinx::CacheSource::Hit);
   EXPECT_EQ(fresh_hit.product->version, 2U);
 }

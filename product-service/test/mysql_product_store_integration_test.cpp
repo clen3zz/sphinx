@@ -24,11 +24,14 @@ std::atomic<bool> inject_error_after_real_commit{false};
 std::atomic<int> commit_calls{0};
 
 std::optional<sphinx::MySqlOptions> read_test_options() {
+  // Test configuration is read before any worker threads are started.
+  // NOLINTBEGIN(concurrency-mt-unsafe)
   const auto* host = std::getenv("SPHINX_TEST_MYSQL_HOST");
   const auto* port_text = std::getenv("SPHINX_TEST_MYSQL_PORT");
   const auto* user = std::getenv("SPHINX_TEST_MYSQL_USER");
   const auto* password = std::getenv("SPHINX_TEST_MYSQL_PASSWORD");
   const auto* database = std::getenv("SPHINX_TEST_MYSQL_DATABASE");
+  // NOLINTEND(concurrency-mt-unsafe)
   if (host == nullptr || port_text == nullptr || user == nullptr || password == nullptr ||
       database == nullptr || host[0] == '\0' || user[0] == '\0' || database[0] == '\0' ||
       std::string_view{database}.find("test") == std::string_view::npos) {
@@ -200,6 +203,7 @@ class ProductSchemaGuard final {
       try {
         restore();
       } catch (...) {
+        ADD_FAILURE() << "failed to restore product schema after setup error";
       }
       throw;
     }
@@ -209,6 +213,7 @@ class ProductSchemaGuard final {
     try {
       restore();
     } catch (...) {
+      ADD_FAILURE() << "failed to restore product schema";
     }
   }
   ProductSchemaGuard(const ProductSchemaGuard&) = delete;
@@ -269,6 +274,7 @@ class FixtureRows final {
       try {
         _database.erase(id);
       } catch (...) {
+        ADD_FAILURE() << "failed to erase test product " << id;
       }
     }
   }
@@ -301,6 +307,7 @@ class UpdateFailureConstraint final {
     try {
       drop();
     } catch (...) {
+      ADD_FAILURE() << "failed to remove test constraint";
     }
   }
 
@@ -311,7 +318,10 @@ class UpdateFailureConstraint final {
 }  // namespace
 
 using CommitReturn = decltype(mysql_commit(static_cast<MYSQL*>(nullptr)));
+// GNU ld --wrap requires these exact C symbol names.
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
 extern "C" CommitReturn __real_mysql_commit(MYSQL* connection);
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
 extern "C" CommitReturn __wrap_mysql_commit(MYSQL* connection) {
   commit_calls.fetch_add(1);
   const auto result = __real_mysql_commit(connection);
@@ -371,7 +381,10 @@ TEST(MySqlProductStoreIntegrationTest, ReadsExistingMissingAndInvalidProducts) {
   {
     sphinx::MySqlProductStore store{*options};
     const auto actual = store.find(max_id);
-    ASSERT_TRUE(actual.has_value());
+    if (!actual) {
+      ADD_FAILURE() << "existing product was not found";
+      return;
+    }
     EXPECT_EQ(actual->id, expected.id);
     EXPECT_EQ(actual->name, expected.name);
     EXPECT_EQ(actual->price_cents, expected.price_cents);
@@ -461,7 +474,10 @@ TEST(MySqlProductStoreIntegrationTest, SerializesConcurrentVersionUpdates) {
 
   sphinx::MySqlProductStore reader{*options};
   const auto product = reader.find(product_id);
-  ASSERT_TRUE(product.has_value());
+  if (!product) {
+    ADD_FAILURE() << "concurrent update left no product";
+    return;
+  }
   EXPECT_EQ(product->version, 2);
   EXPECT_EQ(product->name, "winner");
 }
