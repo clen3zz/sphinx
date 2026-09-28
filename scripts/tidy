@@ -1,7 +1,13 @@
 #!/bin/sh
 set -eu
 
+if [ "$#" -gt 2 ] || { [ "$#" -eq 2 ] && [ "$2" != "--require-mysql" ]; }; then
+  echo "usage: $0 [build-dir] [--require-mysql]" >&2
+  exit 2
+fi
+
 build_dir=${1:-build}
+require_mysql=${2:-}
 
 if ! command -v clang-tidy >/dev/null 2>&1; then
   echo "clang-tidy was not found" >&2
@@ -22,19 +28,65 @@ file_list=$(mktemp)
 tidy_log=$(mktemp)
 trap 'rm -f -- "$file_list" "$tidy_log"' EXIT
 
-python3 - "$build_dir/compile_commands.json" > "$file_list" <<'PY'
+python3 - "$build_dir/compile_commands.json" "$require_mysql" > "$file_list" <<'PY'
 import json
 import os
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as source:
     commands = json.load(source)
-seen = set()
+
+if sys.argv[2] == "--require-mysql":
+    cache_path = os.path.join(os.path.dirname(sys.argv[1]), "CMakeCache.txt")
+    with open(cache_path, encoding="utf-8") as source:
+        mysql_enabled = any(
+            line.strip() == "BUILD_MYSQL_SPHINX_DEMO:BOOL=ON" for line in source
+        )
+    if not mysql_enabled:
+        print("MySQL target is disabled; configure with -DBUILD_MYSQL_SPHINX_DEMO=ON",
+              file=sys.stderr)
+        sys.exit(2)
+
+project_dir = os.path.realpath(os.getcwd())
+product_src = os.path.join(project_dir, "product-service", "src")
+server_src = os.path.join(project_dir, "sphinxd", "src")
+required = {
+    os.path.join(product_src, name)
+    for name in ("product_codec.cpp", "product_service.cpp", "sphinx_product_cache.cpp")
+}
+if sys.argv[2] == "--require-mysql":
+    required.update(
+        os.path.join(product_src, name)
+        for name in (
+            "mysql_product_store.cpp",
+            "product_http.cpp",
+            "product_http_routes.cpp",
+            "product_main.cpp",
+        )
+    )
+
+selected = set()
 for command in commands:
-    path = os.path.realpath(command["file"])
-    if path not in seen and ("/sphinxd/src/" in path or "/product-service/src/" in path):
-        seen.add(path)
-        print(path, end="\0")
+    path = command["file"]
+    if not os.path.isabs(path):
+        path = os.path.join(command["directory"], path)
+    path = os.path.realpath(path)
+    if any(path.startswith(directory + os.sep) for directory in
+           (server_src, product_src)):
+        selected.add(path)
+
+missing = sorted(required - selected)
+if missing:
+    print("compilation database is stale or missing MySQL targets; reconfigure CMake",
+          file=sys.stderr)
+    for path in missing:
+        print(f"  missing: {os.path.relpath(path, project_dir)}", file=sys.stderr)
+    if sys.argv[2] == "--require-mysql":
+        print("configure with -DBUILD_MYSQL_SPHINX_DEMO=ON", file=sys.stderr)
+    sys.exit(2)
+
+for path in sorted(selected):
+    print(path, end="\0")
 PY
 
 if ! xargs -0 -r -P "$jobs" -n 1 clang-tidy --quiet --config-file=.clang-tidy \

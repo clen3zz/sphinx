@@ -92,12 +92,20 @@ Checks: >
   -portability-avoid-pragma-once
 ```
 
-本地执行全核并发静态检查：
+本地静态检查最多并发运行 4 个进程。检查脚本会拒绝仍指向旧目录的编译数据库，
+`--require-mysql` 还会确认 MySQL/HTTP 服务的全部实现文件都属于 CMake 目标：
 
 ```bash
-# 自动探测 CPU 核心数并发检查 build 目录编译产物
-./scripts/tidy build
+# 核心模块；先配置或重新配置构建目录
+./scripts/tidy build-default
+
+# 完整 MySQL 模块；CLion 的 Debug 配置也应加入同一个 CMake 开关
+cmake -S . -B cmake-build-debug-wsl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_MYSQL_SPHINX_DEMO=ON -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+./scripts/tidy cmake-build-debug-wsl --require-mysql
 ```
+
+Debug 静态检查配置关闭预编译头，避免重新生成 CMake 项目后旧 `.pch` 影响分析；
+Release 构建不受此配置影响。
 
 ---
 
