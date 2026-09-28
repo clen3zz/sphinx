@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# Run the real database and HTTP integration suites; missing credentials are an error, not a skip.
+# 运行真实数据库与 HTTP 集成测试；缺少凭据应报错，不能当作跳过测试。
 set -euo pipefail
 
 for name in SPHINX_TEST_MYSQL_HOST SPHINX_TEST_MYSQL_PORT SPHINX_TEST_MYSQL_USER \

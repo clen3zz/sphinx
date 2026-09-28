@@ -24,7 +24,7 @@ std::atomic<bool> inject_error_after_real_commit{false};
 std::atomic<int> commit_calls{0};
 
 std::optional<sphinx::MySqlOptions> read_test_options() {
-  // Test configuration is read before any worker threads are started.
+  // 测试配置在所有工作线程启动前读取。
   // NOLINTBEGIN(concurrency-mt-unsafe)
   const auto* host = std::getenv("SPHINX_TEST_MYSQL_HOST");
   const auto* port_text = std::getenv("SPHINX_TEST_MYSQL_PORT");
@@ -315,10 +315,10 @@ class UpdateFailureConstraint final {
   bool _installed = false;
 };
 
-}  // namespace
+}  // 匿名命名空间
 
 using CommitReturn = decltype(mysql_commit(static_cast<MYSQL*>(nullptr)));
-// GNU ld --wrap requires these exact C symbol names.
+// GNU ld 的 --wrap 选项要求这些 C 符号名称保持原样。
 // NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
 extern "C" CommitReturn __real_mysql_commit(MYSQL* connection);
 // NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming)
@@ -409,6 +409,7 @@ TEST(MySqlProductStoreIntegrationTest, ReadsExistingMissingAndInvalidProducts) {
 }
 
 TEST(MySqlProductStoreIntegrationTest, SerializesConcurrentVersionUpdates) {
+  // 两个独立连接同时按版本 1 更新同一行：应只有一个提交，另一个报告版本冲突。
   const auto options = read_test_options();
   if (!options) {
     GTEST_SKIP()
@@ -483,6 +484,7 @@ TEST(MySqlProductStoreIntegrationTest, SerializesConcurrentVersionUpdates) {
 }
 
 TEST(MySqlProductStoreIntegrationTest, RollsBackKnownFailureAndDoesNotRetryUnknownCommit) {
+  // 已知失败必须回滚；模拟“实际提交成功但确认响应失败”，验证不会盲目重试。
   const auto options = read_test_options();
   if (!options) {
     GTEST_SKIP()

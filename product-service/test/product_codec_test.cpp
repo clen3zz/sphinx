@@ -67,4 +67,4 @@ TEST(ProductCodecTest, KeyIsNamespacedAndRejectsZero) {
   EXPECT_THROW(sphinx::make_product_cache_key(0), std::invalid_argument);
 }
 
-}  // namespace
+}  // 匿名命名空间

@@ -9,22 +9,22 @@ enum class StoreUpdateStatus : std::uint8_t { Updated, NotFound, Conflict };
 
 struct StoreUpdateResult {
   StoreUpdateStatus status = StoreUpdateStatus::NotFound;
-  /// Present exactly when status == Updated, with the committed row/version.
+  /// 仅当 status == Updated 时有值，包含已提交的商品及新版本号。
   std::optional<Product> product;
 };
 
-/// Primary database boundary. One instance belongs to one worker thread; implementations must not
-/// share a MYSQL handle across threads. No method silently retries an ambiguous commit.
+/// 权威数据库接口：一个实例只属于一个工作线程，不能跨线程共享 MYSQL 连接句柄。
+/// 提交结果不确定时，任何方法都不能悄悄重试。
 class ProductStore {
  public:
   virtual ~ProductStore() = default;
 
-  /// Requires id > 0. A missing row is nullopt. Query/connection failure throws StoreError.
+  /// 要求 id > 0；记录不存在返回 nullopt；查询或连接失败抛出 StoreError。
   virtual std::optional<Product> find(std::uint64_t id) = 0;
 
-  /// Requires a valid request. Atomically compare version and update one existing row. NotFound and
-  /// Conflict are ordinary results; other SQL failures throw StoreError. Never creates a row.
+  /// 原子地检查版本并更新已有记录，不负责插入新记录。
+  /// NotFound 和 Conflict 是正常业务结果；其他 SQL 失败抛出 StoreError。
   virtual StoreUpdateResult update(const UpdateProductRequest& request) = 0;
 };
 
-}  // namespace sphinx
+}  // 命名空间 sphinx

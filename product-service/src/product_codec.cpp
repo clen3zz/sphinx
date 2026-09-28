@@ -65,7 +65,7 @@ std::uint64_t read_u64(std::string_view bytes, std::size_t offset) noexcept {
   return value;
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 bool valid_product(const Product& product) noexcept {
   return product.id != 0 && product.version != 0 &&
@@ -76,6 +76,7 @@ std::string make_product_cache_key(std::uint64_t id) {
   if (id == 0) {
     throw std::invalid_argument{"product id must be positive"};
   }
+  // 使用独立命名空间，避免与其他缓存 key 冲突；格式变更时可更新版本前缀。
   return "product:v1:" + std::to_string(id);
 }
 
@@ -97,6 +98,7 @@ std::string encode_product_cache(const Product& product) {
 }
 
 std::optional<Product> decode_product_cache(std::string_view bytes) {
+  // 缓存内容不可信：先检查魔数和长度，再解码字段并复用领域对象校验。
   constexpr std::size_t header_size = 30;
   if (bytes.size() < header_size || bytes.substr(0, 4) != "SPC1") {
     return std::nullopt;
@@ -118,4 +120,4 @@ std::optional<Product> decode_product_cache(std::string_view bytes) {
   return product;
 }
 
-}  // namespace sphinx
+}  // 命名空间 sphinx

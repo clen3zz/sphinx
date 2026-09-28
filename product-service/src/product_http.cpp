@@ -31,21 +31,21 @@ struct WorkerContext final {
         cache{config.cache_nodes, config.cache_timeout},
         service{store, cache, config.cache_policy} {}
 
-  // The guard initializes MySQL for this worker before store construction and tears it down last.
-  // Declaration order is mandatory: C++ destroys these members in reverse order.
+  // 先初始化本线程的 MySQL 环境，再创建 store；C++ 会按成员声明的逆序析构。
+  // 因此 guard 最后销毁，不会让仍在使用 MySQL 的对象失去线程环境。
   [[maybe_unused]] MySqlThreadGuard thread_guard;
   MySqlProductStore store;
   SphinxProductCache cache;
   ProductService service;
 };
 
-}  // namespace
+}  // 匿名命名空间
 
 struct ProductHttpServer::Impl {
   explicit Impl(ProductHttpConfig&& source_config) : config{std::move(source_config)} {}
 
   ProductHttpConfig config;
-  // Declaration order ensures the server/worker queue is destroyed before MySQL library shutdown.
+  // server 及其工作队列先于 mysql_runtime 析构，确保工作线程先退出再关闭客户端库。
   [[maybe_unused]] MySqlRuntime mysql_runtime;
   httplib::Server server;
   std::mutex state_mutex;
@@ -59,6 +59,7 @@ ProductHttpServer::ProductHttpServer(ProductHttpConfig config)
   _impl->server.set_read_timeout(2, 0);
   _impl->server.set_write_timeout(2, 0);
   const auto worker_count = _impl->config.worker_count;
+  // 线程池固定大小；同步 MySQL/缓存 I/O 占用 HTTP Worker，不阻塞 sphinxd 的 Reactor。
   _impl->server.new_task_queue = [worker_count] {
     return new httplib::ThreadPool{worker_count, worker_count, 256};
   };
@@ -79,6 +80,7 @@ bool ProductHttpServer::serve() {
   }
 
   const auto* config = &_impl->config;
+  // 每个 HTTP 工作线程第一次处理请求时才创建自己的数据库连接持有者和缓存客户端。
   install_product_routes(_impl->server, [config]() -> ProductService& {
     thread_local std::unique_ptr<WorkerContext> context;
     if (!context) {
@@ -108,4 +110,4 @@ void ProductHttpServer::stop() noexcept {
   _impl->server.stop();
 }
 
-}  // namespace sphinx
+}  // 命名空间 sphinx

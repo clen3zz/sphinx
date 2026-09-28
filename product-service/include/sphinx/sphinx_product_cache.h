@@ -8,7 +8,7 @@
 
 namespace sphinx {
 
-/// Owns exactly one ClusterClient; construct/use/destroy on the same worker thread.
+/// 独占一个 ClusterClient；构造、使用和销毁都必须在同一个工作线程中完成。
 class SphinxProductCache final : public ProductCache {
  public:
   explicit SphinxProductCache(std::string_view nodes,
@@ -22,4 +22,4 @@ class SphinxProductCache final : public ProductCache {
   ClusterClient _client;
 };
 
-}  // namespace sphinx
+}  // 命名空间 sphinx

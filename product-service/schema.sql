@@ -1,4 +1,5 @@
--- MySQL 8.4 / InnoDB. Apply once as a privileged operator before starting the service.
+-- 面向 MySQL 8.4 / InnoDB；启动服务前由具备权限的操作员执行一次。
+-- id 是商品主键，version 用于并发更新检查；价格以“分”为单位。
 CREATE TABLE IF NOT EXISTS products (
     id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
     name VARCHAR(128) NOT NULL,

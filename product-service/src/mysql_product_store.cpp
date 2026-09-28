@@ -14,8 +14,8 @@
 #include <stdexcept>
 #include <thread>
 
-// This optional target links the MySQL client library. Keep its C API private to this file, and
-// keep credentials, query text, and user input out of StoreError::what().
+// 只有可选商品服务链接 MySQL 客户端库；C API 的细节只留在本文件。
+// StoreError::what() 不包含凭据、SQL 文本或用户输入，避免向上层泄露敏感信息。
 
 namespace sphinx {
 namespace {
@@ -40,6 +40,7 @@ void validate_options(const MySqlOptions& options) {
 }
 
 bool is_unavailable_error(unsigned int error) noexcept {
+  // 连接中断、锁等待超时和死锁都属于本次数据库操作不可用，不能当作“查无此行”。
   switch (error) {
     case CR_CONNECTION_ERROR:
     case CR_CONN_HOST_ERROR:
@@ -101,7 +102,7 @@ void bind_unsigned_parameter(MYSQL_BIND* binding, std::uint64_t* value) {
   binding->is_unsigned = true;
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 struct MySqlProductStore::Impl {
   explicit Impl(const MySqlOptions& source_options)
@@ -123,6 +124,7 @@ struct MySqlProductStore::Impl {
       return;
     }
 
+    // 懒连接：工作线程首次真正访问 MySQL 时才建连，之后由该线程复用。
     MYSQL* handle = mysql_init(nullptr);
     if (handle == nullptr) {
       throw StoreError{StoreErrorCode::Unexpected, "MySQL connection allocation failed"};
@@ -140,8 +142,8 @@ struct MySqlProductStore::Impl {
       throw StoreError{StoreErrorCode::Unexpected, "MySQL connection option setup failed"};
     }
 
-    // MySQL 8.4 disables automatic reconnect by default, including after mysql_real_connect();
-    // MYSQL_OPT_RECONNECT is deprecated and emits a warning even when set to false.
+    // MySQL 8.4 默认不自动重连；MYSQL_OPT_RECONNECT 已弃用，即使设为 false 也会告警。
+    // 本模块选择在传输失败后丢弃连接，由下一次独立操作重新建立。
     if (mysql_real_connect(handle, options.host.c_str(), options.user.c_str(),
                            options.password.c_str(), options.database.c_str(), options.port,
                            nullptr, 0) == nullptr) {
@@ -185,6 +187,7 @@ struct MySqlProductStore::Impl {
   }
 
   MYSQL_STMT* prepare_find_statement() {
+    // 数据参数通过占位符绑定，不把商品 ID 拼接进 SQL；语句句柄在本连接内复用。
     constexpr char query[] = "SELECT id, name, price_cents, version FROM products WHERE id = ?";
     return prepare_statement(
         find_statement, query, sizeof(query) - 1, 1, 4, "MySQL statement allocation failed",
@@ -192,6 +195,7 @@ struct MySqlProductStore::Impl {
   }
 
   MYSQL_STMT* prepare_lock_statement() {
+    // FOR UPDATE 在事务中读取当前行并加锁，避免同一商品的并发写入交错执行。
     constexpr char query[] =
         "SELECT id, name, price_cents, version FROM products WHERE id = ? FOR UPDATE";
     return prepare_statement(
@@ -200,6 +204,7 @@ struct MySqlProductStore::Impl {
   }
 
   MYSQL_STMT* prepare_update_statement() {
+    // 版本号同时写在更新条件中；更新成功后 version 自增。
     constexpr char query[] =
         "UPDATE products SET name = ?, price_cents = ?, version = version + 1 "
         "WHERE id = ? AND version = ?";
@@ -209,8 +214,8 @@ struct MySqlProductStore::Impl {
                              "MySQL product update statement shape is invalid");
   }
 
-  /// Clear buffered rows and reset a prepared statement for reuse. On failure, close the whole
-  /// connection so the next independent operation starts from a known state.
+  /// 清理结果并重置预处理语句以供复用；若清理失败，则关闭整个连接。
+  /// 下一个独立操作会从已知的连接状态重新开始。
   unsigned int clear_statement_result(MYSQL_STMT*& slot, MYSQL_STMT* statement) noexcept {
     if (slot != statement || connection == nullptr) {
       return 0;
@@ -286,6 +291,7 @@ struct MySqlProductStore::Impl {
       }
 
       const int fetch_result = mysql_stmt_fetch(statement);
+      // 只有确实没有结果行才返回 nullopt；截断或字段非法都不能冒充 NotFound。
       if (fetch_result == MYSQL_NO_DATA) {
         result = std::nullopt;
       } else if (fetch_result == MYSQL_DATA_TRUNCATED) {
@@ -328,6 +334,7 @@ struct MySqlProductStore::Impl {
   }
 
   void reset_connection() noexcept {
+    // 先释放依附于连接的语句句柄，再关闭连接；后续独立请求会重新 prepare。
     if (find_statement != nullptr) {
       mysql_stmt_close(find_statement);
       find_statement = nullptr;
@@ -355,6 +362,7 @@ struct MySqlProductStore::Impl {
 };
 
 MySqlRuntime::MySqlRuntime() {
+  // 客户端库按进程初始化一次，必须早于所有 HTTP 工作线程。
   std::lock_guard lock{runtime_mutex};
   if (library_initialized) {
     throw StoreError{StoreErrorCode::Unexpected, "MySQL runtime already exists"};
@@ -377,6 +385,7 @@ MySqlRuntime::~MySqlRuntime() {
 }
 
 MySqlThreadGuard::MySqlThreadGuard() {
+  // 每个工作线程单独完成 MySQL 线程初始化，且只允许在该线程使用自己的 store。
   std::lock_guard lock{runtime_mutex};
   if (!library_initialized || current_thread_has_guard) {
     throw StoreError{StoreErrorCode::Unexpected, "invalid MySQL thread initialization order"};
@@ -414,6 +423,7 @@ std::optional<Product> MySqlProductStore::find(std::uint64_t id) {
   }
 
   _impl->ensure_connection();
+  // 普通查询不加行锁；按主键读取权威商品记录。
   MYSQL_STMT* statement = _impl->prepare_find_statement();
   return _impl->select_product(_impl->find_statement, statement, id);
 }
@@ -435,6 +445,7 @@ StoreUpdateResult MySqlProductStore::update(const UpdateProductRequest& request)
   MYSQL_STMT* lock_statement = _impl->prepare_lock_statement();
   MYSQL_STMT* update_statement = _impl->prepare_update_statement();
 
+  // 版本检查和实际更新必须处于同一事务，不能拆成两次独立数据库操作。
   constexpr char start_transaction[] = "START TRANSACTION";
   if (mysql_real_query(_impl->connection, start_transaction, sizeof(start_transaction) - 1) != 0) {
     const auto error = mysql_errno(_impl->connection);
@@ -455,6 +466,7 @@ StoreUpdateResult MySqlProductStore::update(const UpdateProductRequest& request)
   };
 
   try {
+    // 先锁住目标行并检查调用方持有的旧版本；冲突属于业务结果，不执行 UPDATE。
     const auto existing = _impl->select_product(_impl->lock_statement, lock_statement, request.id);
     if (!existing) {
       rollback();
@@ -498,15 +510,19 @@ StoreUpdateResult MySqlProductStore::update(const UpdateProductRequest& request)
       throw_mysql_error(cleanup_error, "MySQL product update cleanup failed");
     }
     if (affected_rows != 1) {
+      // 主键加版本条件应当恰好命中一行，否则不能报告更新成功。
       throw StoreError{StoreErrorCode::Unexpected,
                        "MySQL product update affected an unexpected row count"};
     }
   } catch (...) {
+    // 已知在事务中失败时尝试回滚，不把半途失败当作已提交。
     rollback();
     throw;
   }
 
   if (mysql_commit(_impl->connection) != 0) {
+    // COMMIT 返回失败不等于数据库一定回滚：可能已提交但确认响应丢失。
+    // 丢弃连接并向上报告结果未知，禁止在这里盲目重试更新。
     _impl->reset_connection();
     throw StoreError{StoreErrorCode::CommitUnknown, "MySQL commit result is unknown"};
   }
@@ -514,4 +530,4 @@ StoreUpdateResult MySqlProductStore::update(const UpdateProductRequest& request)
   return committed_result;
 }
 
-}  // namespace sphinx
+}  // 命名空间 sphinx

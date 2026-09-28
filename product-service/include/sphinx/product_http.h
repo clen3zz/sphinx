@@ -21,8 +21,8 @@ struct ProductHttpConfig {
   MySqlOptions mysql{};
 };
 
-/// Owns a fixed HTTP worker pool. Each worker owns its own MySqlThreadGuard, MySqlProductStore,
-/// SphinxProductCache, and ProductService in that construction/destruction order.
+/// 持有固定大小的 HTTP 工作线程池。每个线程按顺序创建自己的 MySqlThreadGuard、
+/// MySqlProductStore、SphinxProductCache 和 ProductService，销毁顺序相反。
 class ProductHttpServer final {
  public:
   explicit ProductHttpServer(ProductHttpConfig config);
@@ -30,9 +30,9 @@ class ProductHttpServer final {
   ProductHttpServer(const ProductHttpServer&) = delete;
   ProductHttpServer& operator=(const ProductHttpServer&) = delete;
 
-  /// Blocks until stop(); returns false if bind/listen fails. Must be called once.
+  /// 阻塞运行直至 stop()；绑定或监听失败时返回 false；只能调用一次。
   bool serve();
-  /// Thread-safe control-thread operation that unblocks serve(); never call from a signal handler.
+  /// 控制线程可安全调用，用来结束 serve()；不能从信号处理函数直接调用。
   void stop() noexcept;
 
  private:
@@ -40,4 +40,4 @@ class ProductHttpServer final {
   std::unique_ptr<Impl> _impl;
 };
 
-}  // namespace sphinx
+}  // 命名空间 sphinx

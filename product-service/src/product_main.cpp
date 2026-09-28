@@ -19,14 +19,14 @@
 namespace {
 
 std::string optional_environment_value(const char* name, const char* default_value) {
-  // Called during startup, before any service workers are created.
+  // 仅在启动阶段读取环境变量，此时工作线程尚未创建。
   // NOLINTNEXTLINE(concurrency-mt-unsafe)
   const char* value = std::getenv(name);
   return value == nullptr ? std::string{default_value} : std::string{value};
 }
 
 std::string required_environment_value(const char* name) {
-  // NOLINTNEXTLINE(concurrency-mt-unsafe): startup configuration precedes worker creation.
+  // NOLINTNEXTLINE(concurrency-mt-unsafe): 配置读取发生在工作线程创建前。
   const char* value = std::getenv(name);
   if (value == nullptr) {
     throw std::invalid_argument{"required service configuration is missing"};
@@ -36,7 +36,7 @@ std::string required_environment_value(const char* name) {
 
 std::uint64_t unsigned_environment_value(const char* name, std::uint64_t default_value,
                                          std::uint64_t minimum, std::uint64_t maximum) {
-  // NOLINTNEXTLINE(concurrency-mt-unsafe): startup configuration precedes worker creation.
+  // NOLINTNEXTLINE(concurrency-mt-unsafe): 配置读取发生在工作线程创建前。
   const char* raw_value = std::getenv(name);
   if (raw_value == nullptr) {
     return default_value;
@@ -83,7 +83,7 @@ bool block_shutdown_signals(sigset_t* wait_set, sigset_t* previous_mask) noexcep
 }
 
 bool wake_control_thread(std::thread& control_thread) noexcept {
-  // SIGTERM is blocked and synchronously consumed by sigwait in this exact thread.
+  // SIGTERM 已被屏蔽，只由这个控制线程通过 sigwait 同步接收。
   // NOLINTNEXTLINE(bugprone-bad-signal-to-kill-thread)
   const int thread_result = pthread_kill(control_thread.native_handle(), SIGTERM);
   if (thread_result == 0 || thread_result == ESRCH) {
@@ -96,7 +96,7 @@ bool wake_control_thread(std::thread& control_thread) noexcept {
   return false;
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 int main() {
   sigset_t shutdown_signals;

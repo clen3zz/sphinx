@@ -8,10 +8,10 @@
 
 namespace sphinx {
 
-/// Internal boundary. The callback returns the service owned by the current HTTP worker and may
-/// throw StoreError during thread setup; each handler maps Unavailable to 503 and other setup
-/// failures to a sanitized 500 response.
+/// 内部接口：回调返回当前 HTTP 工作线程持有的 ProductService。
+/// 线程初始化可能抛出 StoreError；路由将 Unavailable 映射为 503，
+/// 其他初始化错误返回不泄露内部细节的 500 响应。
 void install_product_routes(httplib::Server& server,
                             const std::function<ProductService&()>& current_service);
 
-}  // namespace sphinx
+}  // 命名空间 sphinx

@@ -15,15 +15,15 @@ if (GTEST_FOUND)
     add_test(NAME sphinx_product_tests COMMAND sphinx_product_tests)
 endif ()
 
-# The normal Sphinx build has no MySQL/HTTP dependencies and does not download anything.
+# 默认构建不依赖 MySQL/HTTP，也不会下载可选依赖。
 option(BUILD_MYSQL_SPHINX_DEMO "Build the optional MySQL product HTTP service" OFF)
 if (BUILD_MYSQL_SPHINX_DEMO)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(MYSQLCLIENT REQUIRED IMPORTED_TARGET mysqlclient)
     include(FetchContent)
 
-    # Header-only dependencies: populate sources without adding their own CMake projects.
-    # The full-argument form also remains valid with the root project's CMake 3.16 minimum.
+    # 这两个依赖仅使用头文件：拉取源码即可，不引入它们自己的 CMake 项目。
+    # 完整参数形式也兼容根项目要求的最低 CMake 3.16 版本。
     FetchContent_Populate(cpp_httplib
             GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
             GIT_TAG v0.56.0

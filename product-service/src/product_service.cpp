@@ -22,6 +22,7 @@ GetProductResult ProductService::get(std::uint64_t id, bool bypass_cache) {
   }
   const auto key = make_product_cache_key(id);
   auto source = bypass_cache ? CacheSource::Bypass : CacheSource::Miss;
+  // 旁路缓存：只有命中且解码、ID 校验都通过时，才可以跳过权威数据库。
   if (!bypass_cache) {
     try {
       const auto cached = _cache.get(key);
@@ -33,10 +34,10 @@ GetProductResult ProductService::get(std::uint64_t id, bool bypass_cache) {
         source = CacheSource::Corrupt;
         try {
           _cache.erase(key);
-          // Cache invalidation after a corrupt entry is optional for the database read.
+          // 损坏值删除失败也不影响后续数据库查询。
           // NOLINTNEXTLINE(bugprone-empty-catch)
         } catch (const CacheError&) {
-          // A corrupt cache entry never prevents a database read.
+          // 不让缓存故障阻断回源。
         }
       }
     } catch (const CacheError&) {
@@ -44,6 +45,7 @@ GetProductResult ProductService::get(std::uint64_t id, bool bypass_cache) {
     }
   }
 
+  // 只有数据库明确返回“没有记录”才是 NotFound；连接或 SQL 失败必须单独报告。
   std::optional<Product> product;
   try {
     product = _store.find(id);
@@ -67,10 +69,10 @@ GetProductResult ProductService::get(std::uint64_t id, bool bypass_cache) {
   }
   try {
     _cache.put(key, encode_product_cache(*product), _policy.ttl_seconds);
-    // The authoritative database read has succeeded; a cache fill may be skipped.
+    // 数据库读取已成功，回填缓存失败可以忽略。
     // NOLINTNEXTLINE(bugprone-empty-catch)
   } catch (const CacheError&) {
-    // A cache fill is best effort after the authoritative read.
+    // 回填只是加速后续查询，不改变本次结果。
   }
   return {ProductStatus::Ok, std::move(product), source};
 }
@@ -81,6 +83,7 @@ UpdateProductResult ProductService::update(const UpdateProductRequest& request) 
       !valid_product(Product{request.id, request.name, request.price_cents, 1})) {
     return {ProductStatus::InvalidArgument, std::nullopt, false};
   }
+  // 先让数据库完成版本检查和事务提交；在结果明确前不修改缓存。
   StoreUpdateResult store_result;
   try {
     store_result = _store.update(request);
@@ -105,6 +108,7 @@ UpdateProductResult ProductService::update(const UpdateProductRequest& request) 
   if (store_result.status != StoreUpdateStatus::Updated) {
     return {ProductStatus::InternalError, std::nullopt, false};
   }
+  // 提交后删除缓存。删除失败只影响读到旧值的风险，不撤销已提交的数据库更新。
   bool invalidation_failed = false;
   try {
     _cache.erase(make_product_cache_key(request.id));
@@ -119,4 +123,4 @@ UpdateProductResult ProductService::update(const UpdateProductRequest& request) 
   return {ProductStatus::Ok, std::move(store_result.product), invalidation_failed};
 }
 
-}  // namespace sphinx
+}  // 命名空间 sphinx

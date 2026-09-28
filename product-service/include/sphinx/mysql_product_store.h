@@ -19,7 +19,7 @@ struct MySqlOptions {
   std::uint32_t write_timeout_seconds = 2;
 };
 
-/// Exactly one process owner, created before HTTP workers and destroyed after they join.
+/// 进程级 MySQL 客户端运行时：在 HTTP 工作线程启动前创建，在线程退出后销毁。
 class MySqlRuntime final {
  public:
   MySqlRuntime();
@@ -28,7 +28,7 @@ class MySqlRuntime final {
   MySqlRuntime& operator=(const MySqlRuntime&) = delete;
 };
 
-/// One per worker thread; construct before MySqlProductStore, destroy after it on that thread.
+/// 每个工作线程各有一个；在本线程创建 MySqlProductStore 前构造，并在其销毁后析构。
 class MySqlThreadGuard final {
  public:
   MySqlThreadGuard();
@@ -37,9 +37,9 @@ class MySqlThreadGuard final {
   MySqlThreadGuard& operator=(const MySqlThreadGuard&) = delete;
 };
 
-/// One connection per worker. Data SQL uses prepared statements; fixed transaction control uses
-/// mysql_commit/mysql_rollback. Reads go to the primary MySQL connection.
-/// On transport error, discard the handle and reconnect on the next independent operation.
+/// 每个工作线程独占一个连接。数据 SQL 使用预处理语句，事务结束使用
+/// mysql_commit/mysql_rollback；查询直接访问主 MySQL 连接。
+/// 传输失败后丢弃连接，下一个独立操作才重连，不在当前事务中自动重试。
 class MySqlProductStore final : public ProductStore {
  public:
   explicit MySqlProductStore(const MySqlOptions& options);
@@ -55,4 +55,4 @@ class MySqlProductStore final : public ProductStore {
   std::unique_ptr<Impl> _impl;
 };
 
-}  // namespace sphinx
+}  // 命名空间 sphinx

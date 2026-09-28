@@ -9,6 +9,7 @@ SphinxProductCache::SphinxProductCache(std::string_view nodes, std::chrono::mill
     : _client{nodes, timeout} {}
 
 std::optional<std::string> SphinxProductCache::get(std::string_view key) {
+  // 将集群客户端的传输错误统一转换为缓存错误，业务层才能选择回源 MySQL。
   try {
     return _client.get(key);
   } catch (const ClientError& error) {
@@ -32,10 +33,11 @@ void SphinxProductCache::put(std::string_view key, std::string_view value,
 
 void SphinxProductCache::erase(std::string_view key) {
   try {
+    // 缓存项本来就不存在也算删除成功，适合数据库提交后的失效操作。
     _client.remove_status(key);
   } catch (const ClientError& error) {
     throw CacheError{error.what()};
   }
 }
 
-}  // namespace sphinx
+}  // 命名空间 sphinx

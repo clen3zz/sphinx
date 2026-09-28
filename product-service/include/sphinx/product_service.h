@@ -7,24 +7,23 @@
 namespace sphinx {
 
 struct ProductCachePolicy {
-  /// Must be in 1..2,592,000, because Sphinx treats larger expirations as UNIX timestamps.
+  /// 必须在 1..2,592,000 秒内；更大的过期值会被 Sphinx 解释为 UNIX 时间戳。
   std::uint32_t ttl_seconds = 30;
 };
 
-/// Cache-aside application service. Store and cache are borrowed and must outlive this object.
-/// All three objects are confined to a single worker thread. No lock is taken in this layer.
+/// 旁路缓存业务层：只借用 store 和 cache，二者的生命周期必须长于本对象。
+/// 三个对象都由同一个工作线程使用，因此这一层不加锁。
 class ProductService final {
  public:
   ProductService(ProductStore& store, ProductCache& cache, ProductCachePolicy policy = {});
 
-  /// GET: cache -> decode/validate id -> database on miss/error -> best-effort fill. With
-  /// bypass_cache=true, query the primary database directly (used for commit reconciliation).
-  /// No negative caching. A cache hit can be stale until TTL expiry.
+  /// 查询：先读缓存并解码、校验 id；未命中或缓存出错时查数据库，再尽力回填。
+  /// bypass_cache=true 时直接查权威数据库，用于核实提交结果；不存在的商品不缓存。
+  /// 命中的缓存值仍可能是旧版本，直至其 TTL 到期。
   GetProductResult get(std::uint64_t id, bool bypass_cache = false);
 
-  /// PUT: database transaction and COMMIT -> best-effort cache erase. No cache change before
-  /// commit. Optimistic version conflict is not an error. CommitUnknown must not trigger
-  /// deletion/retry.
+  /// 更新：先完成数据库事务并确认提交，再尽力删除缓存；提交前不能改动缓存。
+  /// 版本冲突是正常业务结果；CommitUnknown 时不能删除缓存或盲目重试。
   UpdateProductResult update(const UpdateProductRequest& request);
 
  private:
@@ -33,4 +32,4 @@ class ProductService final {
   ProductCachePolicy _policy;
 };
 
-}  // namespace sphinx
+}  // 命名空间 sphinx

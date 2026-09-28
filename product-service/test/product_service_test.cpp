@@ -396,8 +396,8 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
   }
   EXPECT_FALSE(cache_state->get());
 
-  // Model a long pause after the old database snapshot. The stale cache entry's TTL starts only
-  // when that GET resumes and writes it, after the committed update has already erased the key.
+  // 模拟旧读请求拿到数据库快照后长时间暂停：写请求已提交并删缓存，旧读才恢复并回填。
+  // 旧值的 TTL 从这次回填开始计算，而不是从先前的数据库读取时间开始计算。
   cache_state->advance(std::chrono::seconds{100});
   database->release_old_read();
   old_read_thread.join();
@@ -462,4 +462,4 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
   EXPECT_EQ(fresh_hit.product->version, 2U);
 }
 
-}  // namespace
+}  // 匿名命名空间

@@ -126,7 +126,7 @@ std::optional<std::uint64_t> parse_product_id(const httplib::Request& request) {
   return id;
 }
 
-/// Returns nullopt for any query form except no question mark or the exact raw text "fresh=1".
+/// 只接受无查询参数或原样的 "fresh=1"；其他查询形式返回 nullopt。
 std::optional<bool> parse_fresh_query(const httplib::Request& request) {
   const std::string_view target{request.target};
   const auto query_start = target.find('?');
@@ -285,7 +285,7 @@ bool is_product_path(std::string_view path) noexcept {
   return path == "/products" || path.substr(0, sizeof("/products/") - 1) == "/products/";
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 void install_product_routes(httplib::Server& server,
                             const std::function<ProductService&()>& current_service) {
@@ -305,6 +305,7 @@ void install_product_routes(httplib::Server& server,
 
   server.Get(R"(/products/([^/]+))",
              [current_service](const httplib::Request& request, httplib::Response& response) {
+               // HTTP 层只解析请求并映射响应；缓存命中、回源和结果分类由 ProductService 决定。
                try {
                  const auto id = parse_product_id(request);
                  if (!id) {
@@ -327,6 +328,7 @@ void install_product_routes(httplib::Server& server,
 
   server.Put(R"(/products/([^/]+))",
              [current_service](const httplib::Request& request, httplib::Response& response) {
+               // 更新请求携带 expected_version，交给业务层和 MySQL 事务完成并发检查。
                try {
                  const auto id = parse_product_id(request);
                  if (!id) {
@@ -353,4 +355,4 @@ void install_product_routes(httplib::Server& server,
              });
 }
 
-}  // namespace sphinx
+}  // 命名空间 sphinx
