@@ -133,7 +133,10 @@ std::optional<bool> parse_fresh_query(const httplib::Request& request) {
   if (query_start == std::string_view::npos) {
     return false;
   }
-  return target.substr(query_start + 1) == "fresh=1" ? std::optional<bool>{true} : std::nullopt;
+  if (target.substr(query_start + 1) != "fresh=1") {
+    return std::nullopt;
+  }
+  return true;
 }
 
 bool ascii_space(char value) noexcept {

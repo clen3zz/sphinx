@@ -51,7 +51,8 @@ bool valid_utf8_name(std::string_view bytes) noexcept {
 }
 
 void append_u64(std::string* out, std::uint64_t value) {
-  for (int shift = 56; shift >= 0; shift -= 8) {
+  for (unsigned int byte = 0; byte < 8; ++byte) {
+    const auto shift = (7U - byte) * 8U;
     out->push_back(static_cast<char>((value >> shift) & 0xFFU));
   }
 }
