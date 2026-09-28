@@ -43,6 +43,10 @@ class ClusterClient final {
 
   bool set(std::string_view key, std::string_view value);
 
+  /// Writes a value with a relative TTL in seconds (1..30 days). Zero retains legacy no-expiry
+  /// behavior. Throws std::invalid_argument before I/O for a larger value. Not thread-safe.
+  bool set(std::string_view key, std::string_view value, std::uint32_t ttl_seconds);
+
   std::optional<std::string> get(std::string_view key);
 
   bool remove(std::string_view key);

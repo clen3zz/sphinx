@@ -233,6 +233,22 @@ TEST(ClusterClientTest, HandlesPartialResponsesAndBinaryValues) {
   EXPECT_EQ(value, std::optional{expected});
 }
 
+TEST(ClusterClientTest, SetSendsRelativeTtlWithoutChangingLegacyRequest) {
+  FakeServer server{[](int client) {
+    const auto request = read_request(client);
+    EXPECT_EQ(request, "set product:v1:1 0 45 3\r\ntea\r\n");
+    send_chunks(client, "STORED\r\n");
+  }};
+  server.start();
+  sphinx::ClusterClient client{node_spec(server.port())};
+  EXPECT_TRUE(client.set("product:v1:1", "tea", 45));
+}
+
+TEST(ClusterClientTest, RejectsAbsoluteTimestampRangeBeforeIo) {
+  sphinx::ClusterClient client{"127.0.0.1:1"};
+  EXPECT_THROW((void)client.set("key", "value", 60U * 60U * 24U * 30U + 1U), std::invalid_argument);
+}
+
 TEST(ClusterClientTest, GetMissReturnsNullopt) {
   FakeServer server{[](int client) {
     char request[128];

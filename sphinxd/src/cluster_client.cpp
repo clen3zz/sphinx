@@ -343,12 +343,14 @@ class ClusterClient::MemcachedConnection final {
   MemcachedConnection& operator=(const MemcachedConnection&) = delete;
 
   // 执行 set 写入命令
-  bool set(std::string_view key, std::string_view value) {
+  bool set(std::string_view key, std::string_view value, std::uint32_t ttl_seconds) {
     // 1. 构建标准 set 请求帧
     std::string request{"set "};
     request.reserve(32 + key.size() + value.size());
     request += key;
-    request += " 0 0 ";
+    request += " 0 ";
+    request += std::to_string(ttl_seconds);
+    request += " ";
     request += std::to_string(value.size());
     request += "\r\n";
     request += value;
@@ -455,8 +457,16 @@ auto ClusterClient::execute(std::string_view key, Operation&& operation)
 }
 
 // 集群客户端对外 set API
-bool ClusterClient::set(std::string_view key, std::string_view value) {
-  return execute(key, [&](MemcachedConnection& connection) { return connection.set(key, value); });
+bool ClusterClient::set(std::string_view key, std::string_view value) { return set(key, value, 0); }
+
+bool ClusterClient::set(std::string_view key, std::string_view value, std::uint32_t ttl_seconds) {
+  constexpr std::uint32_t max_relative_ttl = 60U * 60U * 24U * 30U;
+  if (ttl_seconds > max_relative_ttl) {
+    throw std::invalid_argument{"relative TTL must not exceed 30 days"};
+  }
+  return execute(key, [&](MemcachedConnection& connection) {
+    return connection.set(key, value, ttl_seconds);
+  });
 }
 
 // 集群客户端对外 get API
