@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
+#include <chrono>
 #include <limits>
 #include <memory>
 #include <system_error>
@@ -18,6 +19,8 @@ namespace sphinx {
 namespace {
 
 constexpr size_t kMaxResponseLine = size_t{64} * 1024;
+// A Sphinx connection closes before accepting more than 8 MiB of request bytes.
+constexpr size_t kMaxValueBytes = size_t{8} * 1024 * 1024;
 
 // 获取系统 errno 对应的可读错误信息
 std::string errno_message(int err) { return std::generic_category().message(err); }
@@ -49,8 +52,8 @@ std::string make_key_request(std::string_view command, std::string_view key) {
 
 // 校验超时时间必须为正数
 void validate_timeout(std::chrono::milliseconds timeout) {
-  if (timeout.count() <= 0) {
-    throw std::invalid_argument("cluster client timeout must be positive");
+  if (timeout.count() <= 0 || timeout.count() > std::numeric_limits<int>::max()) {
+    throw std::invalid_argument("cluster client timeout must be in 1..INT_MAX milliseconds");
   }
 }
 
@@ -67,8 +70,12 @@ class TcpTransport final {
 
   std::string_view target() const { return _target; }
 
+  // One deadline covers connection setup, writing, and every response fragment.
+  void begin_operation() { _deadline = std::chrono::steady_clock::now() + _timeout; }
+
   // 阻塞且带超时地发送全部消息字节
   void write_all(std::string_view message) {
+    check_deadline();
     ensure_connected();
     size_t offset = 0;
 
@@ -97,6 +104,7 @@ class TcpTransport final {
   // 从接收流中读取单行以 \r\n 结尾的协议文本
   std::string read_line() {
     while (true) {
+      check_deadline();
       // 1. 尝试在当前接收缓冲区中寻找行终结符
       if (const auto separator = _read_buffer.find("\r\n"); separator != std::string::npos) {
         const auto line_end = separator + 2;
@@ -117,10 +125,14 @@ class TcpTransport final {
 
   // 从接收流中精准读取指定字节数的数据块
   std::string read_exact(size_t size) {
+    if (size > kMaxValueBytes) {
+      throw_node_error(_target, "value length exceeds client limit");
+    }
     std::string result;
     result.reserve(size);
 
     while (result.size() < size) {
+      check_deadline();
       if (_read_buffer.empty()) {
         read_some();
         continue;
@@ -137,6 +149,7 @@ class TcpTransport final {
  private:
   // 确保 TCP 连接已建立
   void ensure_connected() {
+    check_deadline();
     if (_fd >= 0) {
       return;
     }
@@ -156,10 +169,13 @@ class TcpTransport final {
 
     std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> const address_guard{addresses,
                                                                            &freeaddrinfo};
+    // getaddrinfo is synchronous; never start a TCP attempt after its result arrives too late.
+    check_deadline();
 
     // 2. 遍历解析到的地址依次尝试建立连接
     std::string last_error{"connection failed"};
     for (const auto* address = addresses; address != nullptr; address = address->ai_next) {
+      check_deadline();
       if (const auto fd = connect_to(address, &last_error); fd >= 0) {
         _fd = fd;
         return;
@@ -219,10 +235,10 @@ class TcpTransport final {
   // 使用 poll 阻塞等待指定套接字事件触发，超时抛出异常
   void wait_for(int fd, short events) const {
     pollfd descriptor = {fd, events, 0};
-    const auto timeout =
-        std::clamp<int64_t>(_timeout.count(), int64_t{1}, std::numeric_limits<int>::max());
 
     while (true) {
+      const auto remaining = remaining_timeout();
+      const auto timeout = std::chrono::ceil<std::chrono::milliseconds>(remaining).count();
       const auto result = poll(&descriptor, 1, static_cast<int>(timeout));
 
       if (result <= 0) {
@@ -239,10 +255,21 @@ class TcpTransport final {
       const auto requested_events = static_cast<unsigned int>(events) |
                                     static_cast<unsigned int>(POLLERR | POLLHUP | POLLNVAL);
       if ((ready_events & requested_events) != 0) {
+        check_deadline();
         return;
       }
     }
   }
+
+  std::chrono::steady_clock::duration remaining_timeout() const {
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= _deadline) {
+      throw_node_error(_target, "operation timed out");
+    }
+    return _deadline - now;
+  }
+
+  void check_deadline() const { (void)remaining_timeout(); }
 
   // 从套接字阻塞读入一批数据追加至 _read_buffer
   void read_some() {
@@ -283,6 +310,7 @@ class TcpTransport final {
   std::string _host;
   uint16_t _port;
   std::chrono::milliseconds _timeout;
+  std::chrono::steady_clock::time_point _deadline{};
   std::string _read_buffer;
 };
 
@@ -344,6 +372,7 @@ class ClusterClient::MemcachedConnection final {
 
   // 执行 set 写入命令
   bool set(std::string_view key, std::string_view value, std::uint32_t ttl_seconds) {
+    _transport.begin_operation();
     // 1. 构建标准 set 请求帧
     std::string request{"set "};
     request.reserve(32 + key.size() + value.size());
@@ -369,6 +398,7 @@ class ClusterClient::MemcachedConnection final {
 
   // 执行 get 查询命令
   std::optional<std::string> get(std::string_view key) {
+    _transport.begin_operation();
     // 1. 发送 get 请求
     _transport.write_all(make_key_request("get", key));
 
@@ -395,6 +425,7 @@ class ClusterClient::MemcachedConnection final {
 
   // 执行 delete 删除命令
   DeleteStatus remove(std::string_view key) {
+    _transport.begin_operation();
     _transport.write_all(make_key_request("delete", key));
     const auto response = _transport.read_line();
 

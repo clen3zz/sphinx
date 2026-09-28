@@ -374,4 +374,44 @@ TEST(ClusterClientTest, TimeoutIsBoundedAndIncludesNode) {
   }
 }
 
+TEST(ClusterClientTest, OneDeadlineCoversTrickledResponse) {
+  FakeServer server{[](int client) {
+    char ignored[64];
+    (void)recv(client, ignored, sizeof(ignored), 0);
+    constexpr std::string_view response = "VALUE key 0 1\r\nx\r\nEND\r\n";
+    for (const char byte : response) {
+      if (send(client, &byte, 1, MSG_NOSIGNAL) != 1) {
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds{30});
+    }
+  }};
+  server.start();
+
+  sphinx::ClusterClient client{node_spec(server.port()), std::chrono::milliseconds{180}};
+  const auto begin = std::chrono::steady_clock::now();
+  EXPECT_THROW((void)client.get("key"), sphinx::ClientError);
+  const auto elapsed = std::chrono::steady_clock::now() - begin;
+  EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 450);
+}
+
+TEST(ClusterClientTest, RejectsOversizedValueBeforeAllocatingItsBody) {
+  FakeServer server{[](int client) {
+    char ignored[64];
+    (void)recv(client, ignored, sizeof(ignored), 0);
+    constexpr std::string_view header = "VALUE key 0 8388609\r\n";
+    (void)send(client, header.data(), header.size(), MSG_NOSIGNAL);
+  }};
+  server.start();
+
+  sphinx::ClusterClient client{node_spec(server.port())};
+  try {
+    (void)client.get("key");
+    FAIL() << "oversized value was accepted";
+  } catch (const sphinx::ClientError& error) {
+    EXPECT_NE(std::string{error.what()}.find("value length exceeds client limit"),
+              std::string::npos);
+  }
+}
+
 }  // namespace
