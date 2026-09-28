@@ -31,8 +31,9 @@ struct WorkerContext final {
         cache{config.cache_nodes, config.cache_timeout},
         service{store, cache, config.cache_policy} {}
 
+  // The guard initializes MySQL for this worker before store construction and tears it down last.
   // Declaration order is mandatory: C++ destroys these members in reverse order.
-  MySqlThreadGuard thread_guard;
+  [[maybe_unused]] MySqlThreadGuard thread_guard;
   MySqlProductStore store;
   SphinxProductCache cache;
   ProductService service;

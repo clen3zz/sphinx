@@ -271,7 +271,7 @@ struct MySqlProductStore::Impl {
       bind_unsigned_result(&results[0], &product.id, &id_is_null, &id_error);
       results[1].buffer_type = MYSQL_TYPE_STRING;
       results[1].buffer = name_buffer.data();
-      results[1].buffer_length = static_cast<unsigned long>(name_buffer.size());
+      results[1].buffer_length = name_buffer.size();
       results[1].length = &name_length;
       results[1].is_null = &name_is_null;
       results[1].error = &name_error;
@@ -298,7 +298,7 @@ struct MySqlProductStore::Impl {
             name_length > name_buffer.size()) {
           throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
         }
-        product.name.assign(name_buffer.data(), static_cast<std::size_t>(name_length));
+        product.name.assign(name_buffer.data(), name_length);
         if (product.id != id || !valid_product(product)) {
           throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
         }
@@ -470,7 +470,7 @@ StoreUpdateResult MySqlProductStore::update(const UpdateProductRequest& request)
     }
 
     auto& new_product = *committed_result.product;
-    unsigned long name_length = static_cast<unsigned long>(new_product.name.size());
+    unsigned long name_length = new_product.name.size();
     std::uint64_t price_cents = new_product.price_cents;
     std::uint64_t product_id = new_product.id;
     std::uint64_t expected_version = request.expected_version;
