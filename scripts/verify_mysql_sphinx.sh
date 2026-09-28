@@ -18,8 +18,8 @@ if [[ $database_lower != *test* ]]; then
 fi
 
 build_dir=${1:-build}
-mysql_test="$build_dir/examples/mysql_sphinx/sphinx_mysql_product_integration_tests"
-http_service="$build_dir/examples/mysql_sphinx/sphinx-product-service"
+mysql_test="$build_dir/product-service/sphinx_mysql_product_integration_tests"
+http_service="$build_dir/product-service/sphinx-product-service"
 sphinx_server="$build_dir/sphinxd/sphinxd"
 for executable in "$mysql_test" "$http_service" "$sphinx_server"; do
     if [[ ! -x $executable ]]; then
@@ -29,4 +29,4 @@ for executable in "$mysql_test" "$http_service" "$sphinx_server"; do
 done
 
 "$mysql_test" --gtest_filter=MySqlProductStoreIntegrationTest.*
-python3 examples/mysql_sphinx/test/product_http_integration_test.py "$sphinx_server" "$http_service"
+python3 product-service/test/product_http_integration_test.py "$sphinx_server" "$http_service"

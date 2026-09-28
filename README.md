@@ -73,7 +73,7 @@ MySQL 是商品记录的权威存储，Sphinx 是可重建的读取缓存。启�
 cmake -S . -B build -G Ninja -DBUILD_MYSQL_SPHINX_DEMO=ON
 cmake --build build -j"$(nproc)"
 # 先启动 Sphinx，并配置上述 SPHINX_MYSQL_* 变量，再启动 HTTP 服务
-./build/examples/mysql_sphinx/sphinx-product-service
+./build/product-service/sphinx-product-service
 ```
 
 真实数据库验收使用独立的临时库，库名需包含 `test`，并设置

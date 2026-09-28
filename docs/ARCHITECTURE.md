@@ -26,7 +26,7 @@ flowchart LR
 ## 从哪里启动
 
 - **缓存节点**：[`sphinxd.cpp`](../sphinxd/src/sphinxd.cpp) 的 `main()` 解析配置，创建共享 `ServerStats` 和 `ReactorGroup`，再启动 N 个线程。每个 `run_server_thread()` 先用 `Memory::mmap()` 分到自己的内存，构造 `Server`（内含 `Log` 与 `Reactor`），通过 `Server::serve()` 建立带 `SO_REUSEPORT` 的监听 socket，进入 `EpollReactor::run()`。
-- **商品服务（需启用 `BUILD_MYSQL_SPHINX_DEMO`）**：[`product_main.cpp`](../examples/mysql_sphinx/src/product_main.cpp) 读取环境配置，构造 `ProductHttpServer`；它先初始化 MySQL 客户端运行时，再启动固定的 HTTP 工作线程。每个线程第一次处理请求时创建自己的 `WorkerContext`：`MySqlThreadGuard → MySqlProductStore → SphinxProductCache → ProductService`。MySQL 连接在首次实际查询时才建立。
+- **商品服务（需启用 `BUILD_MYSQL_SPHINX_DEMO`）**：[`product_main.cpp`](../product-service/src/product_main.cpp) 读取环境配置，构造 `ProductHttpServer`；它先初始化 MySQL 客户端运行时，再启动固定的 HTTP 工作线程。每个线程第一次处理请求时创建自己的 `WorkerContext`：`MySqlThreadGuard → MySqlProductStore → SphinxProductCache → ProductService`。MySQL 连接在首次实际查询时才建立。
 - [`sphinx-cluster.cpp`](../sphinxd/src/sphinx-cluster.cpp) 是命令行客户端入口，不是服务端。它创建 `ClusterClient`，用一致性哈希选择节点。
 
 ## 最核心的调用链
@@ -53,8 +53,8 @@ flowchart LR
 6. [`sphinxd/src/server/command_executor.cpp`](../sphinxd/src/server/command_executor.cpp)：命令如何落到存储操作。
 7. [`sphinxd/src/logmem.cpp`](../sphinxd/src/logmem.cpp)：追加写、索引更新、过期和段淘汰。
 8. [`sphinxd/src/cluster_client.cpp`](../sphinxd/src/cluster_client.cpp)：客户端如何路由并与缓存节点对话。
-9. [`examples/mysql_sphinx/src/product_http.cpp`](../examples/mysql_sphinx/src/product_http.cpp)：可选服务的线程与对象生命周期。
-10. [`examples/mysql_sphinx/src/product_service.cpp`](../examples/mysql_sphinx/src/product_service.cpp)：缓存优先读取、MySQL 更新和缓存失效规则。
+9. [`product-service/src/product_http.cpp`](../product-service/src/product_http.cpp)：可选服务的线程与对象生命周期。
+10. [`product-service/src/product_service.cpp`](../product-service/src/product_service.cpp)：缓存优先读取、MySQL 更新和缓存失效规则。
 
 ## 串一次真实请求
 

@@ -41,4 +41,4 @@ execute_process(
 )
 
 add_subdirectory(sphinxd)
-add_subdirectory(examples/mysql_sphinx)
+add_subdirectory(product-service)

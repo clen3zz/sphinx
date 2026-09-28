@@ -32,7 +32,7 @@ with open(sys.argv[1], encoding="utf-8") as source:
 seen = set()
 for command in commands:
     path = os.path.realpath(command["file"])
-    if path not in seen and ("/sphinxd/src/" in path or "/examples/mysql_sphinx/src/" in path):
+    if path not in seen and ("/sphinxd/src/" in path or "/product-service/src/" in path):
         seen.add(path)
         print(path, end="\0")
 PY
