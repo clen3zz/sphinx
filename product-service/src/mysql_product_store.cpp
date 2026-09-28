@@ -128,10 +128,10 @@ struct MySqlProductStore::Impl {
       throw StoreError{StoreErrorCode::Unexpected, "MySQL connection allocation failed"};
     }
 
-    const unsigned int connect_timeout = options.connect_timeout_seconds;
-    const unsigned int read_timeout = options.read_timeout_seconds;
-    const unsigned int write_timeout = options.write_timeout_seconds;
-    const unsigned int protocol = MYSQL_PROTOCOL_TCP;
+    const unsigned int connect_timeout{options.connect_timeout_seconds};
+    const unsigned int read_timeout{options.read_timeout_seconds};
+    const unsigned int write_timeout{options.write_timeout_seconds};
+    constexpr unsigned int protocol = MYSQL_PROTOCOL_TCP;
     if (mysql_options(handle, MYSQL_OPT_CONNECT_TIMEOUT, &connect_timeout) != 0 ||
         mysql_options(handle, MYSQL_OPT_READ_TIMEOUT, &read_timeout) != 0 ||
         mysql_options(handle, MYSQL_OPT_WRITE_TIMEOUT, &write_timeout) != 0 ||

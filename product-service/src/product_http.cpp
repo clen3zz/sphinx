@@ -42,11 +42,11 @@ struct WorkerContext final {
 }  // namespace
 
 struct ProductHttpServer::Impl {
-  explicit Impl(ProductHttpConfig source_config) : config{std::move(source_config)} {}
+  explicit Impl(ProductHttpConfig&& source_config) : config{std::move(source_config)} {}
 
   ProductHttpConfig config;
   // Declaration order ensures the server/worker queue is destroyed before MySQL library shutdown.
-  MySqlRuntime mysql_runtime;
+  [[maybe_unused]] MySqlRuntime mysql_runtime;
   httplib::Server server;
   std::mutex state_mutex;
   bool stopping = false;
