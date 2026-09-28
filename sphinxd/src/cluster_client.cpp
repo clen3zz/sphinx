@@ -119,6 +119,7 @@ AddressList resolve_with_deadline(const std::string& host, const std::string& po
   if (state->status != 0) {
     throw_node_error(target, std::string{"cannot resolve host: "} + gai_strerror(state->status));
   }
+  lock.unlock();
   return std::move(state->addresses);
 }
 
@@ -329,6 +330,8 @@ class TcpTransport final {
     wait_for(_fd, POLLIN);
 
     char buffer[16 * 1024];
+    // resolve_with_deadline explicitly unlocks its resolver mutex before returning here.
+    // NOLINTNEXTLINE(clang-analyzer-unix.BlockInCriticalSection)
     const auto count = recv(_fd, buffer, sizeof(buffer), 0);
 
     if (count > 0) {

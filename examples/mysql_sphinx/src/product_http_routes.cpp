@@ -61,7 +61,7 @@ void set_product_status_error(httplib::Response& response, ProductStatus status)
   set_internal_error(response);
 }
 
-void set_exception_response(httplib::Response& response, std::exception_ptr exception) {
+void set_exception_response(httplib::Response& response, const std::exception_ptr& exception) {
   try {
     if (exception) {
       std::rethrow_exception(exception);
@@ -285,7 +285,7 @@ bool is_product_path(std::string_view path) noexcept {
 }  // namespace
 
 void install_product_routes(httplib::Server& server,
-                            std::function<ProductService&()> current_service) {
+                            const std::function<ProductService&()>& current_service) {
   server.set_post_routing_handler([](const httplib::Request&, httplib::Response& response) {
     response.set_header("Cache-Control", "no-store");
   });

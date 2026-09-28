@@ -12,6 +12,6 @@ namespace sphinx {
 /// throw StoreError during thread setup; each handler maps Unavailable to 503 and other setup
 /// failures to a sanitized 500 response.
 void install_product_routes(httplib::Server& server,
-                            std::function<ProductService&()> current_service);
+                            const std::function<ProductService&()>& current_service);
 
 }  // namespace sphinx

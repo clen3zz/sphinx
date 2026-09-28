@@ -31,6 +31,8 @@ GetProductResult ProductService::get(std::uint64_t id, bool bypass_cache) {
         source = CacheSource::Corrupt;
         try {
           _cache.erase(key);
+          // Cache invalidation after a corrupt entry is optional for the database read.
+          // NOLINTNEXTLINE(bugprone-empty-catch)
         } catch (const CacheError&) {
           // A corrupt cache entry never prevents a database read.
         }
@@ -63,6 +65,8 @@ GetProductResult ProductService::get(std::uint64_t id, bool bypass_cache) {
   }
   try {
     _cache.put(key, encode_product_cache(*product), _policy.ttl_seconds);
+    // The authoritative database read has succeeded; a cache fill may be skipped.
+    // NOLINTNEXTLINE(bugprone-empty-catch)
   } catch (const CacheError&) {
     // A cache fill is best effort after the authoritative read.
   }
