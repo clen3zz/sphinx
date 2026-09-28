@@ -104,7 +104,6 @@ printf 'set key 0 0 5\r\nhello\r\nget key\r\n' | nc -N 127.0.0.1 11211
 
 - [快速架构导读](docs/ARCHITECTURE.md)
 - [核心调用链导读](docs/CALL_CHAIN.md)
-- [MySQL + Sphinx 商品服务实现计划](IMPLEMENTATION_PLAN.md)：记录架构、接口与实现任务；HTTP/MySQL 适配器由可选构建开关启用。
 - [性能基准测试报告](docs/BENCHMARK.md)
 - [团队代码与命名规范](docs/CODING_STANDARDS.md)
 
