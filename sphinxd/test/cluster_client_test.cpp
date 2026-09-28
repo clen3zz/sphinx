@@ -262,6 +262,17 @@ TEST(ClusterClientTest, GetMissReturnsNullopt) {
   EXPECT_FALSE(result.has_value());
 }
 
+TEST(ClusterClientTest, ResolvesHostnameForOperation) {
+  FakeServer server{[](int client) {
+    char request[128];
+    ASSERT_GT(recv(client, request, sizeof(request), 0), 0);
+    send_chunks(client, "END\r\n");
+  }};
+  server.start();
+  sphinx::ClusterClient client{"localhost:" + std::to_string(server.port())};
+  EXPECT_FALSE(client.get("missing").has_value());
+}
+
 TEST(ClusterClientTest, ConnectionReuseAvoidsASecondAccept) {
   std::atomic<int> accepts = 0;
   FakeServer server{[&](int client) {

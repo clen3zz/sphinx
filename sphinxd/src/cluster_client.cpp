@@ -7,12 +7,16 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <charconv>
 #include <chrono>
+#include <condition_variable>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <system_error>
+#include <thread>
 #include <utility>
 
 namespace sphinx {
@@ -55,6 +59,67 @@ void validate_timeout(std::chrono::milliseconds timeout) {
   if (timeout.count() <= 0 || timeout.count() > std::numeric_limits<int>::max()) {
     throw std::invalid_argument("cluster client timeout must be in 1..INT_MAX milliseconds");
   }
+}
+
+using AddressList = std::unique_ptr<addrinfo, decltype(&freeaddrinfo)>;
+
+struct ResolveState {
+  std::mutex mutex;
+  std::condition_variable ready;
+  AddressList addresses{nullptr, &freeaddrinfo};
+  int status = EAI_AGAIN;
+  bool complete = false;
+};
+
+// getaddrinfo cannot be interrupted portably. Detach at most 32 resolver workers; each owns its
+// result until it finishes, so a caller can return at its deadline without a dangling pointer.
+AddressList resolve_with_deadline(const std::string& host, const std::string& port,
+                                  std::chrono::steady_clock::time_point deadline,
+                                  std::string_view target) {
+  static auto active = std::make_shared<std::atomic<size_t>>(0);
+  auto active_counter = active;
+  constexpr size_t max_active_resolvers = 32;
+  auto state = std::make_shared<ResolveState>();
+  auto count = active->load(std::memory_order_relaxed);
+  while (true) {
+    if (count >= max_active_resolvers) {
+      throw_node_error(target, "resolver is busy");
+    }
+    if (active->compare_exchange_weak(count, count + 1, std::memory_order_acq_rel)) {
+      break;
+    }
+  }
+
+  try {
+    std::thread{[state, active_counter, host, port] {
+      addrinfo hints = {};
+      hints.ai_family = AF_INET;
+      hints.ai_socktype = SOCK_STREAM;
+      hints.ai_protocol = IPPROTO_TCP;
+      addrinfo* addresses = nullptr;
+      const auto status = getaddrinfo(host.c_str(), port.c_str(), &hints, &addresses);
+      {
+        std::scoped_lock const lock{state->mutex};
+        state->addresses.reset(addresses);
+        state->status = status;
+        state->complete = true;
+      }
+      state->ready.notify_one();
+      active_counter->fetch_sub(1, std::memory_order_release);
+    }}.detach();
+  } catch (...) {
+    active->fetch_sub(1, std::memory_order_release);
+    throw;
+  }
+
+  std::unique_lock lock{state->mutex};
+  if (!state->ready.wait_until(lock, deadline, [&] { return state->complete; })) {
+    throw_node_error(target, "operation timed out");
+  }
+  if (state->status != 0) {
+    throw_node_error(target, std::string{"cannot resolve host: "} + gai_strerror(state->status));
+  }
+  return std::move(state->addresses);
 }
 
 // 底层同步非阻塞带超时机制的 TCP 传输通道
@@ -155,26 +220,13 @@ class TcpTransport final {
     }
 
     // 1. 解析目标节点主机名和端口
-    addrinfo hints = {};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
     const auto port = std::to_string(_port);
-    addrinfo* addresses = nullptr;
-
-    const auto status = getaddrinfo(_host.c_str(), port.c_str(), &hints, &addresses);
-    if (status != 0) {
-      throw_node_error(_target, std::string{"cannot resolve host: "} + gai_strerror(status));
-    }
-
-    std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> const address_guard{addresses,
-                                                                           &freeaddrinfo};
-    // getaddrinfo is synchronous; never start a TCP attempt after its result arrives too late.
+    const auto addresses = resolve_with_deadline(_host, port, _deadline, _target);
     check_deadline();
 
     // 2. 遍历解析到的地址依次尝试建立连接
     std::string last_error{"connection failed"};
-    for (const auto* address = addresses; address != nullptr; address = address->ai_next) {
+    for (const auto* address = addresses.get(); address != nullptr; address = address->ai_next) {
       check_deadline();
       if (const auto fd = connect_to(address, &last_error); fd >= 0) {
         _fd = fd;
