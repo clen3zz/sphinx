@@ -49,7 +49,12 @@ void Server::on_message(const MessagePtr& data) {
   if (auto overload = std::dynamic_pointer_cast<ReactorOverload>(data)) {
     const auto close_victim = [this](const std::shared_ptr<Connection>& connection) {
       if (const auto socket = connection->socket()) {
-        close_connection(connection, socket);
+        if (connection->closed()) {
+          remove_connection(connection);
+          _reactor->close(socket);
+        } else {
+          close_connection(connection, socket);
+        }
       } else {
         connection->mark_closed();
         remove_connection(connection);
@@ -275,7 +280,10 @@ void Server::process_get_command(const std::shared_ptr<Connection>& connection, 
     return;
   }
 
-  connection->begin_multi_get(sequence, command.keys.size());
+  if (!connection->begin_multi_get(sequence, command.keys.size())) {
+    enqueue_response(connection, sequence, "SERVER_ERROR too many pending keys\r\n");
+    return;
+  }
   for (size_t key_index = 0; key_index < command.keys.size(); ++key_index) {
     auto outgoing = make_command(connection, sequence, Opcode::Get, command.keys[key_index]);
     outgoing.multi_get = true;

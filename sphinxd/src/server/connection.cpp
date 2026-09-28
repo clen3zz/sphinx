@@ -3,9 +3,20 @@
 namespace sphinx {
 
 // 初始化指定序列号的 multi-get 聚合上下文
-void Connection::begin_multi_get(uint64_t sequence, size_t key_count) {
-  _pending_multi_gets.emplace(
-      sequence, MultiGetState{key_count, false, false, 0, std::vector<std::string>(key_count)});
+bool Connection::begin_multi_get(uint64_t sequence, size_t key_count) {
+  constexpr size_t max_pending_multi_get_slots = 4096;
+  if (_closed || key_count == 0 ||
+      key_count > max_pending_multi_get_slots - _pending_multi_get_slots) {
+    return false;
+  }
+  const auto [it, inserted] = _pending_multi_gets.emplace(
+      sequence,
+      MultiGetState{key_count, false, false, 0, key_count, std::vector<std::string>(key_count)});
+  (void)it;
+  if (inserted) {
+    _pending_multi_get_slots += key_count;
+  }
+  return inserted;
 }
 
 // 记录 multi-get 请求的一个分片响应；仅当全部子响应集齐后拼接并返回最终响应
@@ -59,6 +70,7 @@ std::optional<std::string> Connection::add_multi_get_piece(uint64_t sequence, ui
 
   // 5. 清理已完成的 multi-get 状态
   _pending_multi_get_bytes -= state.buffered_bytes;
+  _pending_multi_get_slots -= state.slots;
   _pending_multi_gets.erase(it);
 
   return response;

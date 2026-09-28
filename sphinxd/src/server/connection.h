@@ -40,6 +40,7 @@ class Connection final {
     _pending_multi_gets.clear();
     _pending_response_bytes = 0;
     _pending_multi_get_bytes = 0;
+    _pending_multi_get_slots = 0;
   }
 
   // 设置关联的底层 TCP Socket 弱引用
@@ -70,7 +71,8 @@ class Connection final {
   }
 
   // 开启 multi-get 请求跟踪，预分配指定数量的子响应分片
-  void begin_multi_get(uint64_t sequence, size_t key_count);
+  // 返回 false 表示继续分配分片槽位将超出单连接上限；失败时不改变状态。
+  bool begin_multi_get(uint64_t sequence, size_t key_count);
 
   // 记录 multi-get 请求的一个分片响应，当且仅当所有分片都就绪时返回拼装后的完整响应体
   std::optional<std::string> add_multi_get_piece(uint64_t sequence, uint32_t key_index,
@@ -86,6 +88,7 @@ class Connection final {
     bool failed = false;              // 是否有任一分片执行失败
     bool resource_limit = false;      // 聚合内存超限，完成后返回错误
     size_t buffered_bytes = 0;        // 此请求当前持有的分片字节数
+    size_t slots = 0;                 // 分配的键槽数，释放分片后仍用于记账
     std::vector<std::string> pieces;  // 已接收的分片数据缓存
   };
 
@@ -97,6 +100,7 @@ class Connection final {
   size_t _pending_response_bytes = 0;
   std::map<uint64_t, MultiGetState> _pending_multi_gets;  // 正在聚合的 multi-get 状态字典
   size_t _pending_multi_get_bytes = 0;
+  size_t _pending_multi_get_slots = 0;
   std::weak_ptr<TcpSocket> _socket;  // 底层套接字弱引用
   bool _closed = false;              // 连接是否已关闭
 };

@@ -310,6 +310,7 @@ struct ReactorGroup::Channel {
 };
 
 constexpr size_t max_reactor_channel_bytes = size_t{16} * 1024 * 1024;
+constexpr size_t max_reactor_group_bytes = size_t{64} * 1024 * 1024;
 
 // 校验线程数合法性
 static size_t checked_thread_count(size_t nr_threads) {
@@ -494,6 +495,16 @@ bool Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool de
     if (bytes > max_reactor_channel_bytes - used) {
       return false;
     }
+    auto group_used = _group->_queued_bytes.load(std::memory_order_relaxed);
+    while (true) {
+      if (bytes > max_reactor_group_bytes - group_used) {
+        return false;
+      }
+      if (_group->_queued_bytes.compare_exchange_weak(group_used, group_used + bytes,
+                                                      std::memory_order_acq_rel)) {
+        break;
+      }
+    }
     // Charge before publishing: the consumer can dequeue immediately after try_to_emplace.
     channel.queued_bytes.fetch_add(bytes, std::memory_order_relaxed);
 
@@ -505,10 +516,12 @@ bool Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool de
         channel.overflow.emplace_back(message);
       } catch (const std::bad_alloc&) {
         channel.queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
+        _group->_queued_bytes.fetch_sub(bytes, std::memory_order_release);
         return false;
       }
     } else {
       channel.queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
+      _group->_queued_bytes.fetch_sub(bytes, std::memory_order_release);
       return false;
     }
   }
@@ -604,6 +617,7 @@ bool Reactor::poll_messages() {
       const auto bytes = message->queued_bytes();
       _on_message_fn(std::move(message));
       channel.queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
+      _group->_queued_bytes.fetch_sub(bytes, std::memory_order_release);
     }
 
     // 2. 消费溢出队列中的积压消息
@@ -623,6 +637,7 @@ bool Reactor::poll_messages() {
       const auto bytes = message->queued_bytes();
       _on_message_fn(std::move(message));
       channel.queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
+      _group->_queued_bytes.fetch_sub(bytes, std::memory_order_release);
     }
   }
 

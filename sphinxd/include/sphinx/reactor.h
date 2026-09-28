@@ -118,8 +118,9 @@ class ReactorGroup {
   std::vector<int> _eventfds;  // 各工作线程关联的 eventfd 描述符列表（用于异步唤醒）
   std::vector<std::atomic<bool>> _thread_is_sleeping;  // 各工作线程的休眠状态原子标记列表
   std::vector<std::unique_ptr<Channel>>
-      _channels;               // 跨线程通信通道矩阵（大小为 _nr_threads * _nr_threads）
-  std::mutex _channels_mutex;  // 保护通道矩阵并发分配初始化的互斥锁
+      _channels;                         // 跨线程通信通道矩阵（大小为 _nr_threads * _nr_threads）
+  std::mutex _channels_mutex;            // 保护通道矩阵并发分配初始化的互斥锁
+  std::atomic<size_t> _queued_bytes{0};  // 所有跨线程邮箱的合计载荷上限
 
   Channel& channel(size_t destination, size_t source) const;
   void initialize_thread(size_t thread_id);
