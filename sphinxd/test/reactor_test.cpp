@@ -90,7 +90,7 @@ TEST(ReactorTest, groupsOwnIndependentMessageChannels) {
   ASSERT_EQ(received, 1U);
 }
 
-TEST(ReactorTest, channelRejectsExcessBytesAndDeliversOverloadNotice) {
+TEST(ReactorTest, ChannelRejectsExcessBytesAndDeliversOverloadNotice) {
   size_t received = 0;
   bool overloaded = false;
   auto group = std::make_shared<sphinx::ReactorGroup>(2);
@@ -114,7 +114,7 @@ TEST(ReactorTest, channelRejectsExcessBytesAndDeliversOverloadNotice) {
   EXPECT_TRUE(target.poll_messages());
 }
 
-TEST(ReactorTest, groupBoundsBytesAcrossIndependentChannels) {
+TEST(ReactorTest, GroupBoundsBytesAcrossIndependentChannels) {
   auto group = std::make_shared<sphinx::ReactorGroup>(9);
   std::vector<std::unique_ptr<TestReactor>> sources;
   auto large = std::make_shared<LargeMessage>(size_t{9} * 1024 * 1024);
@@ -132,7 +132,7 @@ TEST(ReactorTest, groupBoundsBytesAcrossIndependentChannels) {
   EXPECT_TRUE(sources[7]->send_msg_deferred(0, large));
 }
 
-TEST(ReactorTest, tcpSocketClosesWhenUnsentBytesExceedLimit) {
+TEST(ReactorTest, TcpSocketClosesWhenUnsentBytesExceedLimit) {
   int fds[2];
   ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, fds), 0);
   int send_buffer_size = 1024;

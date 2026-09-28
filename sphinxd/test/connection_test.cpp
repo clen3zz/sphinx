@@ -6,7 +6,7 @@
 
 #include <string>
 
-TEST(ConnectionTest, rejectsExcessOutOfOrderResponseBytes) {
+TEST(ConnectionTest, RejectsExcessOutOfOrderResponseBytes) {
   auto group = std::make_shared<sphinx::ReactorGroup>(1);
   sphinx::EpollReactor reactor{0, group, [](const sphinx::MessagePtr&) {}};
   sphinx::Connection connection{1};
@@ -20,7 +20,7 @@ TEST(ConnectionTest, rejectsExcessOutOfOrderResponseBytes) {
             sphinx::Connection::WriteStatus::SocketUnavailable);
 }
 
-TEST(ConnectionTest, multiGetOverflowProducesBoundedError) {
+TEST(ConnectionTest, MultiGetOverflowProducesBoundedError) {
   sphinx::Connection connection{2};
   ASSERT_TRUE(connection.begin_multi_get(0, 2));
   std::string payload(sphinx::max_connection_response_bytes / 2 + 1, 'x');
@@ -33,7 +33,7 @@ TEST(ConnectionTest, multiGetOverflowProducesBoundedError) {
             "VALUE a 0 1\r\nx\r\nEND\r\n");
 }
 
-TEST(ConnectionTest, limitsOutstandingMultiGetSlotsAndReleasesThemOnCompletion) {
+TEST(ConnectionTest, LimitsOutstandingMultiGetSlotsAndReleasesThemOnCompletion) {
   sphinx::Connection connection{3};
   ASSERT_TRUE(connection.begin_multi_get(0, 4096));
   EXPECT_FALSE(connection.begin_multi_get(1, 1));

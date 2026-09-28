@@ -93,7 +93,7 @@ Checks: >
 ```
 
 本地静态检查最多并发运行 4 个进程。检查脚本会拒绝仍指向旧目录的编译数据库，
-`--require-mysql` 还会确认 MySQL/HTTP 服务的全部实现文件都属于 CMake 目标：
+`--require-mysql` 还会确认 MySQL/HTTP 服务的实现文件及 C++ 测试文件都属于 CMake 目标：
 
 ```bash
 # 核心模块；先配置或重新配置构建目录
@@ -118,7 +118,8 @@ Release 构建不受此配置影响。
 - **列宽限制**：100 列 (`ColumnLimit: 100`)
 - **花括号**：紧随同行（`Attach`，如 `void foo() {`、`if (...) {`）
 - **指针与引用**：靠左对齐（`PointerAlignment: Left`，如 `std::string_view& str`）
-- **单行函数**：禁止折叠为单行（`AllowShortFunctionsOnASingleLine: None`）
+- **单行函数**：简短函数可写在单行，与 `.clang-format` 的
+  `AllowShortFunctionsOnASingleLine: All` 保持一致。
 
 本地执行全量格式化：
 
