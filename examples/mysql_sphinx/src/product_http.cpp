@@ -2,15 +2,11 @@
 #include <sphinx/product_http.h>
 #include <sphinx/sphinx_product_cache.h>
 
-#include <atomic>
 #include <mutex>
 #include <stdexcept>
 #include <utility>
 
 #include "product_http_routes.h"
-
-// TODO(agent): Build the fixed worker queue described in IMPLEMENTATION_PLAN.md; never share
-// ProductService or its connection-owning dependencies between HTTP workers.
 
 namespace sphinx {
 namespace {
@@ -53,31 +49,64 @@ struct ProductHttpServer::Impl {
   MySqlRuntime mysql_runtime;
   httplib::Server server;
   std::mutex state_mutex;
-  std::atomic<bool> stopping{false};
+  bool stopping = false;
+  bool serve_called = false;
 };
 
 ProductHttpServer::ProductHttpServer(ProductHttpConfig config)
     : _impl{std::make_unique<Impl>(checked_config(std::move(config)))} {
-  // TODO(agent): Configure server max payload 64 KiB, 2-second read/write timeouts, and the
-  // bounded fixed worker queue. MySqlRuntime is already initialized in Impl before workers.
+  _impl->server.set_payload_max_length(65536);
+  _impl->server.set_read_timeout(2, 0);
+  _impl->server.set_write_timeout(2, 0);
+  const auto worker_count = _impl->config.worker_count;
+  _impl->server.new_task_queue = [worker_count] {
+    return new httplib::ThreadPool{worker_count, worker_count, 256};
+  };
 }
 
 ProductHttpServer::~ProductHttpServer() = default;
 
 bool ProductHttpServer::serve() {
-  // TODO(agent): Call install_product_routes(server, current_service) from product_http_routes.h;
-  // current_service lazily creates a thread_local WorkerContext with its own guard, store, cache
-  // and service. Set server.new_task_queue to a bounded fixed httplib::ThreadPool(n, n, 256).
-  // Under state_mutex, check stopping then call server.bind_to_port; unlock before
-  // server.listen_after_bind() blocks. Return false on actual bind/listen failure, true on a
-  // requested stop. This ordering closes the pre-listen stop race. No shared MYSQL/socket handle.
-  return false;
+  {
+    std::lock_guard<std::mutex> lock{_impl->state_mutex};
+    if (_impl->serve_called) {
+      throw std::logic_error{"ProductHttpServer::serve may only be called once"};
+    }
+    _impl->serve_called = true;
+    if (_impl->stopping) {
+      return true;
+    }
+  }
+
+  const auto* config = &_impl->config;
+  install_product_routes(_impl->server, [config]() -> ProductService& {
+    thread_local std::unique_ptr<WorkerContext> context;
+    if (!context) {
+      context = std::make_unique<WorkerContext>(*config);
+    }
+    return context->service;
+  });
+
+  {
+    std::lock_guard<std::mutex> lock{_impl->state_mutex};
+    if (_impl->stopping) {
+      return true;
+    }
+    if (!_impl->server.bind_to_port(_impl->config.bind_address,
+                                    static_cast<int>(_impl->config.port))) {
+      return false;
+    }
+  }
+
+  const bool listen_result = _impl->server.listen_after_bind();
+  std::lock_guard<std::mutex> lock{_impl->state_mutex};
+  return _impl->stopping || listen_result;
 }
 
 void ProductHttpServer::stop() noexcept {
-  // TODO(agent): Under state_mutex set stopping=true, then call server.stop() even if serve() has
-  // only bound its socket. This prevents a stop-before-bind race. serve() joins workers before it
-  // returns. Make repeated calls safe. Never allocate or throw in this operation.
+  std::lock_guard<std::mutex> lock{_impl->state_mutex};
+  _impl->stopping = true;
+  _impl->server.stop();
 }
 
 }  // namespace sphinx
