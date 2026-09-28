@@ -14,7 +14,7 @@
 #include <stdexcept>
 #include <thread>
 
-// This optional target is wired to libmysqlclient. Keep the MySQL C API private to this file, and
+// This optional target links the MySQL client library. Keep its C API private to this file, and
 // keep credentials, query text, and user input out of StoreError::what().
 
 namespace sphinx {
@@ -223,7 +223,10 @@ struct MySqlProductStore::Impl {
       return 0;
     }
     reset_connection();
-    return reset_error != 0 ? reset_error : (free_error != 0 ? free_error : 1);
+    if (reset_error != 0) {
+      return reset_error;
+    }
+    return free_error != 0 ? free_error : 1;
   }
 
   [[noreturn]] void throw_statement_error(MYSQL_STMT* statement, const char* message) {
@@ -352,7 +355,7 @@ struct MySqlProductStore::Impl {
 };
 
 MySqlRuntime::MySqlRuntime() {
-  std::lock_guard<std::mutex> lock{runtime_mutex};
+  std::lock_guard lock{runtime_mutex};
   if (library_initialized) {
     throw StoreError{StoreErrorCode::Unexpected, "MySQL runtime already exists"};
   }
@@ -363,7 +366,7 @@ MySqlRuntime::MySqlRuntime() {
 }
 
 MySqlRuntime::~MySqlRuntime() {
-  std::lock_guard<std::mutex> lock{runtime_mutex};
+  std::lock_guard lock{runtime_mutex};
   if (active_thread_guards != 0) {
     std::terminate();
   }
@@ -374,7 +377,7 @@ MySqlRuntime::~MySqlRuntime() {
 }
 
 MySqlThreadGuard::MySqlThreadGuard() {
-  std::lock_guard<std::mutex> lock{runtime_mutex};
+  std::lock_guard lock{runtime_mutex};
   if (!library_initialized || current_thread_has_guard) {
     throw StoreError{StoreErrorCode::Unexpected, "invalid MySQL thread initialization order"};
   }
@@ -387,7 +390,7 @@ MySqlThreadGuard::MySqlThreadGuard() {
 
 MySqlThreadGuard::~MySqlThreadGuard() {
   assert(current_thread_has_guard);
-  std::lock_guard<std::mutex> lock{runtime_mutex};
+  std::lock_guard lock{runtime_mutex};
   mysql_thread_end();
   current_thread_has_guard = false;
   assert(active_thread_guards > 0);

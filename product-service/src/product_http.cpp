@@ -27,8 +27,7 @@ ProductHttpConfig checked_config(ProductHttpConfig config) {
 
 struct WorkerContext final {
   explicit WorkerContext(const ProductHttpConfig& config)
-      : thread_guard{},
-        store{config.mysql},
+      : store{config.mysql},
         cache{config.cache_nodes, config.cache_timeout},
         service{store, cache, config.cache_policy} {}
 
@@ -68,7 +67,7 @@ ProductHttpServer::~ProductHttpServer() = default;
 
 bool ProductHttpServer::serve() {
   {
-    std::lock_guard<std::mutex> lock{_impl->state_mutex};
+    std::lock_guard lock{_impl->state_mutex};
     if (_impl->serve_called) {
       throw std::logic_error{"ProductHttpServer::serve may only be called once"};
     }
@@ -88,23 +87,22 @@ bool ProductHttpServer::serve() {
   });
 
   {
-    std::lock_guard<std::mutex> lock{_impl->state_mutex};
+    std::lock_guard lock{_impl->state_mutex};
     if (_impl->stopping) {
       return true;
     }
-    if (!_impl->server.bind_to_port(_impl->config.bind_address,
-                                    static_cast<int>(_impl->config.port))) {
+    if (!_impl->server.bind_to_port(_impl->config.bind_address, _impl->config.port)) {
       return false;
     }
   }
 
   const bool listen_result = _impl->server.listen_after_bind();
-  std::lock_guard<std::mutex> lock{_impl->state_mutex};
+  std::lock_guard lock{_impl->state_mutex};
   return _impl->stopping || listen_result;
 }
 
 void ProductHttpServer::stop() noexcept {
-  std::lock_guard<std::mutex> lock{_impl->state_mutex};
+  std::lock_guard lock{_impl->state_mutex};
   _impl->stopping = true;
   _impl->server.stop();
 }
