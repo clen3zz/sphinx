@@ -2,6 +2,8 @@
 #include <sphinx/product_codec.h>
 #include <sphinx/product_service.h>
 
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -74,7 +76,8 @@ GetProductResult ProductService::get(std::uint64_t id, bool bypass_cache) {
 }
 
 UpdateProductResult ProductService::update(const UpdateProductRequest& request) {
-  if (request.id == 0 || request.expected_version == 0 || request.expected_version == UINT64_MAX ||
+  if (request.id == 0 || request.expected_version == 0 ||
+      request.expected_version == std::numeric_limits<std::uint64_t>::max() ||
       !valid_product(Product{request.id, request.name, request.price_cents, 1})) {
     return {ProductStatus::InvalidArgument, std::nullopt, false};
   }

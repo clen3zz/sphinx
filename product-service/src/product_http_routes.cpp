@@ -2,7 +2,6 @@
 #include "product_http_routes.h"
 
 #include <sphinx/product.h>
-#include <sphinx/product_store.h>
 
 #include <charconv>
 #include <cstdint>
@@ -218,7 +217,8 @@ std::optional<UpdateProductRequest> parse_update_request(const httplib::Request&
                                                          std::uint64_t id) {
   bool duplicate_key = false;
   std::unordered_set<std::string> keys;
-  const auto callback = [&duplicate_key, &keys](int, Json::parse_event_t event, Json& parsed) {
+  const auto callback = [&duplicate_key, &keys](int, Json::parse_event_t event,
+                                                const Json& parsed) {
     if (event == Json::parse_event_t::key && !keys.insert(parsed.get<std::string>()).second) {
       duplicate_key = true;
       return false;
@@ -248,7 +248,7 @@ std::optional<UpdateProductRequest> parse_update_request(const httplib::Request&
   return UpdateProductRequest{id, std::move(name), price_cents, expected_version};
 }
 
-void handle_get_result(httplib::Response& response, GetProductResult result) {
+void handle_get_result(httplib::Response& response, const GetProductResult& result) {
   response.set_header("X-Cache", cache_source_name(result.cache_source));
   if (result.status != ProductStatus::Ok) {
     set_product_status_error(response, result.status);
@@ -261,7 +261,7 @@ void handle_get_result(httplib::Response& response, GetProductResult result) {
   set_product_response(response, *result.product);
 }
 
-void handle_update_result(httplib::Response& response, UpdateProductResult result,
+void handle_update_result(httplib::Response& response, const UpdateProductResult& result,
                           std::uint64_t id) {
   if (result.cache_invalidation_failed) {
     response.set_header("X-Cache-Invalidation", "failed");

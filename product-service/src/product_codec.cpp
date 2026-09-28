@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <sphinx/product_codec.h>
 
+#include <cstdint>
 #include <stdexcept>
 
 namespace sphinx {
@@ -18,13 +19,13 @@ bool valid_utf8_name(std::string_view bytes) noexcept {
       code_point = first;
       width = 1;
     } else if (first >= 0xC2 && first <= 0xDF) {
-      code_point = first & 0x1F;
+      code_point = static_cast<std::uint32_t>(first) & 0x1FU;
       width = 2;
     } else if (first >= 0xE0 && first <= 0xEF) {
-      code_point = first & 0x0F;
+      code_point = static_cast<std::uint32_t>(first) & 0x0FU;
       width = 3;
     } else if (first >= 0xF0 && first <= 0xF4) {
-      code_point = first & 0x07;
+      code_point = static_cast<std::uint32_t>(first) & 0x07U;
       width = 4;
     } else {
       return false;
@@ -34,10 +35,10 @@ bool valid_utf8_name(std::string_view bytes) noexcept {
     }
     for (std::size_t j = 1; j < width; ++j) {
       const auto next = static_cast<unsigned char>(bytes[i + j]);
-      if ((next & 0xC0) != 0x80) {
+      if ((static_cast<std::uint32_t>(next) & 0xC0U) != 0x80U) {
         return false;
       }
-      code_point = (code_point << 6U) | (next & 0x3F);
+      code_point = (code_point << 6U) | (static_cast<std::uint32_t>(next) & 0x3FU);
     }
     if ((width == 2 && code_point < 0x80) || (width == 3 && code_point < 0x800) ||
         (width == 4 && code_point < 0x10000) || (code_point >= 0xD800 && code_point <= 0xDFFF) ||
