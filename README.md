@@ -78,6 +78,7 @@ printf 'set key 0 0 5\r\nhello\r\nget key\r\n' | nc -N 127.0.0.1 11211
 ## 相关文档
 
 - [核心调用链导读](docs/CALL_CHAIN.md)
+- [MySQL + Sphinx 商品服务架构与后续实现计划](IMPLEMENTATION_PLAN.md)：MySQL 保存商品权威数据，Sphinx 仅作可丢弃缓存；默认构建包含接口和服务核心，可选 HTTP/MySQL 适配器按计划补齐。
 - [性能基准测试报告](docs/BENCHMARK.md)
 - [团队代码与命名规范](docs/CODING_STANDARDS.md)
 
