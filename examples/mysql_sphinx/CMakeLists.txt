@@ -22,25 +22,19 @@ if (BUILD_MYSQL_SPHINX_DEMO)
     pkg_check_modules(MYSQLCLIENT REQUIRED IMPORTED_TARGET mysqlclient)
     include(FetchContent)
 
-    FetchContent_Declare(cpp_httplib
+    # Header-only dependencies: populate sources without adding their own CMake projects.
+    # The full-argument form also remains valid with the root project's CMake 3.16 minimum.
+    FetchContent_Populate(cpp_httplib
             GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
             GIT_TAG v0.56.0
             GIT_SHALLOW TRUE)
-    FetchContent_GetProperties(cpp_httplib)
-    if (NOT cpp_httplib_POPULATED)
-        FetchContent_Populate(cpp_httplib)
-    endif ()
     add_library(sphinx_httplib INTERFACE)
     target_include_directories(sphinx_httplib INTERFACE ${cpp_httplib_SOURCE_DIR})
 
-    FetchContent_Declare(nlohmann_json
+    FetchContent_Populate(nlohmann_json
             GIT_REPOSITORY https://github.com/nlohmann/json.git
             GIT_TAG v3.12.0
             GIT_SHALLOW TRUE)
-    FetchContent_GetProperties(nlohmann_json)
-    if (NOT nlohmann_json_POPULATED)
-        FetchContent_Populate(nlohmann_json)
-    endif ()
     add_library(sphinx_json INTERFACE)
     target_include_directories(sphinx_json INTERFACE ${nlohmann_json_SOURCE_DIR}/include)
 
@@ -65,6 +59,7 @@ if (BUILD_MYSQL_SPHINX_DEMO)
                 COMMAND sphinx_mysql_product_integration_tests)
     endif ()
 
+    find_package(Python3 COMPONENTS Interpreter QUIET)
     if (Python3_Interpreter_FOUND)
         add_test(NAME sphinx_product_http_integration_test
                 COMMAND ${Python3_EXECUTABLE}

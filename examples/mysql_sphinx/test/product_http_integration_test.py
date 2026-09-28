@@ -2,7 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Black-box acceptance skeleton for the optional MySQL + Sphinx product service."""
 
+import sys
 import unittest
+from pathlib import Path
+
+
+SPHINXD_BINARY = None
+PRODUCT_SERVICE_BINARY = None
 
 
 @unittest.skip("TODO(agent): provision disposable MySQL and sphinxd, then enable")
@@ -27,4 +33,8 @@ class ProductHttpIntegrationTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    if len(sys.argv) != 3:
+        raise SystemExit("usage: product_http_integration_test.py SPHINXD PRODUCT_SERVICE")
+    SPHINXD_BINARY = Path(sys.argv[1])
+    PRODUCT_SERVICE_BINARY = Path(sys.argv[2])
+    unittest.main(argv=[sys.argv[0]])
