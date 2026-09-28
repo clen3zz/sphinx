@@ -15,5 +15,16 @@ fi
 
 jobs=$(nproc 2>/dev/null || echo 4)
 
-find sphinxd/src -type f -name "*.cpp" -print0 |
+python3 - "$build_dir/compile_commands.json" <<'PY' |
+import json
+import os
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    commands = json.load(source)
+for command in commands:
+    path = os.path.realpath(command["file"])
+    if "/sphinxd/src/" in path or "/examples/mysql_sphinx/src/" in path:
+        print(path, end="\0")
+PY
   xargs -0 -r -P "$jobs" -n 1 clang-tidy --quiet --config-file=.clang-tidy -p "$build_dir"

@@ -51,6 +51,7 @@ TCP 客户端
 
 脚本会安装编译器、CMake、Ninja、ccache、GoogleTest、Python 和网络测试所需工具。
 `memtier_benchmark` 仅用于可选的基准测试，不属于核心构建依赖。
+MySQL 商品服务另需 MySQL 服务端、`libmysqlclient` 开发包；HTTP 和 JSON 头文件由启用该示例时的 CMake 获取。
 
 ### 编译与测试
 
@@ -60,6 +61,30 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
 ```
+
+### MySQL + Sphinx 商品服务（可选）
+
+MySQL 是商品记录的权威存储，Sphinx 是可重建的读取缓存。启用示例后会生成
+`sphinx-product-service`。该服务通过 `SPHINX_MYSQL_USER`、`SPHINX_MYSQL_PASSWORD`、
+`SPHINX_MYSQL_DATABASE` 连接数据库；可选配置包括 `SPHINX_MYSQL_HOST`、
+`SPHINX_MYSQL_PORT`、`SPHINX_CACHE_NODES`、`SPHINX_HTTP_BIND` 和 `SPHINX_HTTP_PORT`。
+
+```bash
+cmake -S . -B build -G Ninja -DBUILD_MYSQL_SPHINX_DEMO=ON
+cmake --build build -j"$(nproc)"
+# 先启动 Sphinx，并配置上述 SPHINX_MYSQL_* 变量，再启动 HTTP 服务
+./build/examples/mysql_sphinx/sphinx-product-service
+```
+
+真实数据库验收使用独立的临时库，库名需包含 `test`，并设置
+`SPHINX_TEST_MYSQL_HOST`、`SPHINX_TEST_MYSQL_PORT`、`SPHINX_TEST_MYSQL_USER`、
+`SPHINX_TEST_MYSQL_PASSWORD`、`SPHINX_TEST_MYSQL_DATABASE`。随后运行：
+
+```bash
+./scripts/verify_mysql_sphinx.sh build
+```
+
+普通 `ctest` 在未配置数据库时会跳过相应集成用例；只有上面的严格验收脚本成功，才表示数据库和 HTTP 集成用例实际执行通过。
 
 ### 运行体验
 
@@ -78,7 +103,7 @@ printf 'set key 0 0 5\r\nhello\r\nget key\r\n' | nc -N 127.0.0.1 11211
 ## 相关文档
 
 - [核心调用链导读](docs/CALL_CHAIN.md)
-- [MySQL + Sphinx 商品服务架构与后续实现计划](IMPLEMENTATION_PLAN.md)：MySQL 保存商品权威数据，Sphinx 仅作可丢弃缓存；默认构建包含接口和服务核心，可选 HTTP/MySQL 适配器按计划补齐。
+- [MySQL + Sphinx 商品服务实现计划](IMPLEMENTATION_PLAN.md)：记录架构、接口与实现任务；HTTP/MySQL 适配器由可选构建开关启用。
 - [性能基准测试报告](docs/BENCHMARK.md)
 - [团队代码与命名规范](docs/CODING_STANDARDS.md)
 
