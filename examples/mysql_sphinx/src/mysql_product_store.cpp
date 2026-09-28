@@ -2,20 +2,75 @@
 #include <mysql.h>
 #include <sphinx/mysql_product_store.h>
 
+#include <cassert>
+#include <exception>
+#include <mutex>
+#include <thread>
+
 // TODO(agent): This optional target is wired to libmysqlclient. Use mysql.h here only; never
 // include it in the public header. Follow the exact prepared-statement and transaction sequence
 // in IMPLEMENTATION_PLAN.md. Never put credentials or SQL input into StoreError::what().
 
 namespace sphinx {
+namespace {
+
+std::mutex runtime_mutex;
+bool library_initialized = false;
+std::size_t active_thread_guards = 0;
+thread_local bool current_thread_has_guard = false;
+
+bool has_embedded_nul(const std::string& value) noexcept {
+  return value.find('\0') != std::string::npos;
+}
+
+void validate_options(const MySqlOptions& options) {
+  if (options.host.empty() || options.user.empty() || options.database.empty() ||
+      options.port == 0 || options.connect_timeout_seconds == 0 ||
+      options.read_timeout_seconds == 0 || options.write_timeout_seconds == 0 ||
+      has_embedded_nul(options.host) || has_embedded_nul(options.user) ||
+      has_embedded_nul(options.password) || has_embedded_nul(options.database)) {
+    throw std::invalid_argument{"invalid MySQL connection options"};
+  }
+}
+
+}  // namespace
 
 struct MySqlProductStore::Impl {
-  explicit Impl(const MySqlOptions& source_options) : options{source_options} {}
+  explicit Impl(const MySqlOptions& source_options)
+      : options{source_options}, owner_thread{std::this_thread::get_id()} {}
+
   ~Impl() {
-    // TODO(agent): Close find/lock/update statements first, then connection. Set all handles to
-    // nullptr. Never close a MYSQL handle from a thread other than its owning HTTP worker.
+    assert(owner_thread == std::this_thread::get_id());
+    reset_connection();
+  }
+
+  void check_owner() const {
+    if (owner_thread != std::this_thread::get_id()) {
+      throw StoreError{StoreErrorCode::Unexpected, "MySQL store used from a non-owner thread"};
+    }
+  }
+
+  void reset_connection() noexcept {
+    if (find_statement != nullptr) {
+      mysql_stmt_close(find_statement);
+      find_statement = nullptr;
+    }
+    if (lock_statement != nullptr) {
+      mysql_stmt_close(lock_statement);
+      lock_statement = nullptr;
+    }
+    if (update_statement != nullptr) {
+      mysql_stmt_close(update_statement);
+      update_statement = nullptr;
+    }
+    if (connection != nullptr) {
+      mysql_close(connection);
+      connection = nullptr;
+    }
   }
 
   MySqlOptions options;
+  const std::thread::id owner_thread;
   MYSQL* connection = nullptr;
   MYSQL_STMT* find_statement = nullptr;
   MYSQL_STMT* lock_statement = nullptr;
@@ -23,29 +78,54 @@ struct MySqlProductStore::Impl {
 };
 
 MySqlRuntime::MySqlRuntime() {
-  // TODO(agent): Call mysql_library_init before any worker starts; on failure throw
-  // StoreError(Unexpected). Enforce exactly one runtime in this process.
-  throw StoreError{StoreErrorCode::Unexpected, "MySQL runtime implementation pending"};
+  std::lock_guard<std::mutex> lock{runtime_mutex};
+  if (library_initialized) {
+    throw StoreError{StoreErrorCode::Unexpected, "MySQL runtime already exists"};
+  }
+  if (mysql_library_init(0, nullptr, nullptr) != 0) {
+    throw StoreError{StoreErrorCode::Unexpected, "MySQL client library initialization failed"};
+  }
+  library_initialized = true;
 }
 
 MySqlRuntime::~MySqlRuntime() {
-  // TODO(agent): Call mysql_library_end after all worker thread guards have been destroyed.
+  std::lock_guard<std::mutex> lock{runtime_mutex};
+  if (active_thread_guards != 0) {
+    std::terminate();
+  }
+  if (library_initialized) {
+    mysql_library_end();
+    library_initialized = false;
+  }
 }
 
 MySqlThreadGuard::MySqlThreadGuard() {
-  // TODO(agent): Call mysql_thread_init on this worker; throw StoreError(Unexpected) on failure.
+  std::lock_guard<std::mutex> lock{runtime_mutex};
+  if (!library_initialized || current_thread_has_guard) {
+    throw StoreError{StoreErrorCode::Unexpected, "invalid MySQL thread initialization order"};
+  }
+  if (mysql_thread_init() != 0) {
+    throw StoreError{StoreErrorCode::Unexpected, "MySQL thread initialization failed"};
+  }
+  current_thread_has_guard = true;
+  ++active_thread_guards;
 }
 
 MySqlThreadGuard::~MySqlThreadGuard() {
-  // TODO(agent): Call mysql_thread_end on the same worker after its store has been destroyed.
+  assert(current_thread_has_guard);
+  std::lock_guard<std::mutex> lock{runtime_mutex};
+  mysql_thread_end();
+  current_thread_has_guard = false;
+  assert(active_thread_guards > 0);
+  --active_thread_guards;
 }
 
-MySqlProductStore::MySqlProductStore(const MySqlOptions& options)
-    : _impl{std::make_unique<Impl>(options)} {
-  // TODO(agent): Validate nonempty user/database and positive port/timeouts; copy options into
-  // Impl. Do not connect yet: a cache hit must work even if MySQL is down. On first find/update,
-  // connect with explicit timeouts, utf8mb4 and autocommit ON. Never share this connection.
-  (void)options;
+MySqlProductStore::MySqlProductStore(const MySqlOptions& options) : _impl{nullptr} {
+  validate_options(options);
+  if (!current_thread_has_guard) {
+    throw StoreError{StoreErrorCode::Unexpected, "MySQL store requires a thread guard"};
+  }
+  _impl = std::make_unique<Impl>(options);
 }
 
 MySqlProductStore::~MySqlProductStore() = default;

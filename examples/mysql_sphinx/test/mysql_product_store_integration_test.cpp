@@ -25,6 +25,30 @@ extern "C" CommitReturn __wrap_mysql_commit(MYSQL* connection) {
 
 namespace {
 
+TEST(MySqlRuntimeTest, InitializesBeforeWorkerThreadAndAllowsSequentialLifetimes) {
+  {
+    sphinx::MySqlRuntime runtime;
+    {
+      sphinx::MySqlThreadGuard worker;
+    }
+  }
+  {
+    sphinx::MySqlRuntime runtime;
+    sphinx::MySqlThreadGuard worker;
+  }
+}
+
+TEST(MySqlRuntimeTest, StoreRequiresWorkerGuardAndValidOptions) {
+  sphinx::MySqlRuntime runtime;
+  const sphinx::MySqlOptions options{"127.0.0.1", 3306, "test", "", "sphinx_test"};
+  EXPECT_THROW(sphinx::MySqlProductStore store{options}, sphinx::StoreError);
+  sphinx::MySqlThreadGuard worker;
+  EXPECT_NO_THROW(sphinx::MySqlProductStore store{options});
+  auto invalid_options = options;
+  invalid_options.host.clear();
+  EXPECT_THROW(sphinx::MySqlProductStore store{invalid_options}, std::invalid_argument);
+}
+
 TEST(MySqlProductStoreIntegrationTest, ReadsExistingAndMissingProducts) {
   // TODO(agent): Require SPHINX_TEST_MYSQL_* fixture variables or GTEST_SKIP. Create a unique
   // fixture row in a disposable test schema; verify exact 64-bit values, valid UTF-8, and nullopt
