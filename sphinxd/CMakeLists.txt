@@ -63,10 +63,12 @@ target_link_libraries(sphinx_cluster_client_integration_driver PRIVATE sphinx_co
 
 if (GTEST_FOUND)
     add_executable(sphinxd_tests
+            src/server/connection.cpp
             test/buffer_test.cpp
             test/index_test.cpp
             test/cluster_test.cpp
             test/cluster_client_test.cpp
+            test/connection_test.cpp
             test/logmem_test.cpp
             test/main.cpp
             test/protocol_test.cpp
@@ -76,6 +78,7 @@ if (GTEST_FOUND)
             test/string_test.cpp
     )
     target_link_libraries(sphinxd_tests PRIVATE sphinx_core ${GTEST_BOTH_LIBRARIES} pthread)
+    target_include_directories(sphinxd_tests PRIVATE src/server)
     add_test(sphinxd_tests sphinxd_tests)
 endif ()
 

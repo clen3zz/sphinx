@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "server.h"
 
+#include <unistd.h>
+
 #include <chrono>
 #include <cstdlib>
-#include <iostream>
 #include <limits>
 #include <type_traits>
 #include <utility>
@@ -45,6 +46,26 @@ void Server::on_message(const MessagePtr& data) {
     return;
   }
 
+  if (auto overload = std::dynamic_pointer_cast<ReactorOverload>(data)) {
+    const auto close_victim = [this](const std::shared_ptr<Connection>& connection) {
+      if (const auto socket = connection->socket()) {
+        close_connection(connection, socket);
+      } else {
+        connection->mark_closed();
+        remove_connection(connection);
+      }
+    };
+    if (overload->close_all) {
+      while (!_connections.empty()) {
+        close_victim(_connections.begin()->second);
+      }
+    } else if (const auto it = _connections.find(overload->connection_id);
+               it != _connections.end()) {
+      close_victim(it->second);
+    }
+    return;
+  }
+
   // 根据消息的实际类型分别分发给命令处理或响应处理
   if (auto command = std::dynamic_pointer_cast<Command>(data)) {
     handle_command(*command);
@@ -68,6 +89,11 @@ void Server::handle_response(const Response& response) {
 
 // 接收并初始化新的客户端连接
 void Server::accept(int sockfd) {
+  constexpr size_t max_worker_connections = 1024;
+  if (_connections.size() >= max_worker_connections) {
+    ::close(sockfd);
+    return;
+  }
   // 1. 分配非零且唯一的连接 ID
   auto connection_id = _next_connection_id++;
   while (connection_id == 0 || _connections.find(connection_id) != _connections.end()) {
@@ -109,6 +135,10 @@ void Server::recv(const std::shared_ptr<Connection>& connection,
 
   // 4. 循环解析并处理所有完整的命令帧
   while (true) {
+    if (connection->too_many_in_flight()) {
+      close_connection(connection, socket);
+      return;
+    }
     const auto view = connection->receive_buffer().string_view();
     const auto line_end = view.find('\n');
     if (line_end == std::string_view::npos) {
@@ -122,6 +152,9 @@ void Server::recv(const std::shared_ptr<Connection>& connection,
 
     // 尝试解析并执行单条命令
     const auto consumed = process_one(connection, view);
+    if (connection->closed()) {
+      return;
+    }
     if (consumed == std::numeric_limits<size_t>::max()) {
       close_connection(connection, socket);
       return;
@@ -230,6 +263,12 @@ void Server::process_get_command(const std::shared_ptr<Connection>& connection, 
   }
 
   _stats->increment(ServerStats::Counter::CmdGet);
+
+  constexpr size_t max_multi_get_keys = 256;
+  if (command.keys.size() > max_multi_get_keys) {
+    enqueue_response(connection, sequence, "CLIENT_ERROR too many keys\r\n");
+    return;
+  }
 
   if (command.keys.size() == 1) {
     dispatch_command(make_command(connection, sequence, Opcode::Get, command.keys.front()));
@@ -351,20 +390,12 @@ void Server::send_response(size_t response_thread, uint64_t connection_id, uint6
   const auto message = std::make_shared<Response>(connection_id, sequence, std::string{payload},
                                                   multi_get, key_index);
 
-  // 优先采用延迟投递，避免数据线程阻塞等待连接线程
+  // A bounded mailbox may reject a response. The out-of-band notice then closes the owning
+  // connection, cancelling its remaining in-flight requests without killing the whole process.
   if (_reactor->send_msg_deferred(response_thread, message)) {
     return;
   }
-
-  // 回退至有界同步队列再次尝试
-  if (_reactor->send_msg(response_thread, message)) {
-    return;
-  }
-
-  // 双重投递皆失败属于不可恢复的致命状态，终止进程以防止响应滞留死锁
-  std::cerr << "fatal: response delivery failed for connection " << connection_id << '\n'
-            << std::flush;
-  std::terminate();
+  _reactor->notify_overload(response_thread, connection_id);
 }
 
 // 记录 multi-get 聚合结果，所有分片就绪后写出完整响应
@@ -389,6 +420,13 @@ void Server::enqueue_response(const std::shared_ptr<Connection>& connection, uin
     }
   } else if (status == Connection::WriteStatus::SocketUnavailable) {
     remove_connection(connection);
+  } else if (status == Connection::WriteStatus::ResourceLimit) {
+    if (const auto socket = connection->socket()) {
+      close_connection(connection, socket);
+    } else {
+      connection->mark_closed();
+      remove_connection(connection);
+    }
   }
 }
 

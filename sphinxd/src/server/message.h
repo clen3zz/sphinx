@@ -30,6 +30,10 @@ struct Command : Message {
         source_thread{thread},
         op{opcode},
         key{std::move(command_key)} {}
+
+  size_t queued_bytes() const noexcept override {
+    return sizeof(Command) + key.size() + blob.size();
+  }
 };
 
 // 跨线程响应消息：统一表示单个命令的完整响应或 multi-get 命令的子分片响应
@@ -47,6 +51,8 @@ struct Response : Message {
         payload{std::move(response_payload)},
         multi_get{is_multi_get},
         key_index{response_key_index} {}
+
+  size_t queued_bytes() const noexcept override { return sizeof(Response) + payload.size(); }
 };
 
 }  // namespace sphinx

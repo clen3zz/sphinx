@@ -6,6 +6,7 @@
 #include <atomic>
 #include <bitset>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -18,6 +19,15 @@ namespace sphinx {
 class Message {
  public:
   virtual ~Message() = default;
+  // Approximate retained heap bytes while the message is queued. Implementations with owning
+  // payloads must include those payloads; the queue charges this before publishing the message.
+  virtual size_t queued_bytes() const noexcept { return sizeof(Message); }
+};
+
+// An out-of-band mailbox overflow notice. Only the destination Reactor delivers it.
+struct ReactorOverload final : Message {
+  uint64_t connection_id = 0;
+  bool close_all = false;
 };
 
 // 消息使用引用计数管理，因此非延迟发送失败时调用方对象保持不变。
@@ -97,6 +107,7 @@ class TcpSocket : public Socket, public std::enable_shared_from_this<TcpSocket> 
 
 constexpr int max_nr_threads = 64;
 constexpr size_t reactor_message_queue_size = 10000;
+constexpr size_t max_connection_response_bytes = size_t{8} * 1024 * 1024 + size_t{64} * 1024;
 
 // 反应堆组拥有一组反应堆共享的全部状态。组边界是显式的：eventfd、有界通道
 // 和溢出邮箱与组保持相同生命周期，而不是存放在进程级 Reactor 静态变量中。
@@ -137,6 +148,7 @@ class Reactor {
   size_t _nr_threads;                    // 反应堆组包含的总工作线程数
   std::bitset<max_nr_threads> _pending_wakeups;  // 记录待批量唤醒的目标对端线程位图
   OnMessageFn _on_message_fn;                    // 接收到跨线程消息时的业务处理回调
+  std::shared_ptr<ReactorOverload> _overload_message;
 
  public:
   static std::string default_backend();
@@ -149,6 +161,9 @@ class Reactor {
   // 延迟版本还会报告溢出邮箱分配失败。延迟发送失败时调用方必须完成或重试请求。
   bool send_msg(size_t remote_id, const MessagePtr& message);
   bool send_msg_deferred(size_t remote_id, const MessagePtr& message);
+  // A response rejected by the bounded mailbox must cancel its owning connection. This notice
+  // is out of band and remains deliverable even when the data queue is full.
+  void notify_overload(size_t remote_id, uint64_t connection_id);
   virtual void accept(std::shared_ptr<TcpListener>&& listener) = 0;
   virtual void recv(std::shared_ptr<Socket>&& socket) = 0;
   virtual void send(std::shared_ptr<Socket> socket) = 0;

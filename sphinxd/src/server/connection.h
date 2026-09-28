@@ -22,6 +22,7 @@ class Connection final {
     Complete,           // 写操作已全部完成或已交由 Reactor 异步处理
     SocketUnavailable,  // 底层 Socket 无法获取（已被释放）
     SocketClosed,       // 写入检测到 Socket 已关闭
+    ResourceLimit,      // 待发送响应超过单连接内存上限
   };
 
   explicit Connection(uint64_t id) : _id{id} {}
@@ -37,6 +38,8 @@ class Connection final {
     _closed = true;
     _pending_responses.clear();
     _pending_multi_gets.clear();
+    _pending_response_bytes = 0;
+    _pending_multi_get_bytes = 0;
   }
 
   // 设置关联的底层 TCP Socket 弱引用
@@ -53,6 +56,11 @@ class Connection final {
 
   // 生成递增的下一个请求序号
   uint64_t next_request_sequence() noexcept { return _next_request_sequence++; }
+
+  // 本线程独占 Connection；超过已验证的批量流水线规模后拒绝继续积压。
+  bool too_many_in_flight() const noexcept {
+    return _next_request_sequence - _next_response_sequence >= 16384;
+  }
 
   // 回滚请求序号（用于解析错误或失败回滚）
   void rollback_request_sequence() noexcept {
@@ -76,17 +84,21 @@ class Connection final {
   struct MultiGetState {
     size_t pending = 0;               // 剩余未到达的分片计数
     bool failed = false;              // 是否有任一分片执行失败
+    bool resource_limit = false;      // 聚合内存超限，完成后返回错误
+    size_t buffered_bytes = 0;        // 此请求当前持有的分片字节数
     std::vector<std::string> pieces;  // 已接收的分片数据缓存
   };
 
-  uint64_t _id;                                           // 连接全局唯一 ID
-  Buffer _receive_buffer;                                 // TCP 读入数据缓冲区
-  uint64_t _next_request_sequence = 0;                    // 下一个分发的请求序号
-  uint64_t _next_response_sequence = 0;                   // 期待写出的下一个响应序号
-  std::map<uint64_t, std::string> _pending_responses;     // 乱序到达暂存的响应队列
+  uint64_t _id;                                        // 连接全局唯一 ID
+  Buffer _receive_buffer;                              // TCP 读入数据缓冲区
+  uint64_t _next_request_sequence = 0;                 // 下一个分发的请求序号
+  uint64_t _next_response_sequence = 0;                // 期待写出的下一个响应序号
+  std::map<uint64_t, std::string> _pending_responses;  // 乱序到达暂存的响应队列
+  size_t _pending_response_bytes = 0;
   std::map<uint64_t, MultiGetState> _pending_multi_gets;  // 正在聚合的 multi-get 状态字典
-  std::weak_ptr<TcpSocket> _socket;                       // 底层套接字弱引用
-  bool _closed = false;                                   // 连接是否已关闭
+  size_t _pending_multi_get_bytes = 0;
+  std::weak_ptr<TcpSocket> _socket;  // 底层套接字弱引用
+  bool _closed = false;              // 连接是否已关闭
 };
 
 }  // namespace sphinx

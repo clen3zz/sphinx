@@ -16,6 +16,12 @@ struct IntMessage final : sphinx::Message {
   int value;
 };
 
+struct LargeMessage final : sphinx::Message {
+  explicit LargeMessage(size_t size) : payload(size, 'x') {}
+  size_t queued_bytes() const noexcept override { return sizeof(LargeMessage) + payload.size(); }
+  std::string payload;
+};
+
 class TestReactor final : public sphinx::EpollReactor {
  public:
   TestReactor(size_t thread_id, std::shared_ptr<sphinx::ReactorGroup> group,
@@ -82,6 +88,45 @@ TEST(ReactorTest, groupsOwnIndependentMessageChannels) {
   ASSERT_TRUE(first_target.poll_messages());
   ASSERT_FALSE(second_target.poll_messages());
   ASSERT_EQ(received, 1U);
+}
+
+TEST(ReactorTest, channelRejectsExcessBytesAndDeliversOverloadNotice) {
+  size_t received = 0;
+  bool overloaded = false;
+  auto group = std::make_shared<sphinx::ReactorGroup>(2);
+  TestReactor source{0, group, [](const sphinx::MessagePtr&) {}};
+  TestReactor target{
+      1, group, [&](const sphinx::MessagePtr& message) {
+        if (auto notice = std::dynamic_pointer_cast<sphinx::ReactorOverload>(message)) {
+          overloaded = notice->connection_id == 42 && !notice->close_all;
+        } else {
+          received++;
+        }
+      }};
+  auto large = std::make_shared<LargeMessage>(size_t{9} * 1024 * 1024);
+  ASSERT_TRUE(source.send_msg_deferred(1, large));
+  ASSERT_FALSE(source.send_msg_deferred(1, large));
+  source.notify_overload(1, 42);
+  ASSERT_TRUE(target.poll_messages());
+  EXPECT_TRUE(overloaded);
+  EXPECT_EQ(received, 1U);
+  EXPECT_TRUE(source.send_msg_deferred(1, large));
+  EXPECT_TRUE(target.poll_messages());
+}
+
+TEST(ReactorTest, tcpSocketClosesWhenUnsentBytesExceedLimit) {
+  int fds[2];
+  ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, fds), 0);
+  int send_buffer_size = 1024;
+  ASSERT_EQ(setsockopt(fds[0], SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof(send_buffer_size)),
+            0);
+  auto socket = std::make_shared<sphinx::TcpSocket>(
+      fds[0], [](const std::shared_ptr<sphinx::TcpSocket>&, std::string_view) {});
+  std::string payload(sphinx::max_connection_response_bytes, 'x');
+  ASSERT_FALSE(socket->send(payload.data(), payload.size()));
+  EXPECT_TRUE(socket->send(payload.data(), payload.size()));
+  EXPECT_TRUE(socket->closed());
+  close(fds[1]);
 }
 
 TEST(ReactorTest, tcpSocketDrainsPartialNonblockingWrites) {

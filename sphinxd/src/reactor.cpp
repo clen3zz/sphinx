@@ -173,10 +173,18 @@ bool TcpSocket::send(const char* msg, size_t len) {
     return true;
   }
 
+  const auto queue_remainder = [this](const char* begin, size_t size) {
+    if (size > max_connection_response_bytes - _tx_buf.size()) {
+      _closed = true;
+      return true;
+    }
+    _tx_buf.insert(_tx_buf.end(), begin, begin + size);
+    return false;
+  };
+
   // 2. 若发送队列中已有积压数据，必须按序先排队后发送
   if (!_tx_buf.empty()) {
-    _tx_buf.insert(_tx_buf.end(), msg, msg + len);
-    return false;
+    return queue_remainder(msg, len);
   }
 
   // 3. 尝试非阻塞系统调用发送
@@ -193,8 +201,7 @@ bool TcpSocket::send(const char* msg, size_t len) {
 
   // 5. 内核发送缓冲区已满，将数据追加至发送缓冲区等待异步写就绪通知
   if (nr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-    _tx_buf.insert(_tx_buf.end(), msg, msg + len);
-    return false;
+    return queue_remainder(msg, len);
   }
 
   if (nr < 0) {
@@ -203,8 +210,7 @@ bool TcpSocket::send(const char* msg, size_t len) {
 
   // 6. 部分写入，将剩余未写完数据缓存至发送缓冲区
   if (nr == 0 || static_cast<size_t>(nr) < len) {
-    _tx_buf.insert(_tx_buf.end(), msg + nr, msg + len);
-    return false;
+    return queue_remainder(msg + nr, len - static_cast<size_t>(nr));
   }
 
   // 7. 全部数据均已成功写出
@@ -298,7 +304,12 @@ struct ReactorGroup::Channel {
   Queue<MessagePtr, reactor_message_queue_size> queue;  // 有界单生产者/单消费者无锁环形队列
   std::mutex overflow_mutex;                            // 保护溢出队列并发操作的互斥锁
   std::deque<MessagePtr> overflow;                      // 环形队列满时暂存积压消息的双端队列
+  std::atomic<size_t> queued_bytes{0};                  // 同时计入环形队列与溢出队列
+  std::atomic<uint64_t> overloaded_connection_id{0};
+  std::atomic<bool> close_all_connections{false};
 };
+
+constexpr size_t max_reactor_channel_bytes = size_t{16} * 1024 * 1024;
 
 // 校验线程数合法性
 static size_t checked_thread_count(size_t nr_threads) {
@@ -416,7 +427,8 @@ Reactor::Reactor(size_t thread_id, std::shared_ptr<ReactorGroup> group, OnMessag
     : _group{std::move(group)},
       _thread_id{thread_id},
       _nr_threads{0},
-      _on_message_fn{std::move(on_message_fn)} {
+      _on_message_fn{std::move(on_message_fn)},
+      _overload_message{std::make_shared<ReactorOverload>()} {
   // 1. 校验反应堆组有效性
   if (!_group) {
     throw std::invalid_argument("reactor group cannot be null");
@@ -447,6 +459,20 @@ bool Reactor::send_msg_deferred(size_t remote_id, const MessagePtr& message) {
   return send_msg_impl(remote_id, message, true);
 }
 
+void Reactor::notify_overload(size_t remote_id, uint64_t connection_id) {
+  if (remote_id == _thread_id || remote_id >= _nr_threads || connection_id == 0) {
+    throw std::invalid_argument("invalid reactor overload target");
+  }
+  auto& channel = _group->channel(remote_id, _thread_id);
+  uint64_t expected = 0;
+  if (!channel.overloaded_connection_id.compare_exchange_strong(expected, connection_id,
+                                                                std::memory_order_acq_rel) &&
+      expected != connection_id) {
+    channel.close_all_connections.store(true, std::memory_order_release);
+  }
+  _pending_wakeups.set(remote_id);
+}
+
 // 跨线程消息发送具体实现
 bool Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool defer_if_full) {
   // 1. 基础入参合法性校验（禁止向自身发消息，校验目标线程有效性及消息指针非空）
@@ -463,6 +489,14 @@ bool Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool de
     auto& channel = _group->channel(remote_id, _thread_id);
     std::scoped_lock const lock{channel.overflow_mutex};
 
+    const auto bytes = message->queued_bytes();
+    const auto used = channel.queued_bytes.load(std::memory_order_relaxed);
+    if (bytes > max_reactor_channel_bytes - used) {
+      return false;
+    }
+    // Charge before publishing: the consumer can dequeue immediately after try_to_emplace.
+    channel.queued_bytes.fetch_add(bytes, std::memory_order_relaxed);
+
     // 一旦出现溢出消息，后续消息也放入溢出队列，确保目的端观察到的顺序与队列保持严格一致
     if (channel.overflow.empty() && channel.queue.try_to_emplace(message)) {
       // 有界无锁环形队列已成功接纳该消息
@@ -470,9 +504,11 @@ bool Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool de
       try {
         channel.overflow.emplace_back(message);
       } catch (const std::bad_alloc&) {
+        channel.queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
         return false;
       }
     } else {
+      channel.queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
       return false;
     }
   }
@@ -515,6 +551,10 @@ bool Reactor::has_messages() const {
     }
 
     auto& channel = _group->channel(_thread_id, other);
+    if (channel.overloaded_connection_id.load(std::memory_order_acquire) != 0 ||
+        channel.close_all_connections.load(std::memory_order_acquire)) {
+      return true;
+    }
     // 1. 检查无锁 SPSC 环形队列中是否有消息
     if (channel.queue.front() != nullptr) {
       return true;
@@ -541,6 +581,16 @@ bool Reactor::poll_messages() {
 
     auto& channel = _group->channel(_thread_id, other);
 
+    const auto overloaded_id =
+        channel.overloaded_connection_id.exchange(0, std::memory_order_acq_rel);
+    const bool close_all = channel.close_all_connections.exchange(false, std::memory_order_acq_rel);
+    if (overloaded_id != 0 || close_all) {
+      _overload_message->connection_id = overloaded_id;
+      _overload_message->close_all = close_all;
+      received = true;
+      _on_message_fn(_overload_message);
+    }
+
     // 1. 优先消费无锁 SPSC 环形队列中的消息
     while (true) {
       auto* queued = channel.queue.front();
@@ -551,7 +601,9 @@ bool Reactor::poll_messages() {
       MessagePtr message = std::move(*queued);
       channel.queue.pop();
       received = true;
+      const auto bytes = message->queued_bytes();
       _on_message_fn(std::move(message));
+      channel.queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
     }
 
     // 2. 消费溢出队列中的积压消息
@@ -568,7 +620,9 @@ bool Reactor::poll_messages() {
       }
 
       received = true;
+      const auto bytes = message->queued_bytes();
       _on_message_fn(std::move(message));
+      channel.queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
     }
   }
 
