@@ -18,6 +18,8 @@ add_library(sphinx_core STATIC
         src/stats.cpp
         src/cluster.cpp
         src/cluster_client.cpp
+        src/cluster_resolver.cpp
+        src/cluster_transport.cpp
         src/logmem.cpp
         src/memory.cpp
         src/reactor.cpp
