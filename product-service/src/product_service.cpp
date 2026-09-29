@@ -8,6 +8,22 @@
 #include <utility>
 
 namespace sphinx {
+namespace {
+
+ProductStatus status_from_store_error(StoreErrorCode code) noexcept {
+  switch (code) {
+    case StoreErrorCode::Unavailable:
+      return ProductStatus::StoreUnavailable;
+    case StoreErrorCode::CommitUnknown:
+      return ProductStatus::CommitUnknown;
+    case StoreErrorCode::InvalidData:
+    case StoreErrorCode::Unexpected:
+      return ProductStatus::InternalError;
+  }
+  return ProductStatus::InternalError;
+}
+
+}  // namespace
 
 ProductService::ProductService(ProductStore& store, ProductCache& cache, ProductCachePolicy policy)
     : _store{store}, _cache{cache}, _policy{policy} {
@@ -50,16 +66,7 @@ GetProductResult ProductService::get(std::uint64_t id, bool bypass_cache) {
   try {
     product = _store.find(id);
   } catch (const StoreError& error) {
-    switch (error.code()) {
-      case StoreErrorCode::Unavailable:
-        return {ProductStatus::StoreUnavailable, std::nullopt, source};
-      case StoreErrorCode::CommitUnknown:
-        return {ProductStatus::CommitUnknown, std::nullopt, source};
-      case StoreErrorCode::InvalidData:
-      case StoreErrorCode::Unexpected:
-        return {ProductStatus::InternalError, std::nullopt, source};
-    }
-    return {ProductStatus::InternalError, std::nullopt, source};
+    return {status_from_store_error(error.code()), std::nullopt, source};
   }
   if (!product) {
     return {ProductStatus::NotFound, std::nullopt, source};
@@ -88,16 +95,7 @@ UpdateProductResult ProductService::update(const UpdateProductRequest& request) 
   try {
     store_result = _store.update(request);
   } catch (const StoreError& error) {
-    switch (error.code()) {
-      case StoreErrorCode::Unavailable:
-        return {ProductStatus::StoreUnavailable, std::nullopt, false};
-      case StoreErrorCode::CommitUnknown:
-        return {ProductStatus::CommitUnknown, std::nullopt, false};
-      case StoreErrorCode::InvalidData:
-      case StoreErrorCode::Unexpected:
-        return {ProductStatus::InternalError, std::nullopt, false};
-    }
-    return {ProductStatus::InternalError, std::nullopt, false};
+    return {status_from_store_error(error.code()), std::nullopt, false};
   }
   if (store_result.status == StoreUpdateStatus::NotFound) {
     return {ProductStatus::NotFound, std::nullopt, false};
