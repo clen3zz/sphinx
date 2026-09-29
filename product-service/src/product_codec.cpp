@@ -51,7 +51,7 @@ bool valid_utf8_name(std::string_view bytes) noexcept {
   return true;
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 bool valid_product(const Product& product) noexcept {
   return product.id != 0 && product.version != 0 &&
@@ -83,19 +83,18 @@ std::optional<Product> decode_product_cache(std::string_view bytes) {
     return std::nullopt;
   }
   const auto value = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
-  if (!value.is_object() || value.size() != 4 || !value.contains("id") ||
-      !value.contains("name") || !value.contains("price_cents") || !value.contains("version") ||
+  if (!value.is_object() || value.size() != 4 || !value.contains("id") || !value.contains("name") ||
+      !value.contains("price_cents") || !value.contains("version") ||
       !value["id"].is_number_unsigned() || !value["name"].is_string() ||
       !value["price_cents"].is_number_unsigned() || !value["version"].is_number_unsigned()) {
     return std::nullopt;
   }
   Product product{value["id"].get<std::uint64_t>(), value["name"].get<std::string>(),
-                  value["price_cents"].get<std::uint64_t>(),
-                  value["version"].get<std::uint64_t>()};
+                  value["price_cents"].get<std::uint64_t>(), value["version"].get<std::uint64_t>()};
   if (!valid_product(product)) {
     return std::nullopt;
   }
   return product;
 }
 
-}  // 命名空间 sphinx
+}  // namespace sphinx

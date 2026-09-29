@@ -165,9 +165,8 @@ bool parse_unsigned_integer(const Json& value, std::uint64_t* result) {
 std::optional<UpdateProductRequest> parse_update_request(const httplib::Request& request,
                                                          std::uint64_t id) {
   const Json body = Json::parse(request.body.begin(), request.body.end(), nullptr, false);
-  if (body.is_discarded() || !body.is_object() || body.size() != 3 ||
-      !body.contains("name") || !body.contains("price_cents") ||
-      !body.contains("expected_version")) {
+  if (body.is_discarded() || !body.is_object() || body.size() != 3 || !body.contains("name") ||
+      !body.contains("price_cents") || !body.contains("expected_version")) {
     return std::nullopt;
   }
 
@@ -221,7 +220,7 @@ bool is_product_path(std::string_view path) noexcept {
   return path == "/products" || path.substr(0, sizeof("/products/") - 1) == "/products/";
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 void install_product_routes(httplib::Server& server,
                             const std::function<ProductService&()>& current_service) {
@@ -291,4 +290,4 @@ void install_product_routes(httplib::Server& server,
              });
 }
 
-}  // 命名空间 sphinx
+}  // namespace sphinx

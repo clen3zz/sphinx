@@ -9,8 +9,7 @@ namespace {
 
 TEST(ProductCodecTest, EncodesReadableJson) {
   const sphinx::Product product{1, "tea", 199, 2};
-  const std::string expected =
-      R"({"id":1,"name":"tea","price_cents":199,"version":2})";
+  const std::string expected = R"({"id":1,"name":"tea","price_cents":199,"version":2})";
   EXPECT_EQ(sphinx::encode_product_cache(product), expected);
   const auto decoded = sphinx::decode_product_cache(expected);
   if (!decoded) {
@@ -25,10 +24,9 @@ TEST(ProductCodecTest, EncodesReadableJson) {
 
 TEST(ProductCodecTest, RejectsMalformedAndUnexpectedFields) {
   EXPECT_FALSE(sphinx::decode_product_cache(R"({"id":7)"));
-  EXPECT_FALSE(sphinx::decode_product_cache(
-      R"({"id":7,"name":"x","price_cents":0,"version":1,"extra":0})"));
-  EXPECT_FALSE(sphinx::decode_product_cache(
-      R"({"id":7,"name":"x","price_cents":-1,"version":1})"));
+  EXPECT_FALSE(
+      sphinx::decode_product_cache(R"({"id":7,"name":"x","price_cents":0,"version":1,"extra":0})"));
+  EXPECT_FALSE(sphinx::decode_product_cache(R"({"id":7,"name":"x","price_cents":-1,"version":1})"));
   EXPECT_FALSE(sphinx::decode_product_cache(std::string(513, 'x')));
 }
 
@@ -56,4 +54,4 @@ TEST(ProductCodecTest, KeyIsNamespacedAndRejectsZero) {
   EXPECT_THROW(sphinx::make_product_cache_key(0), std::invalid_argument);
 }
 
-}  // 匿名命名空间
+}  // namespace
