@@ -75,6 +75,24 @@ TEST(ReactorTest, fullBoundedQueueReturnsBackpressureAndDrains) {
   ASSERT_EQ(received, sent + 2);
 }
 
+TEST(ReactorTest, deferredMessagesKeepOrderAfterRingFills) {
+  std::vector<int> received;
+  auto group = std::make_shared<sphinx::ReactorGroup>(2);
+  TestReactor source{0, group, [](const sphinx::MessagePtr&) {}};
+  TestReactor target{1, group, [&received](const sphinx::MessagePtr& message) {
+                       received.push_back(std::dynamic_pointer_cast<IntMessage>(message)->value);
+                     }};
+
+  for (int value = 0; value < 10002; ++value) {
+    ASSERT_TRUE(source.send_msg_deferred(1, std::make_shared<IntMessage>(value)));
+  }
+  ASSERT_TRUE(target.poll_messages());
+  ASSERT_EQ(received.size(), 10002U);
+  for (int value = 0; value < 10002; ++value) {
+    EXPECT_EQ(received[static_cast<size_t>(value)], value);
+  }
+}
+
 TEST(ReactorTest, groupsOwnIndependentMessageChannels) {
   size_t received = 0;
   auto first_group = std::make_shared<sphinx::ReactorGroup>(2);

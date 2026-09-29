@@ -299,7 +299,10 @@ bool TcpSocket::on_pollout() {
   return _tx_buf.empty();
 }
 
-// 跨线程单向消息通道：无锁 SPSC 环形队列配合溢出链表队列
+constexpr size_t max_reactor_channel_bytes = size_t{16} * 1024 * 1024;
+constexpr size_t max_reactor_group_bytes = size_t{64} * 1024 * 1024;
+
+// 跨线程单向消息通道：负责两级额度、消息顺序与溢出队列。
 struct ReactorGroup::Channel {
   Queue<MessagePtr, reactor_message_queue_size> queue;  // 有界单生产者/单消费者无锁环形队列
   std::mutex overflow_mutex;                            // 保护溢出队列并发操作的互斥锁
@@ -307,10 +310,76 @@ struct ReactorGroup::Channel {
   std::atomic<size_t> queued_bytes{0};                  // 同时计入环形队列与溢出队列
   std::atomic<uint64_t> overloaded_connection_id{0};
   std::atomic<bool> close_all_connections{false};
-};
 
-constexpr size_t max_reactor_channel_bytes = size_t{16} * 1024 * 1024;
-constexpr size_t max_reactor_group_bytes = size_t{64} * 1024 * 1024;
+  bool reserve_bytes(size_t bytes, std::atomic<size_t>& group_bytes) {
+    const auto used = queued_bytes.load(std::memory_order_relaxed);
+    if (bytes > max_reactor_channel_bytes - used) {
+      return false;
+    }
+    auto group_used = group_bytes.load(std::memory_order_relaxed);
+    while (true) {
+      if (bytes > max_reactor_group_bytes - group_used) {
+        return false;
+      }
+      if (group_bytes.compare_exchange_weak(group_used, group_used + bytes,
+                                            std::memory_order_acq_rel)) {
+        break;
+      }
+    }
+    // 消费者可能在入队后立刻取走消息，发布前就必须计入额度。
+    queued_bytes.fetch_add(bytes, std::memory_order_relaxed);
+    return true;
+  }
+
+  void release_bytes(size_t bytes, std::atomic<size_t>& group_bytes) {
+    queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
+    group_bytes.fetch_sub(bytes, std::memory_order_release);
+  }
+
+  bool enqueue(const MessagePtr& message, bool deferred, std::atomic<size_t>& group_bytes) {
+    std::scoped_lock const lock{overflow_mutex};
+    const auto bytes = message->queued_bytes();
+    if (!reserve_bytes(bytes, group_bytes)) {
+      return false;
+    }
+    // 有积压时所有后续消息进入溢出队列，避免越过旧消息。
+    if (overflow.empty() && queue.try_to_emplace(message)) {
+      return true;
+    }
+    if (deferred) {
+      try {
+        overflow.emplace_back(message);
+        return true;
+      } catch (const std::bad_alloc&) {
+      }
+    }
+    release_bytes(bytes, group_bytes);
+    return false;
+  }
+
+  MessagePtr take_next() {
+    if (auto* queued = queue.front()) {
+      MessagePtr message = std::move(*queued);
+      queue.pop();
+      return message;
+    }
+    std::scoped_lock const lock{overflow_mutex};
+    if (overflow.empty()) {
+      return {};
+    }
+    MessagePtr message = std::move(overflow.front());
+    overflow.pop_front();
+    return message;
+  }
+
+  bool has_pending() {
+    if (queue.front() != nullptr) {
+      return true;
+    }
+    std::scoped_lock const lock{overflow_mutex};
+    return !overflow.empty();
+  }
+};
 
 // 校验线程数合法性
 static size_t checked_thread_count(size_t nr_threads) {
@@ -483,46 +552,9 @@ bool Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool de
     throw std::invalid_argument("invalid reactor message target");
   }
 
-  // 2. 加通道互斥锁进行消息入队
-  {
-    // 获取源线程发往目标线程的专用单向通道
-    auto& channel = _group->channel(remote_id, _thread_id);
-    std::scoped_lock const lock{channel.overflow_mutex};
-
-    const auto bytes = message->queued_bytes();
-    const auto used = channel.queued_bytes.load(std::memory_order_relaxed);
-    if (bytes > max_reactor_channel_bytes - used) {
-      return false;
-    }
-    auto group_used = _group->_queued_bytes.load(std::memory_order_relaxed);
-    while (true) {
-      if (bytes > max_reactor_group_bytes - group_used) {
-        return false;
-      }
-      if (_group->_queued_bytes.compare_exchange_weak(group_used, group_used + bytes,
-                                                      std::memory_order_acq_rel)) {
-        break;
-      }
-    }
-    // Charge before publishing: the consumer can dequeue immediately after try_to_emplace.
-    channel.queued_bytes.fetch_add(bytes, std::memory_order_relaxed);
-
-    // 一旦出现溢出消息，后续消息也放入溢出队列，确保目的端观察到的顺序与队列保持严格一致
-    if (channel.overflow.empty() && channel.queue.try_to_emplace(message)) {
-      // 有界无锁环形队列已成功接纳该消息
-    } else if (defer_if_full) {
-      try {
-        channel.overflow.emplace_back(message);
-      } catch (const std::bad_alloc&) {
-        channel.queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
-        _group->_queued_bytes.fetch_sub(bytes, std::memory_order_release);
-        return false;
-      }
-    } else {
-      channel.queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
-      _group->_queued_bytes.fetch_sub(bytes, std::memory_order_release);
-      return false;
-    }
+  auto& channel = _group->channel(remote_id, _thread_id);
+  if (!channel.enqueue(message, defer_if_full, _group->_queued_bytes)) {
+    return false;
   }
 
   // 4. 记录对端线程待唤醒位，待当前事件循环轮次统一唤醒
@@ -567,14 +599,7 @@ bool Reactor::has_messages() const {
         channel.close_all_connections.load(std::memory_order_acquire)) {
       return true;
     }
-    // 1. 检查无锁 SPSC 环形队列中是否有消息
-    if (channel.queue.front() != nullptr) {
-      return true;
-    }
-
-    // 2. 检查溢出队列中是否有消息
-    std::scoped_lock const lock{channel.overflow_mutex};
-    if (!channel.overflow.empty()) {
+    if (channel.has_pending()) {
       return true;
     }
   }
@@ -603,40 +628,11 @@ bool Reactor::poll_messages() {
       _on_message_fn(_overload_message);
     }
 
-    // 1. 优先消费无锁 SPSC 环形队列中的消息
-    while (true) {
-      auto* queued = channel.queue.front();
-      if (!queued) {
-        break;
-      }
-
-      MessagePtr message = std::move(*queued);
-      channel.queue.pop();
+    while (auto message = channel.take_next()) {
       received = true;
       const auto bytes = message->queued_bytes();
       _on_message_fn(std::move(message));
-      channel.queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
-      _group->_queued_bytes.fetch_sub(bytes, std::memory_order_release);
-    }
-
-    // 2. 消费溢出队列中的积压消息
-    while (true) {
-      MessagePtr message;
-      {
-        std::scoped_lock const lock{channel.overflow_mutex};
-        if (channel.overflow.empty()) {
-          break;
-        }
-
-        message = std::move(channel.overflow.front());
-        channel.overflow.pop_front();
-      }
-
-      received = true;
-      const auto bytes = message->queued_bytes();
-      _on_message_fn(std::move(message));
-      channel.queued_bytes.fetch_sub(bytes, std::memory_order_relaxed);
-      _group->_queued_bytes.fetch_sub(bytes, std::memory_order_release);
+      channel.release_bytes(bytes, _group->_queued_bytes);
     }
   }
 
