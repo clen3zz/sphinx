@@ -139,8 +139,6 @@ class Log {
   Log& operator=(const Log&) = delete;
   Log(Log&&) = delete;
   Log& operator=(Log&&) = delete;
-  /// \brief 从日志中查找给定 \ref key 对应的数据（blob）。
-  std::optional<Blob> find(const Key& key) const;
   /// \brief 查找值及其 Memcached 元数据。
   std::optional<Value> find_value(const Key& key);
   /// \brief 追加带可选 Memcached 元数据的键值对。

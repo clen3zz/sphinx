@@ -43,9 +43,9 @@ TEST(LogTest, append) {
   auto key = make_random(8);
   auto blob = make_random(16);
   log.append(key, blob);
-  auto blob_opt = log.find(key);
+  auto blob_opt = log.find_value(key);
   ASSERT_TRUE(blob_opt.has_value());
-  ASSERT_EQ(blob_opt.value(), blob);
+  ASSERT_EQ(blob_opt->blob, blob);
 }
 
 TEST(LogTest, append_expires) {
@@ -73,9 +73,9 @@ TEST(LogTest, overwrite_rebinds_index_before_segment_reclamation) {
   for (int i = 0; i < 12; i++) {
     auto value = std::string{"value-"} + std::to_string(i);
     ASSERT_TRUE(log.append("same-key", value));
-    auto found = log.find("same-key");
+    auto found = log.find_value("same-key");
     ASSERT_TRUE(found.has_value());
-    ASSERT_EQ(found.value(), value);
+    ASSERT_EQ(found->blob, value);
   }
 }
 
@@ -109,7 +109,7 @@ TEST(LogTest, remove_handles_missing_expired_and_overwritten_values) {
   ASSERT_FALSE(log.find_value("key").has_value());
   ASSERT_FALSE(log.remove("key"));
   ASSERT_TRUE(log.append("key", "replacement"));
-  ASSERT_EQ(log.find("key").value(), "replacement");
+  ASSERT_EQ(log.find_value("key")->blob, "replacement");
 
   ASSERT_TRUE(log.append("expired", "value", 0, 1));
   ASSERT_FALSE(log.remove("expired"));

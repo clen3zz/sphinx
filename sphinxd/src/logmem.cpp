@@ -199,16 +199,6 @@ Log::Log(const LogConfig& config) : _config{config} {
   }
 }
 
-// 查询键对应的 Blob 内容（不执行惰性删除）
-std::optional<Blob> Log::find(const Key& key) const {
-  const auto& search = _index.find(key);
-  if (search && !search.value()->is_expired(current_time_seconds())) {
-    return search.value()->blob();
-  }
-
-  return std::nullopt;
-}
-
 // 查询键对应的完整 Value（带惰性过期检测与清理）
 std::optional<Value> Log::find_value(const Key& key) {
   const auto search = _index.find(key);
