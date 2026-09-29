@@ -23,7 +23,7 @@ http_service="$build_dir/product-service/sphinx-product-service"
 sphinx_server="$build_dir/sphinxd/sphinxd"
 for executable in "$mysql_test" "$http_service" "$sphinx_server"; do
     if [[ ! -x $executable ]]; then
-        echo "Missing $executable; configure with -DBUILD_MYSQL_SPHINX_DEMO=ON and build." >&2
+        echo "Missing $executable; build the default MySQL product-service targets first." >&2
         exit 2
     fi
 done

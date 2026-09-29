@@ -89,18 +89,9 @@ if (Python3_Interpreter_FOUND)
             $<TARGET_FILE:sphinxd>)
     set_tests_properties(sphinxd_network_test PROPERTIES TIMEOUT 180)
 
-    foreach (_sphinx_cluster_integration_name IN ITEMS
-            cluster_network_test.py
-            cluster_integration_test.py)
-        set(_sphinx_cluster_integration_test
-                ${CMAKE_CURRENT_SOURCE_DIR}/test/${_sphinx_cluster_integration_name})
-        if (EXISTS ${_sphinx_cluster_integration_test})
-            add_test(NAME sphinxd_cluster_integration_test
-                    COMMAND ${Python3_EXECUTABLE} ${_sphinx_cluster_integration_test}
-                    $<TARGET_FILE:sphinxd> $<TARGET_FILE:sphinx-cluster>
-                    $<TARGET_FILE:sphinx_cluster_client_integration_driver>)
-            set_tests_properties(sphinxd_cluster_integration_test PROPERTIES TIMEOUT 120)
-            break()
-        endif ()
-    endforeach ()
+    add_test(NAME sphinxd_cluster_integration_test
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/cluster_network_test.py
+            $<TARGET_FILE:sphinxd> $<TARGET_FILE:sphinx-cluster>
+            $<TARGET_FILE:sphinx_cluster_client_integration_driver>)
+    set_tests_properties(sphinxd_cluster_integration_test PROPERTIES TIMEOUT 120)
 endif ()
