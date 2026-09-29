@@ -92,16 +92,12 @@ Checks: >
   -portability-avoid-pragma-once
 ```
 
-本地静态检查最多并发运行 4 个进程。检查脚本会拒绝仍指向旧目录的编译数据库，
-`--require-mysql` 还会确认 MySQL/HTTP 服务的实现文件及 C++ 测试文件都属于 CMake 目标：
+本地静态检查最多并发运行 4 个进程。检查脚本会拒绝缺少商品服务实现文件的编译数据库：
 
 ```bash
-# 核心模块；先配置或重新配置构建目录
-./scripts/tidy build-default
-
-# 默认构建包含 MySQL 模块；Debug 静态检查可关闭预编译头
+# 商品服务与缓存节点都在默认构建中；Debug 静态检查可关闭预编译头
 cmake -S . -B cmake-build-debug-wsl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
-./scripts/tidy cmake-build-debug-wsl --require-mysql
+./scripts/tidy cmake-build-debug-wsl
 ```
 
 Debug 静态检查配置关闭预编译头，避免重新生成 CMake 项目后旧 `.pch` 影响分析；

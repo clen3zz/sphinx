@@ -14,7 +14,7 @@
 #include <stdexcept>
 #include <thread>
 
-// 只有可选商品服务链接 MySQL 客户端库；C API 的细节只留在本文件。
+// 只有商品服务链接 MySQL 客户端库；C API 的细节只留在本文件。
 // StoreError::what() 不包含凭据、SQL 文本或用户输入，避免向上层泄露敏感信息。
 
 namespace sphinx {

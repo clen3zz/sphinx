@@ -18,7 +18,7 @@
 
 namespace {
 
-// 工作线程主函数：负责各线程的 CPU 绑定、实时调度、内存分配、Server 实例化并启动事件循环
+// 工作线程主函数：分配本线程的存储内存，创建 Server 并启动事件循环。
 void run_server_thread(size_t thread_id, const sphinx::Config& config,
                        const std::shared_ptr<sphinx::ServerStats>& stats,
                        const std::shared_ptr<sphinx::ReactorGroup>& reactor_group,

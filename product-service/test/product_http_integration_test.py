@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""可选 MySQL + Sphinx 商品服务的黑盒验收测试。"""
+"""MySQL + Sphinx 商品服务的黑盒验收测试。"""
 
 import concurrent.futures
 import http.client
