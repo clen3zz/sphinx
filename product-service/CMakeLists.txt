@@ -1,10 +1,18 @@
+include(FetchContent)
+FetchContent_Populate(nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.12.0
+        GIT_SHALLOW TRUE)
+add_library(sphinx_json INTERFACE)
+target_include_directories(sphinx_json INTERFACE ${nlohmann_json_SOURCE_DIR}/include)
+
 add_library(sphinx_product_core STATIC
         src/product_codec.cpp
         src/product_service.cpp
         src/sphinx_product_cache.cpp
 )
 target_include_directories(sphinx_product_core PUBLIC include)
-target_link_libraries(sphinx_product_core PUBLIC sphinx_core)
+target_link_libraries(sphinx_product_core PUBLIC sphinx_core sphinx_json)
 
 if (GTEST_FOUND)
     add_executable(sphinx_product_tests
@@ -20,7 +28,6 @@ option(BUILD_MYSQL_SPHINX_DEMO "Build the MySQL product HTTP service" ON)
 if (BUILD_MYSQL_SPHINX_DEMO)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(MYSQLCLIENT REQUIRED IMPORTED_TARGET mysqlclient)
-    include(FetchContent)
 
     # 这两个依赖仅使用头文件：拉取源码即可，不引入它们自己的 CMake 项目。
     # 完整参数形式也兼容根项目要求的最低 CMake 3.16 版本。
@@ -30,13 +37,6 @@ if (BUILD_MYSQL_SPHINX_DEMO)
             GIT_SHALLOW TRUE)
     add_library(sphinx_httplib INTERFACE)
     target_include_directories(sphinx_httplib INTERFACE ${cpp_httplib_SOURCE_DIR})
-
-    FetchContent_Populate(nlohmann_json
-            GIT_REPOSITORY https://github.com/nlohmann/json.git
-            GIT_TAG v3.12.0
-            GIT_SHALLOW TRUE)
-    add_library(sphinx_json INTERFACE)
-    target_include_directories(sphinx_json INTERFACE ${nlohmann_json_SOURCE_DIR}/include)
 
     add_executable(sphinx-product-service
             src/mysql_product_store.cpp

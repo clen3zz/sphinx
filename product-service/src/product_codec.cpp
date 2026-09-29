@@ -2,6 +2,7 @@
 #include <sphinx/product_codec.h>
 
 #include <cstdint>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 
 namespace sphinx {
@@ -50,21 +51,6 @@ bool valid_utf8_name(std::string_view bytes) noexcept {
   return true;
 }
 
-void append_u64(std::string* out, std::uint64_t value) {
-  for (unsigned int byte = 0; byte < 8; ++byte) {
-    const auto shift = (7U - byte) * 8U;
-    out->push_back(static_cast<char>((value >> shift) & 0xFFU));
-  }
-}
-
-std::uint64_t read_u64(std::string_view bytes, std::size_t offset) noexcept {
-  std::uint64_t value = 0;
-  for (std::size_t i = 0; i < 8; ++i) {
-    value = (value << 8U) | static_cast<unsigned char>(bytes[offset + i]);
-  }
-  return value;
-}
-
 }  // 匿名命名空间
 
 bool valid_product(const Product& product) noexcept {
@@ -77,43 +63,35 @@ std::string make_product_cache_key(std::uint64_t id) {
     throw std::invalid_argument{"product id must be positive"};
   }
   // 使用独立命名空间，避免与其他缓存 key 冲突；格式变更时可更新版本前缀。
-  return "product:v1:" + std::to_string(id);
+  return "product:v2:" + std::to_string(id);
 }
 
 std::string encode_product_cache(const Product& product) {
   if (!valid_product(product)) {
     throw std::invalid_argument{"invalid product cache value"};
   }
-  std::string out;
-  out.reserve(30 + product.name.size());
-  out.append("SPC1", 4);
-  append_u64(&out, product.id);
-  append_u64(&out, product.price_cents);
-  append_u64(&out, product.version);
-  const auto name_size = static_cast<std::uint16_t>(product.name.size());
-  out.push_back(static_cast<char>(name_size >> 8U));
-  out.push_back(static_cast<char>(name_size & 0xFFU));
-  out.append(product.name);
-  return out;
+  return nlohmann::json{{"id", product.id},
+                        {"name", product.name},
+                        {"price_cents", product.price_cents},
+                        {"version", product.version}}
+      .dump();
 }
 
 std::optional<Product> decode_product_cache(std::string_view bytes) {
-  // 缓存内容不可信：先检查魔数和长度，再解码字段并复用领域对象校验。
-  constexpr std::size_t header_size = 30;
-  if (bytes.size() < header_size || bytes.substr(0, 4) != "SPC1") {
+  // 缓存内容不可信：限制长度、检查字段，再复用领域对象校验。
+  if (bytes.size() > 512) {
     return std::nullopt;
   }
-  const auto name_size = (static_cast<std::size_t>(static_cast<unsigned char>(bytes[28])) << 8U) |
-                         static_cast<unsigned char>(bytes[29]);
-  if (name_size == 0 || name_size > max_product_name_bytes ||
-      bytes.size() != header_size + name_size) {
+  const auto value = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
+  if (!value.is_object() || value.size() != 4 || !value.contains("id") ||
+      !value.contains("name") || !value.contains("price_cents") || !value.contains("version") ||
+      !value["id"].is_number_unsigned() || !value["name"].is_string() ||
+      !value["price_cents"].is_number_unsigned() || !value["version"].is_number_unsigned()) {
     return std::nullopt;
   }
-  Product product;
-  product.id = read_u64(bytes, 4);
-  product.price_cents = read_u64(bytes, 12);
-  product.version = read_u64(bytes, 20);
-  product.name.assign(bytes.data() + header_size, name_size);
+  Product product{value["id"].get<std::uint64_t>(), value["name"].get<std::string>(),
+                  value["price_cents"].get<std::uint64_t>(),
+                  value["version"].get<std::uint64_t>()};
   if (!valid_product(product)) {
     return std::nullopt;
   }

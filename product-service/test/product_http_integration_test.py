@@ -10,7 +10,6 @@ import os
 import shutil
 import signal
 import socket
-import struct
 import subprocess
 import sys
 import tempfile
@@ -192,7 +191,7 @@ class ProductHttpIntegrationTest(unittest.TestCase):
     def new_product_id(self):
         product_id = next(PRODUCT_IDS)
         self.rows.append(product_id)
-        self.cache_keys.add(f"product:v1:{product_id}")
+        self.cache_keys.add(f"product:v2:{product_id}")
         return product_id
 
     def insert_product(self, name="product-v1", price_cents=100, version=1):
@@ -289,12 +288,15 @@ class ProductHttpIntegrationTest(unittest.TestCase):
         self.assert_no_store(headers)
 
     def encode_cached_product(self, product_id, name, price_cents, version):
-        name_bytes = name.encode("utf-8")
-        header = struct.pack(">QQQH", product_id, price_cents, version, len(name_bytes))
-        return b"SPC1" + header + name_bytes
+        return json.dumps({
+            "id": product_id,
+            "name": name,
+            "price_cents": price_cents,
+            "version": version,
+        }, ensure_ascii=False).encode("utf-8")
 
     def set_cache(self, product_id, name, price_cents, version, ttl=60):
-        key = f"product:v1:{product_id}"
+        key = f"product:v2:{product_id}"
         value = self.encode_cached_product(product_id, name, price_cents, version)
         with socket.create_connection(("127.0.0.1", self.sphinx_port), timeout=2) as client:
             client.sendall(f"set {key} 0 {ttl} {len(value)}\r\n".encode() + value + b"\r\n")

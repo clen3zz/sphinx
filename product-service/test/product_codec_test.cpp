@@ -7,22 +7,14 @@
 
 namespace {
 
-TEST(ProductCodecTest, UsesStableBigEndianV1Frame) {
+TEST(ProductCodecTest, EncodesReadableJson) {
   const sphinx::Product product{1, "tea", 199, 2};
-  std::string expected{"SPC1"};
-  expected.append(7, '\0');
-  expected.push_back('\1');
-  expected.append(7, '\0');
-  expected.push_back(static_cast<char>(199));
-  expected.append(7, '\0');
-  expected.push_back('\2');
-  expected.push_back('\0');
-  expected.push_back('\3');
-  expected += "tea";
+  const std::string expected =
+      R"({"id":1,"name":"tea","price_cents":199,"version":2})";
   EXPECT_EQ(sphinx::encode_product_cache(product), expected);
   const auto decoded = sphinx::decode_product_cache(expected);
   if (!decoded) {
-    ADD_FAILURE() << "valid cache frame did not decode";
+    ADD_FAILURE() << "valid cache JSON did not decode";
     return;
   }
   EXPECT_EQ(decoded->id, product.id);
@@ -31,16 +23,13 @@ TEST(ProductCodecTest, UsesStableBigEndianV1Frame) {
   EXPECT_EQ(decoded->version, product.version);
 }
 
-TEST(ProductCodecTest, RejectsTruncatedTrailingAndWrongVersionFrames) {
-  const auto frame = sphinx::encode_product_cache({7, "x", 0, 1});
-  EXPECT_FALSE(sphinx::decode_product_cache(frame.substr(0, frame.size() - 1)));
-  EXPECT_FALSE(sphinx::decode_product_cache(frame + "x"));
-  auto changed = frame;
-  changed[3] = '2';
-  EXPECT_FALSE(sphinx::decode_product_cache(changed));
-  changed = frame;
-  changed[29] = '\2';
-  EXPECT_FALSE(sphinx::decode_product_cache(changed));
+TEST(ProductCodecTest, RejectsMalformedAndUnexpectedFields) {
+  EXPECT_FALSE(sphinx::decode_product_cache(R"({"id":7)"));
+  EXPECT_FALSE(sphinx::decode_product_cache(
+      R"({"id":7,"name":"x","price_cents":0,"version":1,"extra":0})"));
+  EXPECT_FALSE(sphinx::decode_product_cache(
+      R"({"id":7,"name":"x","price_cents":-1,"version":1})"));
+  EXPECT_FALSE(sphinx::decode_product_cache(std::string(513, 'x')));
 }
 
 TEST(ProductCodecTest, RejectsInvalidDomainAndUtf8) {
@@ -63,7 +52,7 @@ TEST(ProductCodecTest, SupportsUtf8AndMaximumNameLength) {
 }
 
 TEST(ProductCodecTest, KeyIsNamespacedAndRejectsZero) {
-  EXPECT_EQ(sphinx::make_product_cache_key(42), "product:v1:42");
+  EXPECT_EQ(sphinx::make_product_cache_key(42), "product:v2:42");
   EXPECT_THROW(sphinx::make_product_cache_key(0), std::invalid_argument);
 }
 
