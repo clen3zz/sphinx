@@ -421,7 +421,6 @@ void ReactorGroup::set_thread_sleeping(size_t thread_id, bool sleeping) {
 }
 
 // 默认 I/O 多路复用后端
-std::string Reactor::default_backend() { return "epoll"; }
 
 // Reactor 基类构造函数
 Reactor::Reactor(size_t thread_id, std::shared_ptr<ReactorGroup> group, OnMessageFn&& on_message_fn)
@@ -642,17 +641,6 @@ bool Reactor::poll_messages() {
   }
 
   return received;
-}
-
-// Reactor 实例工厂方法
-std::unique_ptr<Reactor> make_reactor(const std::string& backend, size_t thread_id,
-                                      std::shared_ptr<ReactorGroup> group,
-                                      OnMessageFn&& on_message_fn) {
-  if (backend == "epoll") {
-    return std::make_unique<EpollReactor>(thread_id, std::move(group), std::move(on_message_fn));
-  }
-
-  throw std::invalid_argument("unrecognized '" + backend + "' backend");
 }
 
 }  // namespace sphinx

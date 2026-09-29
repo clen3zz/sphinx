@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-#include <sphinx/reactor.h>
-
-#include <set>
 #include <string>
 namespace sphinx {
 
@@ -26,11 +23,7 @@ struct Config {
   int memory_limit = default_memory_limit;  // 内存上限（兆字节）
   int segment_size = default_segment_size;  // 日志段大小（兆字节）
 
-  // 并发与底层调度配置
-  int nr_threads = default_nr_threads;               // 工作线程数
-  std::string backend = Reactor::default_backend();  // I/O 多路复用后端
-  std::set<int> isolate_cpus;                        // 需避开绑定的被隔离 CPU 核心 ID 集合
-  bool sched_fifo = false;                           // 是否启用 SCHED_FIFO 实时调度策略
+  int nr_threads = default_nr_threads;
 };
 
 // 解析命令行入参并填充配置结构体

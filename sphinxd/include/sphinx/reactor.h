@@ -152,8 +152,6 @@ class Reactor {
   std::shared_ptr<ReactorOverload> _overload_message;
 
  public:
-  static std::string default_backend();
-
   Reactor(size_t thread_id, std::shared_ptr<ReactorGroup> group, OnMessageFn&& on_message_fn);
   virtual ~Reactor() = default;
   size_t thread_id() const;
@@ -179,7 +177,4 @@ class Reactor {
   bool poll_messages();
 };
 
-std::unique_ptr<Reactor> make_reactor(const std::string& backend, size_t thread_id,
-                                      std::shared_ptr<ReactorGroup> group,
-                                      OnMessageFn&& on_message_fn);
 }  // namespace sphinx

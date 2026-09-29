@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <getopt.h>
-#include <sched.h>
 
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
-#include <sstream>
 #include <stdexcept>
 #include <utility>
 
 #include "config.h"
+#include <sphinx/reactor.h>
 
 namespace sphinx {
 namespace {
@@ -29,9 +28,7 @@ void print_usage(const std::string& program) {
       << ")\n  -b, --listen-backlog number Listen backlog size (default: " << default_listen_backlog
       << ")\n  -t, --threads number        number of threads to use (default: "
       << default_nr_threads
-      << ")\n  -I, --io-backend name       I/O backend (default: " << Reactor::default_backend()
-      << ")\n  -i, --isolate-cpus list     list of CPUs to isolate application threads\n"
-      << "  -S, --sched-fifo            use SCHED_FIFO scheduling policy\n"
+      << ")\n"
       << "      --help                  print this help text and exit\n"
       << "      --version               print Sphinx version and exit\n\n";
 }
@@ -41,24 +38,6 @@ void print_option_error(const std::string& program, const std::string& option,
                         const std::string& reason) {
   std::cerr << program << ": " << reason << " '" << option << "' option\n";
   std::cerr << "Try '" << program << " --help' for more information\n" << std::flush;
-}
-
-// 解析逗号分隔的 CPU 编号列表字符串（如 "0,1,3"）
-std::set<int> parse_cpu_list(const std::string& raw_cpu_list) {
-  std::set<int> cpu_list;
-  std::istringstream input{raw_cpu_list};
-  std::string token;
-
-  while (std::getline(input, token, ',')) {
-    auto cpu = std::stoi(token);
-    // 校验 CPU 编号是否在系统合法掩码范围内
-    if (cpu < 0 || cpu >= CPU_SETSIZE) {
-      throw std::invalid_argument("CPU id is out of range");
-    }
-    cpu_list.emplace(cpu);
-  }
-
-  return cpu_list;
 }
 
 // 校验解析后的服务器配置参数是否合法且互相兼容
@@ -106,9 +85,6 @@ Config parse_options(int argc, char* argv[], const std::string& program) {
       {"segment-size", required_argument, nullptr, 's'},
       {"listen-backlog", required_argument, nullptr, 'b'},
       {"threads", required_argument, nullptr, 't'},
-      {"io-backend", required_argument, nullptr, 'I'},
-      {"isolate-cpus", required_argument, nullptr, 'i'},
-      {"sched-fifo", no_argument, nullptr, 'S'},
       {"help", no_argument, nullptr, 'h'},
       {"version", no_argument, nullptr, 'v'},
       {nullptr, 0, nullptr, 0},
@@ -120,7 +96,7 @@ Config parse_options(int argc, char* argv[], const std::string& program) {
 
   // 循环解析各个命令行选项
   // NOLINTNEXTLINE(concurrency-mt-unsafe)
-  while ((option = getopt_long(argc, argv, "p:l:m:s:b:t:I:i:S", long_options, &long_index)) != -1) {
+  while ((option = getopt_long(argc, argv, "p:l:m:s:b:t:", long_options, &long_index)) != -1) {
     switch (option) {
       case 'p':
         args.tcp_port = std::stoi(optarg);
@@ -139,15 +115,6 @@ Config parse_options(int argc, char* argv[], const std::string& program) {
         break;
       case 't':
         args.nr_threads = std::stoi(optarg);
-        break;
-      case 'I':
-        args.backend = optarg;
-        break;
-      case 'i':
-        args.isolate_cpus = parse_cpu_list(optarg);
-        break;
-      case 'S':
-        args.sched_fifo = true;
         break;
       case 'h':
         print_usage(program);
