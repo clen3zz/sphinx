@@ -21,7 +21,3 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
-
-# Local benchmark output
-/benchmark-results/
-benchmark-smoke/

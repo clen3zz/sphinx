@@ -89,29 +89,6 @@ if (Python3_Interpreter_FOUND)
             $<TARGET_FILE:sphinxd>)
     set_tests_properties(sphinxd_network_test PROPERTIES TIMEOUT 180)
 
-    add_test(NAME sphinxd_benchmark_script_test
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/benchmark_script_test.py)
-    set_tests_properties(sphinxd_benchmark_script_test PROPERTIES TIMEOUT 30)
-
-    find_program(MEMTIER_BENCHMARK_EXECUTABLE memtier_benchmark)
-    if (MEMTIER_BENCHMARK_EXECUTABLE)
-        add_test(NAME sphinxd_benchmark_smoke
-                COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/run_local_benchmark.py
-                --server $<TARGET_FILE:sphinxd>
-                --memtier ${MEMTIER_BENCHMARK_EXECUTABLE}
-                --workload mixed
-                --threads 1
-                --memory-limit 8
-                --segment-size 1
-                --duration 3
-                --client-threads 1
-                --connections 2
-                --key-space 100
-                --value-size 16
-                --output-dir ${CMAKE_CURRENT_BINARY_DIR}/benchmark-smoke)
-        set_tests_properties(sphinxd_benchmark_smoke PROPERTIES TIMEOUT 60)
-    endif ()
-
     foreach (_sphinx_cluster_integration_name IN ITEMS
             cluster_network_test.py
             cluster_integration_test.py)
