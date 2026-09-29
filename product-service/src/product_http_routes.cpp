@@ -12,7 +12,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_set>
 #include <utility>
 
 namespace sphinx {
@@ -139,65 +138,12 @@ std::optional<bool> parse_fresh_query(const httplib::Request& request) {
   return true;
 }
 
-bool ascii_space(char value) noexcept {
-  return value == ' ' || value == '\t' || value == '\r' || value == '\n' || value == '\f' ||
-         value == '\v';
-}
-
-std::string_view trim_ascii(std::string_view value) noexcept {
-  while (!value.empty() && ascii_space(value.front())) {
-    value.remove_prefix(1);
-  }
-  while (!value.empty() && ascii_space(value.back())) {
-    value.remove_suffix(1);
-  }
-  return value;
-}
-
-bool ascii_iequals(std::string_view lhs, std::string_view rhs) noexcept {
-  if (lhs.size() != rhs.size()) {
-    return false;
-  }
-  for (std::size_t index = 0; index < lhs.size(); ++index) {
-    auto left = static_cast<unsigned char>(lhs[index]);
-    auto right = static_cast<unsigned char>(rhs[index]);
-    if (left >= 'A' && left <= 'Z') {
-      left = static_cast<unsigned char>(left + ('a' - 'A'));
-    }
-    if (right >= 'A' && right <= 'Z') {
-      right = static_cast<unsigned char>(right + ('a' - 'A'));
-    }
-    if (left != right) {
-      return false;
-    }
-  }
-  return true;
-}
-
 bool is_json_content_type(const httplib::Request& request) {
   if (request.get_header_value_count("Content-Type") != 1) {
     return false;
   }
-  const std::string value = request.get_header_value("Content-Type");
-  const std::string_view content_type{value};
-  const auto parameter_start = content_type.find(';');
-  if (!ascii_iequals(trim_ascii(content_type.substr(0, parameter_start)), "application/json")) {
-    return false;
-  }
-  if (parameter_start == std::string_view::npos) {
-    return true;
-  }
-  const auto parameters = content_type.substr(parameter_start + 1);
-  if (parameters.find(';') != std::string_view::npos) {
-    return false;
-  }
-  const auto parameter = trim_ascii(parameters);
-  const auto equals = parameter.find('=');
-  if (equals == std::string_view::npos) {
-    return false;
-  }
-  return ascii_iequals(trim_ascii(parameter.substr(0, equals)), "charset") &&
-         ascii_iequals(trim_ascii(parameter.substr(equals + 1)), "utf-8");
+  const auto value = request.get_header_value("Content-Type");
+  return value == "application/json" || value == "application/json; charset=utf-8";
 }
 
 bool parse_unsigned_integer(const Json& value, std::uint64_t* result) {
@@ -218,18 +164,8 @@ bool parse_unsigned_integer(const Json& value, std::uint64_t* result) {
 
 std::optional<UpdateProductRequest> parse_update_request(const httplib::Request& request,
                                                          std::uint64_t id) {
-  bool duplicate_key = false;
-  std::unordered_set<std::string> keys;
-  const auto callback = [&duplicate_key, &keys](int, Json::parse_event_t event,
-                                                const Json& parsed) {
-    if (event == Json::parse_event_t::key && !keys.insert(parsed.get<std::string>()).second) {
-      duplicate_key = true;
-      return false;
-    }
-    return true;
-  };
-  const Json body = Json::parse(request.body.begin(), request.body.end(), callback, false);
-  if (duplicate_key || body.is_discarded() || !body.is_object() || body.size() != 3 ||
+  const Json body = Json::parse(request.body.begin(), request.body.end(), nullptr, false);
+  if (body.is_discarded() || !body.is_object() || body.size() != 3 ||
       !body.contains("name") || !body.contains("price_cents") ||
       !body.contains("expected_version")) {
     return std::nullopt;

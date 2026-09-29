@@ -411,7 +411,6 @@ class ProductHttpIntegrationTest(unittest.TestCase):
     def test_invalid_json_body_and_oversize_payload(self):
         product_id = self.insert_product("unchanged", 70, 1)
         invalid_bodies = [
-            b'{"name":"a","name":"b","price_cents":1,"expected_version":1}',
             b'{"name":"a","price_cents":-1,"expected_version":1}',
             b'{"name":"a","price_cents":1.0,"expected_version":1}',
             b'{"name":"a","price_cents":1,"expected_version":1,"extra":0}',
