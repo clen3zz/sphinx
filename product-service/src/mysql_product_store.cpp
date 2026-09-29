@@ -102,7 +102,7 @@ void bind_unsigned_parameter(MYSQL_BIND* binding, std::uint64_t* value) {
   binding->is_unsigned = true;
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 struct MySqlProductStore::Impl {
   explicit Impl(const MySqlOptions& source_options)
@@ -287,8 +287,8 @@ struct MySqlProductStore::Impl {
     if (fetch_result != 0) {
       throw_statement_error(statement, "MySQL product row fetch failed");
     }
-    if (id_is_null || name_is_null || price_is_null || version_is_null || id_error ||
-        name_error || price_error || version_error || name_length > max_product_name_bytes ||
+    if (id_is_null || name_is_null || price_is_null || version_is_null || id_error || name_error ||
+        price_error || version_error || name_length > max_product_name_bytes ||
         name_length > name_buffer.size()) {
       throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
     }
@@ -497,9 +497,7 @@ std::optional<Product> MySqlProductStore::find(std::uint64_t id) {
 
 StoreUpdateResult MySqlProductStore::update(const UpdateProductRequest& request) {
   _impl->check_owner();
-  if (request.id == 0 || request.expected_version == 0 ||
-      request.expected_version == std::numeric_limits<std::uint64_t>::max() ||
-      !valid_product(Product{request.id, request.name, request.price_cents, 1})) {
+  if (!valid_update_request(request)) {
     throw std::invalid_argument{"invalid product update request"};
   }
 
@@ -531,4 +529,4 @@ StoreUpdateResult MySqlProductStore::update(const UpdateProductRequest& request)
   return committed_result;
 }
 
-}  // 命名空间 sphinx
+}  // namespace sphinx

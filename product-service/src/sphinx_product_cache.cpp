@@ -19,7 +19,7 @@ std::optional<std::string> SphinxProductCache::get(std::string_view key) {
 
 void SphinxProductCache::put(std::string_view key, std::string_view value,
                              std::uint32_t ttl_seconds) {
-  if (ttl_seconds == 0 || ttl_seconds > 60U * 60U * 24U * 30U) {
+  if (!valid_product_cache_ttl(ttl_seconds)) {
     throw std::invalid_argument{"cache TTL must be in 1..30 days"};
   }
   try {
@@ -40,4 +40,4 @@ void SphinxProductCache::erase(std::string_view key) {
   }
 }
 
-}  // 命名空间 sphinx
+}  // namespace sphinx

@@ -69,8 +69,8 @@ sphinx::ProductHttpConfig load_config() {
       static_cast<std::uint16_t>(unsigned_environment_value("SPHINX_HTTP_PORT", 8080, 1, 65535));
   config.worker_count =
       static_cast<std::uint32_t>(unsigned_environment_value("SPHINX_HTTP_WORKERS", 4, 1, 64));
-  config.cache_policy.ttl_seconds = static_cast<std::uint32_t>(
-      unsigned_environment_value("SPHINX_CACHE_TTL_SECONDS", 30, 1, 2'592'000));
+  config.cache_policy.ttl_seconds = static_cast<std::uint32_t>(unsigned_environment_value(
+      "SPHINX_CACHE_TTL_SECONDS", 30, 1, sphinx::max_product_cache_ttl_seconds));
   return config;
 }
 
@@ -96,7 +96,7 @@ bool wake_control_thread(std::thread& control_thread) noexcept {
   return false;
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
   sigset_t shutdown_signals;

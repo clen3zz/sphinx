@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <sphinx/product_codec.h>
 
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -52,6 +53,17 @@ TEST(ProductCodecTest, SupportsUtf8AndMaximumNameLength) {
 TEST(ProductCodecTest, KeyIsNamespacedAndRejectsZero) {
   EXPECT_EQ(sphinx::make_product_cache_key(42), "product:v2:42");
   EXPECT_THROW(sphinx::make_product_cache_key(0), std::invalid_argument);
+}
+
+TEST(ProductRulesTest, UpdateVersionAndCacheTtlBoundaries) {
+  const sphinx::UpdateProductRequest request{1, "tea", 199, 1};
+  EXPECT_TRUE(sphinx::valid_update_request(request));
+  EXPECT_FALSE(sphinx::valid_update_request({1, "tea", 199, 0}));
+  EXPECT_FALSE(
+      sphinx::valid_update_request({1, "tea", 199, std::numeric_limits<std::uint64_t>::max()}));
+  EXPECT_FALSE(sphinx::valid_product_cache_ttl(0));
+  EXPECT_TRUE(sphinx::valid_product_cache_ttl(sphinx::max_product_cache_ttl_seconds));
+  EXPECT_FALSE(sphinx::valid_product_cache_ttl(sphinx::max_product_cache_ttl_seconds + 1));
 }
 
 }  // namespace

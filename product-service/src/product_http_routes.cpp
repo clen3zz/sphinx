@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
-#include <limits>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
@@ -178,12 +177,14 @@ std::optional<UpdateProductRequest> parse_update_request(const httplib::Request&
   std::uint64_t price_cents = 0;
   std::uint64_t expected_version = 0;
   if (!parse_unsigned_integer(body.at("price_cents"), &price_cents) ||
-      !parse_unsigned_integer(body.at("expected_version"), &expected_version) ||
-      expected_version == 0 || expected_version == std::numeric_limits<std::uint64_t>::max() ||
-      !valid_product(Product{id, name, price_cents, 1})) {
+      !parse_unsigned_integer(body.at("expected_version"), &expected_version)) {
     return std::nullopt;
   }
-  return UpdateProductRequest{id, std::move(name), price_cents, expected_version};
+  UpdateProductRequest update{id, std::move(name), price_cents, expected_version};
+  if (!valid_update_request(update)) {
+    return std::nullopt;
+  }
+  return update;
 }
 
 void handle_get_result(httplib::Response& response, const GetProductResult& result) {

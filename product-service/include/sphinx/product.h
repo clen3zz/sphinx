@@ -21,6 +21,12 @@ struct Product {
 
 inline constexpr std::uint64_t max_product_price_cents = 1'000'000'000'000ULL;
 inline constexpr std::size_t max_product_name_bytes = 128;
+inline constexpr std::uint32_t max_product_cache_ttl_seconds = 30U * 24U * 60U * 60U;
+
+/// 更大的过期值会被 Memcached 文本协议解释为绝对 UNIX 时间戳。
+constexpr bool valid_product_cache_ttl(std::uint32_t seconds) noexcept {
+  return seconds != 0 && seconds <= max_product_cache_ttl_seconds;
+}
 
 /// 校验完整商品数据，包括 UTF-8 编码及名称中不能出现控制字符。
 bool valid_product(const Product& product) noexcept;
@@ -31,6 +37,9 @@ struct UpdateProductRequest {
   std::uint64_t price_cents = 0;
   std::uint64_t expected_version = 0;
 };
+
+/// 校验更新请求的字段和可递增的期望版本。
+bool valid_update_request(const UpdateProductRequest& request) noexcept;
 
 /// 更新成功后返回的 version 等于 expected_version + 1。
 enum class ProductStatus : std::uint8_t {
@@ -78,4 +87,4 @@ class CacheError final : public std::runtime_error {
   explicit CacheError(const std::string& message) : std::runtime_error{message} {}
 };
 
-}  // 命名空间 sphinx
+}  // namespace sphinx

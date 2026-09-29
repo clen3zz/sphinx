@@ -7,6 +7,7 @@ add_library(sphinx_json INTERFACE)
 target_include_directories(sphinx_json INTERFACE ${nlohmann_json_SOURCE_DIR}/include)
 
 add_library(sphinx_product_core STATIC
+        src/product_rules.cpp
         src/product_codec.cpp
         src/product_service.cpp
         src/sphinx_product_cache.cpp

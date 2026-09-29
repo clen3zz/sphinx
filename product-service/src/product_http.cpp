@@ -14,8 +14,7 @@ namespace {
 ProductHttpConfig checked_config(ProductHttpConfig config) {
   if (config.bind_address.empty() || config.port == 0 || config.worker_count == 0 ||
       config.worker_count > 64 || config.cache_nodes.empty() || config.cache_timeout.count() <= 0 ||
-      config.cache_policy.ttl_seconds == 0 ||
-      config.cache_policy.ttl_seconds > 60U * 60U * 24U * 30U || config.mysql.host.empty() ||
+      !valid_product_cache_ttl(config.cache_policy.ttl_seconds) || config.mysql.host.empty() ||
       config.mysql.port == 0 || config.mysql.user.empty() || config.mysql.database.empty() ||
       config.mysql.connect_timeout_seconds == 0 || config.mysql.read_timeout_seconds == 0 ||
       config.mysql.write_timeout_seconds == 0) {
@@ -39,7 +38,7 @@ struct WorkerContext final {
   ProductService service;
 };
 
-}  // 匿名命名空间
+}  // namespace
 
 struct ProductHttpServer::Impl {
   explicit Impl(ProductHttpConfig&& source_config) : config{std::move(source_config)} {}
@@ -110,4 +109,4 @@ void ProductHttpServer::stop() noexcept {
   _impl->server.stop();
 }
 
-}  // 命名空间 sphinx
+}  // namespace sphinx

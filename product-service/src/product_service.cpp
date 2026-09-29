@@ -3,7 +3,6 @@
 #include <sphinx/product_service.h>
 
 #include <cstdint>
-#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -27,7 +26,7 @@ ProductStatus status_from_store_error(StoreErrorCode code) noexcept {
 
 ProductService::ProductService(ProductStore& store, ProductCache& cache, ProductCachePolicy policy)
     : _store{store}, _cache{cache}, _policy{policy} {
-  if (_policy.ttl_seconds == 0 || _policy.ttl_seconds > 60U * 60U * 24U * 30U) {
+  if (!valid_product_cache_ttl(_policy.ttl_seconds)) {
     throw std::invalid_argument{"product cache TTL must be in 1..30 days"};
   }
 }
@@ -85,9 +84,7 @@ GetProductResult ProductService::get(std::uint64_t id, bool bypass_cache) {
 }
 
 UpdateProductResult ProductService::update(const UpdateProductRequest& request) {
-  if (request.id == 0 || request.expected_version == 0 ||
-      request.expected_version == std::numeric_limits<std::uint64_t>::max() ||
-      !valid_product(Product{request.id, request.name, request.price_cents, 1})) {
+  if (!valid_update_request(request)) {
     return {ProductStatus::InvalidArgument, std::nullopt, false};
   }
   // 先让数据库完成版本检查和事务提交；在结果明确前不修改缓存。
@@ -121,4 +118,4 @@ UpdateProductResult ProductService::update(const UpdateProductRequest& request) 
   return {ProductStatus::Ok, std::move(store_result.product), invalidation_failed};
 }
 
-}  // 命名空间 sphinx
+}  // namespace sphinx
