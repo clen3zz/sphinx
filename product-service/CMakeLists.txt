@@ -15,8 +15,8 @@ if (GTEST_FOUND)
     add_test(NAME sphinx_product_tests COMMAND sphinx_product_tests)
 endif ()
 
-# 默认构建不依赖 MySQL/HTTP，也不会下载可选依赖。
-option(BUILD_MYSQL_SPHINX_DEMO "Build the optional MySQL product HTTP service" OFF)
+# 默认构建 MySQL 商品服务；需要精简构建时可显式关闭。
+option(BUILD_MYSQL_SPHINX_DEMO "Build the MySQL product HTTP service" ON)
 if (BUILD_MYSQL_SPHINX_DEMO)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(MYSQLCLIENT REQUIRED IMPORTED_TARGET mysqlclient)

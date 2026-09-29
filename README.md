@@ -50,7 +50,7 @@ TCP 客户端
 
 脚本会安装编译器、CMake、Ninja、ccache、GoogleTest、Python 和网络测试所需工具。
 `memtier_benchmark` 仅用于可选的基准测试，不属于核心构建依赖。
-MySQL 商品服务另需 MySQL 服务端、`libmysqlclient` 开发包；HTTP 和 JSON 头文件由启用该示例时的 CMake 获取。
+默认构建包含 MySQL 商品服务。脚本会安装 `libmysqlclient` 开发包；HTTP 和 JSON 头文件由 CMake 获取。运行服务时还需要 MySQL 服务端。
 
 ### 编译与测试
 
@@ -61,15 +61,15 @@ cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
 ```
 
-### MySQL + Sphinx 商品服务（可选）
+### MySQL + Sphinx 商品服务
 
-MySQL 是商品记录的权威存储，Sphinx 是可重建的读取缓存。启用示例后会生成
+MySQL 是商品记录的权威存储，Sphinx 是可重建的读取缓存。默认构建会生成
 `sphinx-product-service`。该服务通过 `SPHINX_MYSQL_USER`、`SPHINX_MYSQL_PASSWORD`、
 `SPHINX_MYSQL_DATABASE` 连接数据库；可选配置包括 `SPHINX_MYSQL_HOST`、
 `SPHINX_MYSQL_PORT`、`SPHINX_CACHE_NODES`、`SPHINX_HTTP_BIND` 和 `SPHINX_HTTP_PORT`。
 
 ```bash
-cmake -S . -B build -G Ninja -DBUILD_MYSQL_SPHINX_DEMO=ON
+cmake -S . -B build -G Ninja
 cmake --build build -j"$(nproc)"
 # 先启动 Sphinx，并配置上述 SPHINX_MYSQL_* 变量，再启动 HTTP 服务
 ./build/product-service/sphinx-product-service

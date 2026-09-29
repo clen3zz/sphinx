@@ -22,6 +22,7 @@ case "${ID:-}" in
             ccache
             git
             libgtest-dev
+            libmysqlclient-dev
             netcat-openbsd
             ninja-build
             pkg-config
@@ -38,6 +39,7 @@ case "${ID:-}" in
             ccache
             git
             gtest-devel
+            mysql-devel
             ninja-build
             nmap-ncat
             pkgconf-pkg-config
