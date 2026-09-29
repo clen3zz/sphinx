@@ -93,6 +93,13 @@ curl -i http://127.0.0.1:8080/products/42
 
 脚本缺少数据库凭据时会报错，不会把跳过测试当作验收成功。
 
+### 一次真实数据库验收记录（2026-09-29）
+
+- 环境：代码版本 `4bb56e0`，WSL Ubuntu 26.04、MySQL 8.4.11；使用导入 `product-service/schema.sql` 的独立临时数据库和测试账号。
+- 执行：配置上述五个 `SPHINX_TEST_MYSQL_*` 变量后，运行 `./scripts/verify_mysql_sphinx.sh cmake-build-debug-wsl`。脚本连接真实 MySQL，并启动本地 Sphinx 缓存节点与商品 HTTP 服务完成黑盒验证。
+- 结果：`MySqlProductStoreIntegrationTest` **3/3 通过**；HTTP 集成测试 **6/6 通过**。本次严格验收没有跳过测试。
+- 收尾：临时数据库和账号已删除，测试期间启动的 MySQL 服务已停止。此记录只证明上述环境和代码版本的一次验收结果，不代表长期运行或故障场景已验证。
+
 ## 文档
 
 - [架构与调用链](docs/ARCHITECTURE.md)
