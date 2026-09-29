@@ -236,12 +236,12 @@ TEST(ClusterClientTest, HandlesPartialResponsesAndBinaryValues) {
 TEST(ClusterClientTest, SetSendsRelativeTtlWithoutChangingLegacyRequest) {
   FakeServer server{[](int client) {
     const auto request = read_request(client);
-    EXPECT_EQ(request, "set product:v1:1 0 45 3\r\ntea\r\n");
+    EXPECT_EQ(request, "set product:v2:1 0 45 3\r\ntea\r\n");
     send_chunks(client, "STORED\r\n");
   }};
   server.start();
   sphinx::ClusterClient client{node_spec(server.port())};
-  EXPECT_TRUE(client.set("product:v1:1", "tea", 45));
+  EXPECT_TRUE(client.set("product:v2:1", "tea", 45));
 }
 
 TEST(ClusterClientTest, RejectsAbsoluteTimestampRangeBeforeIo) {

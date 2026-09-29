@@ -1,61 +1,59 @@
-# Sphinx：先看懂它怎样运转
+# 架构与调用链
 
-**一句话：**Sphinx 是 Linux 上的内存 KV 缓存，接受 Memcached 文本命令。它用多个工作线程分管不同的 key，并用内存段和哈希索引保存数据。仓库还提供一个**可选、独立运行**的商品 HTTP 服务：MySQL 保存商品原始数据，Sphinx 只缓存查询结果；MySQL 并未嵌入缓存节点。
+## 项目边界
 
-## 两个进程、五块职责
+本项目有两个服务进程。`sphinx-product-service` 提供商品 HTTP 接口并连接 MySQL；`sphinxd` 是可部署多个实例的内存缓存节点。MySQL 保存商品的权威数据，缓存丢失、过期或淘汰后可以从 MySQL 重建。缓存节点不直接连接 MySQL，商品服务也不共享缓存节点的存储内存。
 
 ```mermaid
 flowchart LR
-    HTTP[HTTP 客户端] --> P[商品服务进程<br/>HTTP 路由 → ProductService]
-    P --> M[(MySQL：商品权威数据)]
-    P --> C[SphinxProductCache<br/>ClusterClient]
-    CLI[Memcached 客户端或 sphinx-cluster] --> N
-    C --> N[Sphinx 节点：TCP 入口]
-    N --> W[Server + Reactor<br/>按 key 分发到所属 Worker]
-    W --> L[execute_command<br/>Log + Index]
+    U[HTTP 客户端] --> H[商品 HTTP 服务]
+    H --> B[ProductService]
+    B --> M[(MySQL products)]
+    B --> C[SphinxProductCache / ClusterClient]
+    C --> R{一致性哈希选节点}
+    R --> N1[sphinxd 节点 A]
+    R --> N2[sphinxd 节点 B]
+    N1 --> W1[按 key 选 Worker]
+    N2 --> W2[按 key 选 Worker]
+    W1 --> L1[Log + Index]
+    W2 --> L2[Log + Index]
 ```
 
-| 部分 | 负责什么 | 为什么这样分 |
+这是**静态分片缓存**：商品服务根据相同的节点列表和哈希环选目标节点；节点之间不复制数据，也不协商成员变更。节点内部再用 `hash(key) % worker_count` 找到拥有该 key 的 Worker。改变节点列表或 Worker 数量会改变部分 key 的位置；旧缓存不会自动迁移，之后的查询可通过 MySQL 重新回填。
+
+## 商品请求
+
+| 请求 | 业务顺序 | 对外结果 |
 | --- | --- | --- |
-| 网络与线程：`EpollReactor`、`TcpSocket`、`ReactorGroup` | `epoll` 收发；每个 Worker 有自己的事件循环，跨 Worker 用有界消息通道和 `eventfd` 唤醒 | 慢连接与跨线程通信不直接碰别人的存储 |
-| 协议与调度：`Parser`、`Server`、`Connection` | 拆 Memcached 命令、按 `hash(key) % worker数` 找负责人、聚合多键查询、按请求序号回包 | TCP 可以拆包，跨线程响应也可能乱序 |
-| 存储：`Log`、`Segment`、`Index` | 在预分配的内存段中追加对象；索引指向每个 key 的当前对象；过期和旧段回收会让缓存项消失 | 每个 Worker 独占一份存储，不用给每次读写加共享锁 |
-| 集群客户端：`ConsistentHashRing`、`ClusterClient` | 在**客户端**选 Sphinx 节点，复用 TCP 连接并执行 `get/set/delete` | 多节点路由不要求节点彼此通信；这里没有复制或自动故障转移 |
-| 可选商品服务：`ProductService`、`ProductStore`、`ProductCache` | HTTP 校验与 JSON、MySQL 事务更新、Sphinx 读缓存和提交后失效 | 业务规则只依赖存储/缓存接口；MySQL 是权威数据源，缓存故障可回源 |
+| `GET /products/{id}` | 查 Sphinx；命中且商品合法则返回。未命中、缓存损坏或缓存故障时查 MySQL，随后尽力按 TTL 回填。 | `X-Cache` 显示 `HIT`、`MISS`、`CORRUPT` 或 `BYPASS`。MySQL 明确无记录才返回 404。 |
+| `GET /products/{id}?fresh=1` | 跳过缓存，直接读 MySQL。 | 用于核对权威值；`X-Cache: BYPASS`。 |
+| `PUT /products/{id}` | MySQL 事务内锁定记录，检查 `expected_version`，执行带版本条件的更新并确认提交；成功后尽力删除缓存。 | 成功返回新版本；版本不匹配返回 409。缓存删除失败不撤销已提交的更新，并通过响应头提示。 |
 
-## 从哪里启动
+对应代码：[HTTP 路由](../product-service/src/product_http_routes.cpp)负责解析与响应；[ProductService](../product-service/src/product_service.cpp)负责缓存旁路策略；[MySQL 存储](../product-service/src/mysql_product_store.cpp)负责事务和错误分类；[缓存适配器](../product-service/src/sphinx_product_cache.cpp)调用集群客户端。商品的缓存 key 是 `product:v2:{id}`，值是含 `id`、`name`、`price_cents`、`version` 的 JSON；解码后还会校验字段和请求 ID。
 
-- **缓存节点**：[`sphinxd.cpp`](../sphinxd/src/sphinxd.cpp) 的 `main()` 解析配置，创建共享 `ServerStats` 和 `ReactorGroup`，再启动 N 个线程。每个 `run_server_thread()` 先用 `Memory::mmap()` 分到自己的内存，构造 `Server`（内含 `Log` 与 `Reactor`），通过 `Server::serve()` 建立带 `SO_REUSEPORT` 的监听 socket，进入 `EpollReactor::run()`。
-- **商品服务（需启用 `BUILD_MYSQL_SPHINX_DEMO`）**：[`product_main.cpp`](../product-service/src/product_main.cpp) 读取环境配置，构造 `ProductHttpServer`；它先初始化 MySQL 客户端运行时，再启动固定的 HTTP 工作线程。每个线程第一次处理请求时创建自己的 `WorkerContext`：`MySqlThreadGuard → MySqlProductStore → SphinxProductCache → ProductService`。MySQL 连接在首次实际查询时才建立。
-- [`sphinx-cluster.cpp`](../sphinxd/src/sphinx-cluster.cpp) 是命令行客户端入口，不是服务端。它创建 `ClusterClient`，用一致性哈希选择节点。
+### 一次未命中如何进入缓存节点
 
-## 最核心的调用链
+1. HTTP Worker 第一次处理请求时创建自己的 `MySqlProductStore`、`SphinxProductCache` 和 `ProductService`；MySQL 与缓存连接不跨 HTTP 工作线程共享。[对象构造](../product-service/src/product_http.cpp)按 MySQL 线程环境、存储、缓存、业务服务的生命周期顺序安排。
+2. `ClusterClient` 用 key 在一致性哈希环上选择一个 Sphinx 节点，复用到该节点的 TCP 连接，发送 Memcached 文本协议 `get`。[节点路由](../sphinxd/src/cluster.cpp)和[客户端传输](../sphinxd/src/cluster_client.cpp)相互分开。
+3. 节点的接入 Worker 通过 `epoll` 收取字节，[Server](../sphinxd/src/server/server.cpp)保留未完整的 TCP 帧，解析命令，并按 key 找到拥有存储分片的 Worker。若目标不是接入 Worker，请求通过有界跨线程通道传递；响应回到原 Worker 后按请求顺序写回。[Connection](../sphinxd/src/server/connection.cpp)管理回包顺序。
+4. 目标 Worker 在自己的 [Log 和 Index](../sphinxd/src/logmem.cpp) 中查找未过期的值。未找到时返回 `END`；商品服务再读 MySQL，并尽力发 `set` 回填。每个 Worker 独占自己的存储分片，因此普通存储操作不需要跨 Worker 共用一把锁。
 
-**缓存 `get key`：**`TcpSocket::on_pollin()` → `Server::recv()` 保留未完整的 TCP 字节 → `Server::process_one()` 调 `Parser::parse()` → `Server::dispatch_command()` 按 key 选 Worker → 目标 Worker 的 `Server::handle_command()` → `execute_command()` → `Log::find_value()` / `Index::find()` → `Server::send_response()` → 连接所属 Worker 的 `Connection::enqueue_response()` → `TcpSocket::send()` 返回 `VALUE ...` 或 `END`。如果目标就是当前 Worker，中间的跨线程 `Command/Response` 消息可以省去。
+`sphinxd` 还接受独立客户端的 `set/get/delete/stats/version`；`get` 支持多个 key，并由接入 Worker 聚合子结果。这些能力用于展示缓存节点本身的协议、跨线程路由和观察指标；商品 HTTP 接口当前只使用单键 `get/set/delete`。
 
-**商品查询：**HTTP 路由 `install_product_routes()` → `ProductService::get()` → `SphinxProductCache::get()` / `ClusterClient::get()` → 缓存未命中时 `MySqlProductStore::find()` → `ProductService` 尽力回填缓存 → HTTP 路由返回 JSON。商品修改则走 `ProductService::update()` → MySQL 带版本条件的事务更新并确认提交 → 尽力删除 Sphinx 缓存。
+## 一致性与故障边界
 
-## 对象归谁、线程怎样协作
+- MySQL 的版本条件更新防止两个更新者无声覆盖彼此。**提交结果未知**与明确失败分开处理：调用方不能据此盲目重试或假定缓存已失效。
+- 缓存写入和删除都是尽力而为。缓存故障时 GET 可回源；更新提交后若删除失败，普通 GET 仍可能读到旧值，直到 TTL 到期。
+- 一个较早开始的 GET 也可能在更新完成后回填旧值。当前实现没有分布式锁或版本栅栏，因此只承诺最终由 TTL 收敛；`fresh=1` 可读取 MySQL 权威值。
+- 缓存节点无副本和自动故障转移；一致性哈希负责选节点，不负责高可用或在线迁移。
 
-`run_server_thread()` 的 `Memory` 拥有 `mmap` 区域，`Server::Log` 只借用它；变量析构顺序保证先销毁 `Server` 再解除内存映射。一个 Worker 独占它的 `Server`、`Log`、连接表和 socket 事件循环。`EpollReactor` 用 `shared_ptr<Pollable>` 管理 socket 生命周期；`Connection` 保存 socket 的 `weak_ptr`。跨 Worker 的 `Command` / `Response` 自带字符串数据，用 `shared_ptr<Message>` 放入 `ReactorGroup` 的队列；共享的 `ServerStats` 用原子计数。只有通道、唤醒和统计等跨线程状态需要同步。
+## 建议阅读顺序
 
-商品服务的 `ProductService` 借用同一 HTTP 工作线程的 `ProductStore` 与 `ProductCache`；`WorkerContext` 按上述顺序构造、逆序析构。每个线程有自己的 MySQL 连接和 `ClusterClient`，不会把连接交给别的线程。缓存请求使用同步客户端，但它运行在 HTTP 工作线程里，不会阻塞 `sphinxd` 的 Reactor。
+1. [README 的商品演示](../README.md#跑通一个商品)：先看到 MySQL、HTTP 与两个缓存节点怎样协作。
+2. [ProductService](../product-service/src/product_service.cpp)与[MySQL 存储](../product-service/src/mysql_product_store.cpp)：理解读回填、版本更新与提交后失效。
+3. [ClusterClient](../sphinxd/src/cluster_client.cpp)与[Server](../sphinxd/src/server/server.cpp)：理解选节点和节点内按 key 选 Worker。
+4. [ReactorGroup](../sphinxd/src/reactor.cpp)、[Connection](../sphinxd/src/server/connection.cpp)与 [Log](../sphinxd/src/logmem.cpp)：再看跨线程、回包保序和分片存储。
 
-## 推荐先看的 10 个文件
+## 验证范围
 
-按顺序读，先建立缓存主链，再看可选业务层：
-
-1. [`sphinxd/src/sphinxd.cpp`](../sphinxd/src/sphinxd.cpp)：线程和内存从哪来。
-2. [`sphinxd/src/server/server.cpp`](../sphinxd/src/server/server.cpp)：请求在哪里拆包、路由、回包。
-3. [`sphinxd/src/reactor-epoll.cpp`](../sphinxd/src/reactor-epoll.cpp)：事件循环怎样驱动 `Server`。
-4. [`sphinxd/include/sphinx/protocol.h`](../sphinxd/include/sphinx/protocol.h)：看 `Parser` 的接口和 `parse()`；中间的大段状态机表可以跳过。
-5. [`sphinxd/src/server/connection.cpp`](../sphinxd/src/server/connection.cpp)：多键聚合与流水线响应保序。
-6. [`sphinxd/src/server/command_executor.cpp`](../sphinxd/src/server/command_executor.cpp)：命令如何落到存储操作。
-7. [`sphinxd/src/logmem.cpp`](../sphinxd/src/logmem.cpp)：追加写、索引更新、过期和段淘汰。
-8. [`sphinxd/src/cluster_client.cpp`](../sphinxd/src/cluster_client.cpp)：客户端如何路由并与缓存节点对话。
-9. [`product-service/src/product_http.cpp`](../product-service/src/product_http.cpp)：可选服务的线程与对象生命周期。
-10. [`product-service/src/product_service.cpp`](../product-service/src/product_service.cpp)：缓存优先读取、MySQL 更新和缓存失效规则。
-
-## 串一次真实请求
-
-假设数据库已有 `id=42` 的商品，客户端首次请求 `GET /products/42`。HTTP Worker 经路由调用 `ProductService::get(42)`，先向 Sphinx 发送 `get product:v1:42`。Sphinx 接入线程解析命令；如果 key 属于另一 Worker，就通过 `ReactorGroup` 发给该 Worker。它的 `Log::find_value()` 未找到，回 `END`；原接入线程按序把结果写回。`ClusterClient::get()` 将其解释为未命中，于是 `MySqlProductStore::find(42)` 从 MySQL 取出商品。`ProductService` 编码并尽力以 TTL 写回 Sphinx，最后 HTTP 返回商品 JSON，`X-Cache: MISS`。下次相同请求若缓存仍有效，直接在 Sphinx 命中，响应为 `X-Cache: HIT`，不再查询 MySQL。缓存可过期或提前淘汰，因此商品记录始终以 MySQL 为准。
+普通构建与 `ctest` 覆盖缓存协议、网络、集群路由和商品业务单元测试。MySQL 与 HTTP 集成测试需要独立测试数据库；未提供凭据时会跳过。要确认真实数据库链路，按 [README 的严格验收步骤](../README.md#严格集成验收)运行脚本。

@@ -99,8 +99,8 @@ Checks: >
 # 核心模块；先配置或重新配置构建目录
 ./scripts/tidy build-default
 
-# 完整 MySQL 模块；CLion 的 Debug 配置也应加入同一个 CMake 开关
-cmake -S . -B cmake-build-debug-wsl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_MYSQL_SPHINX_DEMO=ON -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+# 默认构建包含 MySQL 模块；Debug 静态检查可关闭预编译头
+cmake -S . -B cmake-build-debug-wsl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
 ./scripts/tidy cmake-build-debug-wsl --require-mysql
 ```
 
