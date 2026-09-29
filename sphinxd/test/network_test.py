@@ -159,15 +159,12 @@ def run_basic(address):
         if client.get_response() != ("foo", 42, b"bar"):
             raise AssertionError("get did not preserve flags/value")
 
-        client.send(b"add foo 0 0 3\r\nbaz\r\n")
-        if client.storage_response() != "NOT_STORED\r\n":
-            raise AssertionError("add overwrote an existing key")
-        client.send(b"replace foo 9 0 3\r\nbaz\r\n")
+        client.send(b"set foo 9 0 3\r\nbaz\r\n")
         if client.storage_response() != "STORED\r\n":
-            raise AssertionError("replace failed for an existing key")
+            raise AssertionError("set failed to overwrite an existing key")
         client.send(b"get foo\r\n")
         if client.get_response() != ("foo", 9, b"baz"):
-            raise AssertionError("replace did not preserve new flags/value")
+            raise AssertionError("set overwrite did not preserve new flags/value")
 
         # 大于 30 天的 exptime 表示绝对 Unix 时间戳。
         expired = str(int(time.time()) - 1).encode()
@@ -205,11 +202,7 @@ STATS_ORDER = [
     "get_hits",
     "get_misses",
     "cmd_set",
-    "cmd_add",
-    "cmd_replace",
     "cmd_delete",
-    "cmd_incr",
-    "cmd_decr",
 ]
 
 
@@ -228,7 +221,7 @@ def assert_stats(client, threads, expected):
 
 
 def run_protocol_extensions(address, threads):
-    """Exercise W2 commands and prove their process-wide counters."""
+    """Exercise retained commands and prove their process-wide counters."""
     client = Client(address)
     try:
         client.send(b"stats\r\n")
@@ -247,123 +240,45 @@ def run_protocol_extensions(address, threads):
 
         client.send(b"set ext-hit 7 0 2\r\n10\r\n")
         if client.storage_response() != "STORED\r\n":
-            raise AssertionError("set for arithmetic test failed")
-        client.send(b"add ext-add 2 0 2\r\n20\r\n")
+            raise AssertionError("set for multi-get test failed")
+        client.send(b"set ext-second 2 0 2\r\n20\r\n")
         if client.storage_response() != "STORED\r\n":
-            raise AssertionError("add for multi-get test failed")
-        client.send(b"replace ext-hit 8 0 2\r\n10\r\n")
-        if client.storage_response() != "STORED\r\n":
-            raise AssertionError("replace for stats test failed")
-        client.send(b"set ext-text 0 0 3\r\nabc\r\n")
-        if client.storage_response() != "STORED\r\n":
-            raise AssertionError("set for non-numeric test failed")
+            raise AssertionError("set for multi-get test failed")
 
-        client.send(b"get ext-hit missing ext-hit ext-add\r\n")
+        client.send(b"get ext-hit missing ext-hit ext-second\r\n")
         expected = [
-            ("ext-hit", 8, b"10"),
-            ("ext-hit", 8, b"10"),
-            ("ext-add", 2, b"20"),
+            ("ext-hit", 7, b"10"),
+            ("ext-hit", 7, b"10"),
+            ("ext-second", 2, b"20"),
         ]
         if client.get_multi_response() != expected:
             raise AssertionError("multi-get did not preserve hit order or duplicate keys")
 
-        client.send(b"delete ext-add\r\n")
+        client.send(b"delete ext-second\r\n")
         if client.storage_response() != "DELETED\r\n":
             raise AssertionError("delete did not remove an existing key")
-        client.send(b"add ext-add 2 0 2\r\n20\r\n")
+        client.send(b"set ext-second 2 0 2\r\n20\r\n")
         if client.storage_response() != "STORED\r\n":
-            raise AssertionError("add could not recreate a deleted key")
-        client.send(b"get ext-hit ext-add\r\n")
+            raise AssertionError("set could not recreate a deleted key")
+        client.send(b"get ext-hit ext-second\r\n")
         if client.get_multi_response() != [
-            ("ext-hit", 8, b"10"),
-            ("ext-add", 2, b"20"),
+            ("ext-hit", 7, b"10"),
+            ("ext-second", 2, b"20"),
         ]:
-            raise AssertionError("multi-get after delete/add was incorrect")
+            raise AssertionError("multi-get after delete/set was incorrect")
 
         client.send(b"delete absent-delete\r\n")
         if client.storage_response() != "NOT_FOUND\r\n":
             raise AssertionError("delete reported success for a missing key")
-        client.send(b"incr ext-hit 2\r\n")
-        if client.storage_response() != "12\r\n":
-            raise AssertionError("incr returned the wrong value")
-        client.send(b"decr ext-hit 99\r\n")
-        if client.storage_response() != "0\r\n":
-            raise AssertionError("decr did not clamp at zero")
-        client.send(b"incr ext-text 1\r\n")
-        if client.storage_response() != (
-                "CLIENT_ERROR cannot increment or decrement non-numeric value\r\n"
-        ):
-            raise AssertionError("incr accepted a non-numeric value")
-        client.send(b"incr absent-counter 1\r\n")
-        if client.storage_response() != "NOT_FOUND\r\n":
-            raise AssertionError("incr created a missing key")
-        client.send(b"decr absent-counter 1\r\n")
-        if client.storage_response() != "NOT_FOUND\r\n":
-            raise AssertionError("decr created a missing key")
-        client.send(b"incr ext-hit 18446744073709551616\r\n")
-        if client.storage_response() != "CLIENT_ERROR invalid numeric argument\r\n":
-            raise AssertionError("overflowing delta did not return CLIENT_ERROR")
-        client.send(b"version\r\n")
-        if client.storage_response() != "VERSION 1.5.16\r\n":
-            raise AssertionError("overflowing delta broke the following request")
-
         client.send(b"stats\r\n")
         expected_counts = {
             "cmd_get": 2,
             "get_hits": 5,
             "get_misses": 1,
-            "cmd_set": 2,
-            "cmd_add": 2,
-            "cmd_replace": 1,
+            "cmd_set": 3,
             "cmd_delete": 2,
-            "cmd_incr": 3,
-            "cmd_decr": 2,
         }
         assert_stats(client, threads, expected_counts)
-        return expected_counts
-    finally:
-        client.close()
-
-
-def run_concurrent_increments(address, threads, baseline):
-    """Concurrent clients must serialize one counter on its owning worker."""
-    client = Client(address)
-    try:
-        client.send(b"set concurrent-counter 0 0 1\r\n0\r\n")
-        if client.storage_response() != "STORED\r\n":
-            raise AssertionError("could not initialize concurrent counter")
-    finally:
-        client.close()
-
-    clients = 8
-    increments_per_client = 32
-
-    def increment_worker(_worker):
-        worker_client = Client(address)
-        try:
-            for _ in range(increments_per_client):
-                worker_client.send(b"incr concurrent-counter 1\r\n")
-                if worker_client.storage_response() is None:
-                    raise AssertionError("counter client received no response")
-        finally:
-            worker_client.close()
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=clients) as pool:
-        list(pool.map(increment_worker, range(clients)))
-
-    client = Client(address)
-    try:
-        client.send(b"get concurrent-counter\r\n")
-        expected_value = str(clients * increments_per_client).encode()
-        if client.get_response() != ("concurrent-counter", 0, expected_value):
-            raise AssertionError("concurrent increments lost an update")
-        client.send(b"stats\r\n")
-        expected = dict(baseline)
-        expected["cmd_set"] += 1
-        expected["cmd_incr"] += clients * increments_per_client
-        expected["cmd_get"] += 1
-        expected["get_hits"] += 1
-        assert_stats(client, threads, expected)
     finally:
         client.close()
 
@@ -435,9 +350,8 @@ def run_mixed_pipeline(address):
             b"set mixed-key 1 0 1\r\nx\r\n"
             b"get mixed-key mixed-missing\r\n"
             b"delete mixed-key\r\n"
-            b"add mixed-key 2 0 1\r\ny\r\n"
-            b"set mixed-counter 0 0 1\r\n1\r\n"
-            b"incr mixed-counter 2\r\n"
+            b"set mixed-key 2 0 1\r\ny\r\n"
+            b"set mixed-counter 0 0 1\r\n3\r\n"
             b"get mixed-key mixed-counter\r\n"
         )
         if client.storage_response() != "STORED\r\n":
@@ -447,11 +361,9 @@ def run_mixed_pipeline(address):
         if client.storage_response() != "DELETED\r\n":
             raise AssertionError("pipelined delete response was out of order")
         if client.storage_response() != "STORED\r\n":
-            raise AssertionError("pipelined add response was out of order")
+            raise AssertionError("pipelined set response was out of order")
         if client.storage_response() != "STORED\r\n":
             raise AssertionError("pipelined counter setup failed")
-        if client.storage_response() != "3\r\n":
-            raise AssertionError("pipelined incr response was out of order")
         if client.get_multi_response() != [
             ("mixed-key", 2, b"y"),
             ("mixed-counter", 0, b"3"),
@@ -605,8 +517,7 @@ def run_concurrent(address, worker):
 def run_suite(executable, threads):
     process, address = start_server(executable, threads)
     try:
-        baseline = run_protocol_extensions(address, threads)
-        run_concurrent_increments(address, threads, baseline)
+        run_protocol_extensions(address, threads)
         run_multi_get_edges(address)
         run_mixed_pipeline(address)
         run_concurrent_multi_get(address)

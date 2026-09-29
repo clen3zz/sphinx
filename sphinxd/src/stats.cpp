@@ -24,11 +24,7 @@ constexpr std::array<CounterInfo, static_cast<size_t>(Counter::Count)> kCounterN
     {Counter::GetHits, "get_hits"},
     {Counter::GetMisses, "get_misses"},
     {Counter::CmdSet, "cmd_set"},
-    {Counter::CmdAdd, "cmd_add"},
-    {Counter::CmdReplace, "cmd_replace"},
     {Counter::CmdDelete, "cmd_delete"},
-    {Counter::CmdIncr, "cmd_incr"},
-    {Counter::CmdDecr, "cmd_decr"},
 }};
 
 // 编译期断言：确保查找表项数与计数器总数一致，防止遗漏

@@ -20,29 +20,6 @@ static uint64_t current_time_seconds() {
       duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
 }
 
-// 解析以十进制字符存储的 64 位无符号整数（带严格溢出检测）
-static std::optional<uint64_t> parse_uint64_decimal(const Blob& blob) {
-  if (blob.empty()) {
-    return std::nullopt;
-  }
-
-  uint64_t value = 0;
-  for (char const digit : blob) {
-    if (digit < '0' || digit > '9') {
-      return std::nullopt;
-    }
-
-    const auto numeric_digit = static_cast<uint64_t>(digit - '0');
-    if (value > (std::numeric_limits<uint64_t>::max() - numeric_digit) / 10) {
-      return std::nullopt;
-    }
-
-    value = value * 10 + numeric_digit;
-  }
-
-  return value;
-}
-
 // Object 构造函数：在 placement new 分配的连续内存块中初始化头信息并将 key 和 blob 拷贝至尾部
 Object::Object(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration)
     : _key_size{static_cast<uint32_t>(key.size())},
@@ -333,47 +310,6 @@ bool Log::remove(const Key& key) {
   object->expire();
   _index.erase(key);
   return true;
-}
-
-// 原子递增数值键
-ArithmeticResult Log::incr(const Key& key, uint64_t delta) {
-  return update_counter(key, delta, true);
-}
-
-// 原子递减数值键
-ArithmeticResult Log::decr(const Key& key, uint64_t delta) {
-  return update_counter(key, delta, false);
-}
-
-// 统一计数器更新逻辑（自增/自减计算与重新追加写入）
-ArithmeticResult Log::update_counter(const Key& key, uint64_t delta, bool increment) {
-  // 1. 查询当前键值
-  const auto current = find_value(key);
-  if (!current) {
-    return {ArithmeticStatus::NotFound, 0};
-  }
-
-  // 2. 解析十进制整数字符串
-  const auto parsed = parse_uint64_decimal(current->blob);
-  if (!parsed) {
-    return {ArithmeticStatus::NonNumeric, 0};
-  }
-
-  // 3. 执行模 2^64 算术运算（遵循 Memcached 协议规范）
-  uint64_t updated;
-  if (increment) {
-    updated = parsed.value() + delta;
-  } else {
-    updated = parsed.value() < delta ? 0 : parsed.value() - delta;
-  }
-
-  // 4. 将新数值作为新对象追加写入日志内存
-  const auto encoded = std::to_string(updated);
-  if (!append(key, encoded, current->flags, current->expiration)) {
-    return {ArithmeticStatus::StorageFull, 0};
-  }
-
-  return {ArithmeticStatus::Success, updated};
 }
 
 // 淘汰头部最老的段，直至释放字节数满足回收目标

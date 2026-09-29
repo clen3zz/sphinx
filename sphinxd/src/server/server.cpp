@@ -182,17 +182,7 @@ size_t Server::process_one(const std::shared_ptr<Connection>& connection, std::s
 
   // 1. 处理数值溢出错误
   if (parser.number_overflow()) {
-    // 针对 Incr/Decr 算术溢出只消费命令头，允许后续流水线命令继续工作
-    const auto& parsed = parser.command();
-    const bool arithmetic_overflow = parsed && (std::holds_alternative<IncrCommand>(*parsed) ||
-                                                std::holds_alternative<DecrCommand>(*parsed));
-    if (arithmetic_overflow) {
-      const auto sequence = connection->next_request_sequence();
-      enqueue_response(connection, sequence, "CLIENT_ERROR invalid numeric argument\r\n");
-      return header_size;
-    }
-
-    // 存储类字段溢出则关闭连接
+    // 存储类字段溢出无法可靠定位后续包体边界，关闭连接。
     return std::numeric_limits<size_t>::max();
   }
 
@@ -219,31 +209,12 @@ size_t Server::process_one(const std::shared_ptr<Connection>& connection, std::s
 
         if constexpr (std::is_same_v<Parsed, SetCommand>) {
           process_storage_command(connection, sequence, data, command.key, command.flags,
-                                  command.expiration, command.body, Opcode::Set,
-                                  ServerStats::Counter::CmdSet, progress);
-        } else if constexpr (std::is_same_v<Parsed, AddCommand>) {
-          process_storage_command(connection, sequence, data, command.key, command.flags,
-                                  command.expiration, command.body, Opcode::Add,
-                                  ServerStats::Counter::CmdAdd, progress);
-        } else if constexpr (std::is_same_v<Parsed, ReplaceCommand>) {
-          process_storage_command(connection, sequence, data, command.key, command.flags,
-                                  command.expiration, command.body, Opcode::Replace,
-                                  ServerStats::Counter::CmdReplace, progress);
+                                  command.expiration, command.body, progress);
         } else if constexpr (std::is_same_v<Parsed, GetCommand>) {
           process_get_command(connection, sequence, command);
         } else if constexpr (std::is_same_v<Parsed, DeleteCommand>) {
           _stats->increment(ServerStats::Counter::CmdDelete);
           dispatch_command(make_command(connection, sequence, Opcode::Delete, command.key));
-        } else if constexpr (std::is_same_v<Parsed, IncrCommand>) {
-          _stats->increment(ServerStats::Counter::CmdIncr);
-          auto outgoing = make_command(connection, sequence, Opcode::Incr, command.key);
-          outgoing.delta = command.delta;
-          dispatch_command(std::move(outgoing));
-        } else if constexpr (std::is_same_v<Parsed, DecrCommand>) {
-          _stats->increment(ServerStats::Counter::CmdDecr);
-          auto outgoing = make_command(connection, sequence, Opcode::Decr, command.key);
-          outgoing.delta = command.delta;
-          dispatch_command(std::move(outgoing));
         } else if constexpr (std::is_same_v<Parsed, VersionCommand>) {
           dispatch_command(make_command(connection, sequence, Opcode::Version, {}));
         } else if constexpr (std::is_same_v<Parsed, StatsCommand>) {
@@ -295,7 +266,6 @@ void Server::process_get_command(const std::shared_ptr<Connection>& connection, 
 void Server::process_storage_command(const std::shared_ptr<Connection>& connection,
                                      uint64_t sequence, std::string_view data, std::string_view key,
                                      uint64_t flags, uint64_t expiration, const StorageBody& body,
-                                     Opcode op, ServerStats::Counter counter,
                                      RequestProgress& progress) {
   const auto frame_size = body.frame_size();
   if (!frame_size || !body.available(data)) {
@@ -317,12 +287,12 @@ void Server::process_storage_command(const std::shared_ptr<Connection>& connecti
   }
 
   const auto value = data.substr(body.offset, body.size);
-  auto outgoing = make_command(connection, sequence, op, key);
+  auto outgoing = make_command(connection, sequence, Opcode::Set, key);
   outgoing.blob.assign(value);
   outgoing.flags = static_cast<uint32_t>(flags);
   outgoing.expiration = normalize_expiration(expiration);
 
-  _stats->increment(counter);
+  _stats->increment(ServerStats::Counter::CmdSet);
   dispatch_command(std::move(outgoing));
 }
 

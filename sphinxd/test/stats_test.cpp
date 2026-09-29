@@ -15,9 +15,8 @@ namespace {
 using ServerStats = sphinx::ServerStats;
 using Counter = ServerStats::Counter;
 
-constexpr std::array<Counter, 9> kCounters = {
-    Counter::CmdGet,     Counter::GetHits,   Counter::GetMisses, Counter::CmdSet,  Counter::CmdAdd,
-    Counter::CmdReplace, Counter::CmdDelete, Counter::CmdIncr,   Counter::CmdDecr,
+constexpr std::array<Counter, 5> kCounters = {
+    Counter::CmdGet, Counter::GetHits, Counter::GetMisses, Counter::CmdSet, Counter::CmdDelete,
 };
 
 TEST(ServerStatsTest, CountersStartAtZero) {
@@ -35,11 +34,7 @@ TEST(ServerStatsTest, CountersStartAtZero) {
             "STAT get_hits 0\r\n"
             "STAT get_misses 0\r\n"
             "STAT cmd_set 0\r\n"
-            "STAT cmd_add 0\r\n"
-            "STAT cmd_replace 0\r\n"
             "STAT cmd_delete 0\r\n"
-            "STAT cmd_incr 0\r\n"
-            "STAT cmd_decr 0\r\n"
             "END\r\n");
 }
 
@@ -57,11 +52,7 @@ TEST(ServerStatsTest, RenderUsesFixedOrder) {
             "STAT get_hits 1\r\n"
             "STAT get_misses 1\r\n"
             "STAT cmd_set 1\r\n"
-            "STAT cmd_add 1\r\n"
-            "STAT cmd_replace 1\r\n"
             "STAT cmd_delete 1\r\n"
-            "STAT cmd_incr 1\r\n"
-            "STAT cmd_decr 1\r\n"
             "END\r\n");
 }
 

@@ -29,11 +29,7 @@ class ServerStats {
     GetHits,
     GetMisses,
     CmdSet,
-    CmdAdd,
-    CmdReplace,
     CmdDelete,
-    CmdIncr,
-    CmdDecr,
     Count,
   };
 

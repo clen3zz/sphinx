@@ -5,16 +5,13 @@
 #include <sphinx/protocol.h>
 
 #include <cstdint>
-#include <limits>
 #include <string>
 #include <vector>
 
 namespace {
 
-using sphinx::DecrCommand;
 using sphinx::DeleteCommand;
 using sphinx::GetCommand;
-using sphinx::IncrCommand;
 using sphinx::Parser;
 using sphinx::ParseStatus;
 using sphinx::SetCommand;
@@ -171,36 +168,22 @@ TEST(ProtocolTest, parse_delete) {
   ASSERT_EQ(command->key, "gone");
 }
 
-TEST(ProtocolTest, parse_incr_and_decr_delta) {
-  {
+TEST(ProtocolTest, removed_commands_are_invalid) {
+  for (const auto command :
+       {"add key 0 0 1\r\n", "replace key 0 0 1\r\n", "incr key 1\r\n", "decr key 1\r\n"}) {
     Parser parser;
-    auto msg = std::string{"incr counter 0\r\n"};
-    ASSERT_EQ(parser.parse(msg), msg.size());
-    const auto* command = command_as<IncrCommand>(parser);
-    ASSERT_NE(command, nullptr);
-    ASSERT_EQ(command->key, "counter");
-    ASSERT_EQ(command->delta, 0U);
-  }
-  {
-    Parser parser;
-    auto msg = std::string{"decr counter 18446744073709551615\r\n"};
-    ASSERT_EQ(parser.parse(msg), msg.size());
-    const auto* command = command_as<DecrCommand>(parser);
-    ASSERT_NE(command, nullptr);
-    ASSERT_EQ(command->delta, std::numeric_limits<uint64_t>::max());
-    ASSERT_FALSE(parser.number_overflow());
+    ASSERT_EQ(parser.parse(command), std::string_view(command).size());
+    EXPECT_EQ(parser.status(), ParseStatus::Invalid);
+    EXPECT_FALSE(parser.command().has_value());
   }
 }
 
-TEST(ProtocolTest, parse_delta_overflow_is_reported_without_losing_opcode) {
+TEST(ProtocolTest, set_number_overflow_is_reported) {
   Parser parser;
-  auto msg = std::string{"incr counter 18446744073709551616\r\n"};
+  auto msg = std::string{"set key 0 0 18446744073709551616\r\n"};
   ASSERT_EQ(parser.parse(msg), msg.size());
   ASSERT_TRUE(parser.number_overflow());
-  ASSERT_TRUE(parser.command().has_value());
-  const auto* command = command_as<IncrCommand>(parser);
-  ASSERT_NE(command, nullptr);
-  EXPECT_EQ(command->key, "counter");
+  ASSERT_FALSE(parser.command().has_value());
 }
 
 TEST(ProtocolTest, parse_status_distinguishes_incomplete_and_invalid_headers) {
@@ -242,7 +225,7 @@ TEST(ProtocolTest, storage_body_size_overflow_is_safe) {
 
 TEST(ProtocolTest, incomplete_header_requests_more_data) {
   for (const auto& msg :
-       {std::string{"get first"}, std::string{"delete first\r"}, std::string{"incr first 1"}}) {
+       {std::string{"get first"}, std::string{"delete first\r"}, std::string{"set first 0 0 1"}}) {
     Parser parser;
     ASSERT_EQ(parser.parse(msg), 0U);
     ASSERT_EQ(parser.status(), ParseStatus::Incomplete);
@@ -251,7 +234,7 @@ TEST(ProtocolTest, incomplete_header_requests_more_data) {
 }
 
 TEST(ProtocolTest, parse_mixed_pipeline_one_header_at_a_time) {
-  std::string_view msg = "get first second\r\ndelete old\r\nincr count 7\r\ndecr count 2\r\n";
+  std::string_view msg = "get first second\r\ndelete old\r\nset count 0 0 1\r\n7\r\n";
 
   Parser get;
   auto get_consumed = get.parse(msg);
@@ -269,19 +252,13 @@ TEST(ProtocolTest, parse_mixed_pipeline_one_header_at_a_time) {
   ASSERT_EQ(remove_command->key, "old");
   msg.remove_prefix(remove_consumed);
 
-  Parser incr;
-  auto incr_consumed = incr.parse(msg);
-  ASSERT_EQ(incr_consumed, 14U);
-  const auto* incr_command = command_as<IncrCommand>(incr);
-  ASSERT_NE(incr_command, nullptr);
-  ASSERT_EQ(incr_command->delta, 7U);
-  msg.remove_prefix(incr_consumed);
-
-  Parser decr;
-  ASSERT_EQ(decr.parse(msg), msg.find("\r\n") + 2);
-  const auto* decr_command = command_as<DecrCommand>(decr);
-  ASSERT_NE(decr_command, nullptr);
-  ASSERT_EQ(decr_command->delta, 2U);
+  Parser set;
+  auto set_consumed = set.parse(msg);
+  ASSERT_EQ(set_consumed, 17U);
+  const auto* set_command = command_as<SetCommand>(set);
+  ASSERT_NE(set_command, nullptr);
+  ASSERT_EQ(set_command->key, "count");
+  ASSERT_EQ(set_command->body.view(msg), std::optional<std::string_view>{"7"});
 }
 
 TEST(ProtocolTest, invalid_complete_command_does_not_consume_next_command) {

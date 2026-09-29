@@ -7,21 +7,11 @@
 namespace sphinx {
 namespace {
 
-// 执行存储类修改命令（Set、Add、Replace、Delete、Incr、Decr）
+// 执行存储类修改命令（Set、Delete）
 ExecutionResult execute_storage(Log& log, const Command& command) {
   switch (command.op) {
-    // 1. 写入类命令（Set / Add / Replace）
-    case Opcode::Set:
-    case Opcode::Add:
-    case Opcode::Replace: {
-      // Add 要求键不存在；Replace 要求键必须已存在
-      if (command.op != Opcode::Set) {
-        const bool found = static_cast<bool>(log.find_value(command.key));
-        if ((command.op == Opcode::Add && found) || (command.op == Opcode::Replace && !found)) {
-          return {"NOT_STORED\r\n"};
-        }
-      }
-
+    // 1. 写入命令
+    case Opcode::Set: {
       // 执行日志内存追加写入
       return log.append(command.key, command.blob, command.flags, command.expiration)
                  ? ExecutionResult{"STORED\r\n"}
@@ -31,24 +21,6 @@ ExecutionResult execute_storage(Log& log, const Command& command) {
     // 2. 删除命令（Delete）
     case Opcode::Delete:
       return {log.remove(command.key) ? "DELETED\r\n" : "NOT_FOUND\r\n"};
-
-    // 3. 算术自增/自减命令（Incr / Decr）
-    case Opcode::Incr:
-    case Opcode::Decr: {
-      const auto [status, val] = command.op == Opcode::Incr ? log.incr(command.key, command.delta)
-                                                            : log.decr(command.key, command.delta);
-      switch (status) {
-        case ArithmeticStatus::Success:
-          return {to_string(val) + "\r\n"};
-        case ArithmeticStatus::NotFound:
-          return {"NOT_FOUND\r\n"};
-        case ArithmeticStatus::NonNumeric:
-          return {"CLIENT_ERROR cannot increment or decrement non-numeric value\r\n"};
-        case ArithmeticStatus::StorageFull:
-          return {"SERVER_ERROR out of memory storing object\r\n"};
-      }
-      break;
-    }
 
     case Opcode::Get:
     case Opcode::Version:
@@ -109,11 +81,7 @@ ExecutionResult execute_command(Log& log, ServerStats& stats, const Command& com
       return execute_get(log, stats, command);
 
     case Opcode::Set:
-    case Opcode::Add:
-    case Opcode::Replace:
     case Opcode::Delete:
-    case Opcode::Incr:
-    case Opcode::Decr:
       return execute_storage(log, command);
   }
 

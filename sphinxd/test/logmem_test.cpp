@@ -8,13 +8,10 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
-#include <limits>
 #include <random>
 #include <string>
-#include <string_view>
 #include <type_traits>
 
-using sphinx::ArithmeticStatus;
 using sphinx::Log;
 using sphinx::LogConfig;
 
@@ -117,103 +114,4 @@ TEST(LogTest, remove_handles_missing_expired_and_overwritten_values) {
   ASSERT_TRUE(log.append("expired", "value", 0, 1));
   ASSERT_FALSE(log.remove("expired"));
   ASSERT_FALSE(log.find_value("expired").has_value());
-}
-
-TEST(LogTest, incr_and_decr_update_decimal_value_and_preserve_metadata) {
-  alignas(std::max_align_t) std::array<char, 4096> memory;
-  Log log{LogConfig{memory.data(), memory.size(), 128}};
-  auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
-                                       std::chrono::system_clock::now().time_since_epoch())
-                                       .count());
-
-  ASSERT_TRUE(log.append("counter", "0041", 7, now + 3600));
-  const auto [incremented_status, incremented_value] = log.incr("counter", 1);
-  ASSERT_EQ(incremented_status, ArithmeticStatus::Success);
-  ASSERT_EQ(incremented_value, 42U);
-  auto after_increment = log.find_value("counter");
-  ASSERT_TRUE(after_increment.has_value());
-  ASSERT_EQ(after_increment->blob, "42");
-  ASSERT_EQ(after_increment->flags, 7U);
-  ASSERT_EQ(after_increment->expiration, now + 3600);
-
-  const auto [decremented_status, decremented_value] = log.decr("counter", 100);
-  ASSERT_EQ(decremented_status, ArithmeticStatus::Success);
-  ASSERT_EQ(decremented_value, 0U);
-  ASSERT_EQ(log.find("counter").value(), "0");
-}
-
-TEST(LogTest, incr_wraps_and_decr_saturates) {
-  alignas(std::max_align_t) std::array<char, 4096> memory;
-  Log log{LogConfig{memory.data(), memory.size(), 128}};
-
-  ASSERT_TRUE(log.append("counter", std::to_string(std::numeric_limits<uint64_t>::max())));
-  const auto [wrapped_status, wrapped_value] = log.incr("counter", 1);
-  ASSERT_EQ(wrapped_status, ArithmeticStatus::Success);
-  ASSERT_EQ(wrapped_value, 0U);
-  ASSERT_EQ(log.find("counter").value(), "0");
-
-  ASSERT_TRUE(log.append("counter", "3"));
-  const auto [saturated_status, saturated_value] = log.decr("counter", 4);
-  ASSERT_EQ(saturated_status, ArithmeticStatus::Success);
-  ASSERT_EQ(saturated_value, 0U);
-  ASSERT_EQ(log.find("counter").value(), "0");
-}
-
-TEST(LogTest, arithmetic_rejects_missing_expired_and_non_numeric_values) {
-  alignas(std::max_align_t) std::array<char, 4096> memory;
-  Log log{LogConfig{memory.data(), memory.size(), 128}};
-
-  ASSERT_EQ(log.incr("missing", 1).status, ArithmeticStatus::NotFound);
-  ASSERT_TRUE(log.append("text", "12x"));
-  const auto [invalid_status, invalid_value] = log.decr("text", 1);
-  ASSERT_EQ(invalid_status, ArithmeticStatus::NonNumeric);
-  ASSERT_EQ(log.find("text").value(), "12x");
-
-  ASSERT_TRUE(log.append("empty", ""));
-  ASSERT_EQ(log.incr("empty", 1).status, ArithmeticStatus::NonNumeric);
-  ASSERT_TRUE(log.append("signed", "+1"));
-  ASSERT_EQ(log.incr("signed", 1).status, ArithmeticStatus::NonNumeric);
-  ASSERT_TRUE(log.append("overflow", "18446744073709551616"));
-  ASSERT_EQ(log.incr("overflow", 1).status, ArithmeticStatus::NonNumeric);
-
-  ASSERT_TRUE(log.append("expired", "1", 0, 1));
-  ASSERT_EQ(log.decr("expired", 1).status, ArithmeticStatus::NotFound);
-}
-
-TEST(LogTest, arithmetic_rejects_non_decimal_values_without_mutating_metadata) {
-  alignas(std::max_align_t) std::array<char, 8192> memory;
-  Log log{LogConfig{memory.data(), memory.size(), 128}};
-  auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
-                                       std::chrono::system_clock::now().time_since_epoch())
-                                       .count());
-
-  // 计数器只接受非空 ASCII 十进制数字序列。
-  // 特别是，符号、空白和十进制表示法不能在 incr/decr 中被静默规范化。
-  static constexpr std::array<std::string_view, 8> invalid_values = {
-      "-1", "+1", " 1", "1 ", "\t1", "1\n", "1.0", "0x10",
-  };
-  for (size_t i = 0; i < invalid_values.size(); i++) {
-    auto key = std::string{"invalid-decimal-"} + std::to_string(i);
-    const auto flags = static_cast<uint32_t>(100 + i);
-    const auto expiration = now + 3600 + i;
-    ASSERT_TRUE(log.append(key, invalid_values[i], flags, expiration));
-
-    const auto [incremented_status, incremented_value] = log.incr(key, 1);
-    ASSERT_EQ(incremented_status, ArithmeticStatus::NonNumeric);
-    const auto [decremented_status, decremented_value] = log.decr(key, 1);
-    ASSERT_EQ(decremented_status, ArithmeticStatus::NonNumeric);
-
-    auto unchanged = log.find_value(key);
-    ASSERT_TRUE(unchanged.has_value());
-    EXPECT_EQ(unchanged->blob, invalid_values[i]);
-    EXPECT_EQ(unchanged->flags, flags);
-    EXPECT_EQ(unchanged->expiration, expiration);
-  }
-
-  // 拒绝无效值不应让已过期对象重新可见；两种操作仍应视为普通未命中。
-  ASSERT_TRUE(log.append("expired-invalid", "-1", 77, 1));
-  ASSERT_FALSE(log.find_value("expired-invalid").has_value());
-  ASSERT_EQ(log.incr("expired-invalid", 1).status, ArithmeticStatus::NotFound);
-  ASSERT_EQ(log.decr("expired-invalid", 1).status, ArithmeticStatus::NotFound);
-  ASSERT_FALSE(log.find_value("expired-invalid").has_value());
 }

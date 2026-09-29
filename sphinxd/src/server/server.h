@@ -60,11 +60,11 @@ class Server final {
   // 从连接接收缓冲区中解析并执行单个协议请求
   size_t process_one(const std::shared_ptr<Connection>& connection, std::string_view data);
 
-  // Set / Add / Replace 共享相同的数据帧校验和内部命令构造流程
+  // 校验 Set 的数据帧并构造内部命令。
   void process_storage_command(const std::shared_ptr<Connection>& connection, uint64_t sequence,
                                std::string_view data, std::string_view key, uint64_t flags,
-                               uint64_t expiration, const StorageBody& body, Opcode op,
-                               ServerStats::Counter counter, RequestProgress& progress);
+                               uint64_t expiration, const StorageBody& body,
+                               RequestProgress& progress);
 
   // 处理单键与 multi-get 查询
   void process_get_command(const std::shared_ptr<Connection>& connection, uint64_t sequence,

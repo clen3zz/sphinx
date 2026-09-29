@@ -59,36 +59,12 @@ struct SetCommand {
   StorageBody body;
 };
 
-struct AddCommand {
-  std::string key;
-  uint64_t flags = 0;
-  uint64_t expiration = 0;
-  StorageBody body;
-};
-
-struct ReplaceCommand {
-  std::string key;
-  uint64_t flags = 0;
-  uint64_t expiration = 0;
-  StorageBody body;
-};
-
 struct GetCommand {
   std::vector<std::string> keys;
 };
 
 struct DeleteCommand {
   std::string key;
-};
-
-struct IncrCommand {
-  std::string key;
-  uint64_t delta = 0;
-};
-
-struct DecrCommand {
-  std::string key;
-  uint64_t delta = 0;
 };
 
 struct VersionCommand {};
@@ -98,8 +74,7 @@ struct StatsCommand {};
 // 解析后的命令拥有全部文本字段。特别是，GetCommand 的键不指向接收缓冲区，
 // 因为解析器返回后 reactor 可能会立即压缩或释放该缓冲区。
 using ParsedCommand =
-    std::variant<SetCommand, AddCommand, ReplaceCommand, GetCommand, DeleteCommand, IncrCommand,
-                 DecrCommand, VersionCommand, StatsCommand>;
+    std::variant<SetCommand, GetCommand, DeleteCommand, VersionCommand, StatsCommand>;
 
 enum class ParseStatus : uint8_t {
   Incomplete,

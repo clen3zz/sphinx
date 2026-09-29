@@ -1,5 +1,3 @@
-option(BUILD_BENCHMARKS "Build Sphinx benchmarks" OFF)
-
 # MurmurHash3 是保持原样的第三方实现，其中的 switch 贯穿是有意设计。
 set_source_files_properties(third_party/murmurhash3/MurmurHash3.cpp PROPERTIES COMPILE_FLAGS "-Wno-implicit-fallthrough")
 
@@ -126,14 +124,4 @@ if (Python3_Interpreter_FOUND)
             break()
         endif ()
     endforeach ()
-endif ()
-
-if (BUILD_BENCHMARKS)
-    add_executable(sphinxd_perf
-            perf/buffer_perf.cpp
-            perf/logmem_perf.cpp
-            perf/main.cpp
-            perf/protocol_perf.cpp
-    )
-    target_link_libraries(sphinxd_perf PRIVATE sphinx_core benchmark pthread)
 endif ()

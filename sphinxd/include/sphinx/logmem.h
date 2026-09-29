@@ -123,20 +123,6 @@ struct Value {
   uint64_t expiration;
 };
 
-/// 原子计数器更新的结果状态。
-enum class ArithmeticStatus {
-  Success,
-  NotFound,
-  NonNumeric,
-  StorageFull,
-};
-
-/// 原子计数器更新的结果。
-struct ArithmeticResult {
-  ArithmeticStatus status;
-  uint64_t value;
-};
-
 /// 对象的日志存储引擎。
 class Log {
   Index<Key, Object*> _index;
@@ -161,10 +147,6 @@ class Log {
   bool append(const Key& key, const Blob& blob, uint32_t flags = 0, uint64_t expiration = 0);
   /// \brief 从日志中移除给定的 \ref key。
   bool remove(const Key& key);
-  /// \brief 在保留元数据的同时递增十进制计数器。
-  ArithmeticResult incr(const Key& key, uint64_t delta);
-  /// \brief 在保留元数据的同时递减十进制计数器。
-  ArithmeticResult decr(const Key& key, uint64_t delta);
 
  private:
   bool try_to_append(const Key& key, const Blob& blob, uint32_t flags, uint64_t expiration);
@@ -172,7 +154,6 @@ class Log {
                      uint64_t expiration);
   size_t expire(size_t reclaim_target);
   size_t expire(Segment* segment);
-  ArithmeticResult update_counter(const Key& key, uint64_t delta, bool increment);
 };
 
 /// @}

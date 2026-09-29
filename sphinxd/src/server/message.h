@@ -20,7 +20,6 @@ struct Command : Message {
   std::string blob;             // 键对应的载荷数据
   uint32_t flags = 0;           // Memcached 协议 flags
   uint64_t expiration = 0;      // 过期时间戳（秒）
-  uint64_t delta = 0;           // 自增/自减步长
   bool multi_get = false;       // 是否为 multi-get 聚合查询命令
   uint32_t key_index = 0;       // multi-get 命令中的子键索引位置
 
