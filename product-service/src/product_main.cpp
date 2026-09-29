@@ -76,24 +76,48 @@ sphinx::ProductHttpConfig load_config() {
 
 bool block_shutdown_signals(sigset_t* wait_set, sigset_t* previous_mask) noexcept {
   if (sigemptyset(wait_set) != 0 || sigaddset(wait_set, SIGINT) != 0 ||
-      sigaddset(wait_set, SIGTERM) != 0) {
+      sigaddset(wait_set, SIGTERM) != 0 || sigaddset(wait_set, SIGUSR1) != 0) {
     return false;
   }
   return pthread_sigmask(SIG_BLOCK, wait_set, previous_mask) == 0;
 }
 
 bool wake_control_thread(std::thread& control_thread) noexcept {
-  // SIGTERM 已被屏蔽，只由这个控制线程通过 sigwait 同步接收。
+  // SIGUSR1 只用于通知控制线程：serve() 已结束，可以退出等待。
   // NOLINTNEXTLINE(bugprone-bad-signal-to-kill-thread)
-  const int thread_result = pthread_kill(control_thread.native_handle(), SIGTERM);
+  const int thread_result = pthread_kill(control_thread.native_handle(), SIGUSR1);
   if (thread_result == 0 || thread_result == ESRCH) {
     return true;
   }
-  if (kill(getpid(), SIGTERM) == 0) {
+  if (kill(getpid(), SIGUSR1) == 0) {
     return false;
   }
   (void)pthread_cancel(control_thread.native_handle());
   return false;
+}
+
+bool serve_until_shutdown(sphinx::ProductHttpServer& server, const sigset_t& shutdown_signals) {
+  std::atomic<bool> control_failed{false};
+  std::thread control_thread{[&] {
+    int received_signal = 0;
+    if (sigwait(&shutdown_signals, &received_signal) != 0) {
+      control_failed.store(true, std::memory_order_release);
+      server.stop();
+    } else if (received_signal != SIGUSR1) {
+      server.stop();
+    }
+  }};
+
+  bool serve_result = false;
+  try {
+    serve_result = server.serve();
+  } catch (...) {
+    // 先唤醒并回收控制线程，再向 main() 报告运行失败。
+  }
+
+  const bool control_woken = wake_control_thread(control_thread);
+  control_thread.join();
+  return serve_result && !control_failed.load(std::memory_order_acquire) && control_woken;
 }
 
 }  // namespace
@@ -109,40 +133,14 @@ int main() {
   try {
     auto config = load_config();
     sphinx::ProductHttpServer server{std::move(config)};
-    std::atomic<bool> done{false};
-    std::atomic<bool> control_failed{false};
-    std::thread control_thread{[&] {
-      int received_signal = 0;
-      const int wait_result = sigwait(&shutdown_signals, &received_signal);
-      if (wait_result != 0) {
-        control_failed.store(true, std::memory_order_release);
-        server.stop();
-      } else if ((received_signal == SIGINT || received_signal == SIGTERM) &&
-                 !done.load(std::memory_order_acquire)) {
-        server.stop();
-      }
-    }};
-
-    bool serve_result = false;
-    bool serve_threw = false;
-    try {
-      serve_result = server.serve();
-    } catch (...) {
-      serve_threw = true;
-    }
-
-    done.store(true, std::memory_order_release);
-    const bool control_woken = wake_control_thread(control_thread);
-    control_thread.join();
+    const bool served = serve_until_shutdown(server, shutdown_signals);
     const int restore_result = pthread_sigmask(SIG_SETMASK, &previous_mask, nullptr);
     if (restore_result != 0) {
       std::cerr << "product service signal restore failed\n";
       return 1;
     }
-    if (!serve_result || serve_threw || control_failed.load(std::memory_order_acquire) ||
-        !control_woken) {
-      std::cerr << (serve_threw ? "product service runtime failed\n"
-                                : "product service bind or listen failed\n");
+    if (!served) {
+      std::cerr << "product service bind, listen or runtime failed\n";
       return 1;
     }
     return 0;
