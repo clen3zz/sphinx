@@ -19,18 +19,8 @@ bool Connection::begin_multi_get(uint64_t sequence, size_t key_count) {
   return inserted;
 }
 
-// 记录 multi-get 请求的一个分片响应；仅当全部子响应集齐后拼接并返回最终响应
-std::optional<std::string> Connection::add_multi_get_piece(uint64_t sequence, uint32_t key_index,
-                                                           std::string_view payload, bool failed) {
-  // 1. 查找对应的 multi-get 上下文
-  const auto it = _pending_multi_gets.find(sequence);
-  if (it == _pending_multi_gets.end()) {
-    return std::nullopt;
-  }
-
-  auto& state = it->second;
-
-  // 2. 记录分片或标记失败
+void Connection::record_multi_get_piece(MultiGetState& state, uint32_t key_index,
+                                        std::string_view payload, bool failed) {
   if (failed || (!state.resource_limit && key_index >= state.pieces.size())) {
     state.failed = true;
   } else if (!state.failed && !state.resource_limit) {
@@ -45,8 +35,32 @@ std::optional<std::string> Connection::add_multi_get_piece(uint64_t sequence, ui
       _pending_multi_get_bytes += payload.size();
     }
   }
+}
 
-  // 3. 递减等待计数；若尚未完全就绪则提前返回
+std::string Connection::assemble_multi_get(const MultiGetState& state) {
+  if (state.failed) {
+    return "SERVER_ERROR request queue is full\r\n";
+  }
+  if (state.resource_limit) {
+    return "SERVER_ERROR response too large\r\n";
+  }
+  std::string response;
+  for (const auto& piece : state.pieces) {
+    response += piece;
+  }
+  response += "END\r\n";
+  return response;
+}
+
+// 记录 multi-get 请求的一个分片响应；仅当全部子响应集齐后拼接并返回最终响应
+std::optional<std::string> Connection::add_multi_get_piece(uint64_t sequence, uint32_t key_index,
+                                                           std::string_view payload, bool failed) {
+  const auto it = _pending_multi_gets.find(sequence);
+  if (it == _pending_multi_gets.end()) {
+    return std::nullopt;
+  }
+  auto& state = it->second;
+  record_multi_get_piece(state, key_index, payload, failed);
   if (state.pending == 0) {
     return std::nullopt;
   }
@@ -55,20 +69,8 @@ std::optional<std::string> Connection::add_multi_get_piece(uint64_t sequence, ui
     return std::nullopt;
   }
 
-  // 4. 全部子响应集齐，构建完整协议响应
-  std::string response;
-  if (state.failed) {
-    response = "SERVER_ERROR request queue is full\r\n";
-  } else if (state.resource_limit) {
-    response = "SERVER_ERROR response too large\r\n";
-  } else {
-    for (const auto& piece : state.pieces) {
-      response += piece;
-    }
-    response += "END\r\n";
-  }
+  auto response = assemble_multi_get(state);
 
-  // 5. 清理已完成的 multi-get 状态
   _pending_multi_get_bytes -= state.buffered_bytes;
   _pending_multi_get_slots -= state.slots;
   _pending_multi_gets.erase(it);

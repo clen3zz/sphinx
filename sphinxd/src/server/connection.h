@@ -92,6 +92,10 @@ class Connection final {
     std::vector<std::string> pieces;  // 已接收的分片数据缓存
   };
 
+  void record_multi_get_piece(MultiGetState& state, uint32_t key_index,
+                              std::string_view payload, bool failed);
+  static std::string assemble_multi_get(const MultiGetState& state);
+
   uint64_t _id;                                        // 连接全局唯一 ID
   Buffer _receive_buffer;                              // TCP 读入数据缓冲区
   uint64_t _next_request_sequence = 0;                 // 下一个分发的请求序号
