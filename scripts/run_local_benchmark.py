@@ -3,7 +3,8 @@
 """使用 memtier_benchmark 运行一次可复现的本地 Sphinx 基准测试。
 
 该脚本保持精简：负责管理 Sphinx 子进程，等待 TCP 监听端口，调用 memtier，
-并记录结果和元数据。它不实现基准客户端，也不设置性能阈值。
+并记录结果和元数据。指标解析固定使用 memtier 的 ALL STATS/Totals 格式。
+它不实现基准客户端，也不设置性能阈值。
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_THREADS = 4
@@ -71,7 +72,7 @@ class BenchmarkResult:
     raw_result_path: Path
     metadata_path: Path
     protocol_errors: int
-    metrics: Mapping[str, Optional[float]]
+    metrics: Mapping[str, float]
     error_counts: Mapping[str, int] = field(default_factory=dict)
 
 
@@ -300,172 +301,60 @@ def _run_client(
         raise BenchmarkError(f"server exited before memtier completed: {diagnostics}")
 
 
-def _normal_key(value: str) -> str:
-    return "".join(character for character in value.lower() if character.isalnum())
+def _mapping(value: Any, label: str) -> Mapping[str, Any]:
+    if not isinstance(value, dict):
+        raise BenchmarkError(f"memtier JSON is missing {label}")
+    return value
 
 
-def _numeric(value: Any) -> Optional[float]:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value.strip())
-        except ValueError:
-            return None
-    return None
+def _totals(document: Any) -> Mapping[str, Any]:
+    root = _mapping(document, "root")
+    all_stats = _mapping(root.get("ALL STATS"), "ALL STATS")
+    return _mapping(all_stats.get("Totals"), "ALL STATS/Totals")
 
 
-def _walk_dicts(value: Any) -> Iterable[tuple[str, Any]]:
-    if isinstance(value, Mapping):
-        for key, child in value.items():
-            yield str(key), child
-            yield from _walk_dicts(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _walk_dicts(child)
+def _counter(section: Mapping[str, Any], field: str) -> int:
+    value = section.get(field, 0)
+    if type(value) is not int or value < 0:
+        raise BenchmarkError(f"memtier JSON has invalid {field}")
+    return value
 
 
-def _error_category(normalized_key: str) -> Optional[str]:
-    """将 memtier 错误计数键映射到少量稳定的类别。"""
-
-    if normalized_key.endswith("sec") or normalized_key.endswith("rate"):
-        return None
-    if "protocolerror" in normalized_key:
-        return "protocol"
-    if "connectionerror" in normalized_key:
-        return "connection"
-    if "error" in normalized_key or "failure" in normalized_key or "failed" in normalized_key:
-        return "other"
-    return None
-
-
-def _sum_error_value(value: Any) -> int:
-    """汇总错误映射下的数值叶节点，不把文本当作错误。"""
-
-    number = _numeric(value)
-    if number is not None:
-        return int(number)
-    if isinstance(value, Mapping):
-        return sum(_sum_error_value(child) for child in value.values())
-    if isinstance(value, list):
-        return sum(_sum_error_value(child) for child in value)
-    return 0
-
-
-def _error_counts_in(document: Any) -> dict[str, int]:
-    counts = {"protocol": 0, "connection": 0, "other": 0}
-
-    def visit(value: Any) -> None:
-        if isinstance(value, Mapping):
-            for key, child in value.items():
-                category = _error_category(_normal_key(str(key)))
-                if category is not None:
-                    counts[category] += _sum_error_value(child)
-                else:
-                    visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-
-    visit(document)
-    return counts
+def _metric(section: Mapping[str, Any], field: str) -> float:
+    value = section.get(field)
+    if type(value) not in (int, float):
+        raise BenchmarkError(f"memtier JSON is missing numeric {field}")
+    return float(value)
 
 
 def error_counts(document: Any) -> dict[str, int]:
-    """从 memtier JSON 返回协议、连接和其他错误计数。
+    """读取 ALL STATS/Totals 与根级协议错误计数。"""
 
-    Memtier 会输出命令专用计数和 ``Totals`` 汇总对象。如果存在 Totals 对象，
-    只使用该对象，避免重复统计 Sets、Gets 和 Totals；否则使用文档中的所有计数。
-    """
-
-    totals: list[Any] = []
-
-    def find_totals(value: Any) -> None:
-        if isinstance(value, Mapping):
-            for key, child in value.items():
-                if _normal_key(str(key)) == "totals" and isinstance(child, Mapping):
-                    totals.append(child)
-                else:
-                    find_totals(child)
-        elif isinstance(value, list):
-            for child in value:
-                find_totals(child)
-
-    find_totals(document)
-    counts = _error_counts_in(totals[0] if totals else document)
-    if totals and isinstance(document, Mapping):
-        # 某些 memtier 构建版本会把协议级计数放在文档根部，
-        # 而命令/连接计数位于 ALL STATS/Totals 下。
-        # 保留这些根部计数，但不重复加入 Sets 和 Gets。
-        for key, child in document.items():
-            category = _error_category(_normal_key(str(key)))
-            if category is not None:
-                counts[category] += _sum_error_value(child)
-    return counts
-
-
-def protocol_error_count(document: Any) -> int:
-    """为兼容现有调用方而保留的总错误数视图。"""
-
-    return sum(error_counts(document).values())
-
-
-def _find_metric(document: Any, candidates: set[str], contains: Sequence[str] = ()) -> Optional[float]:
-    for key, value in _walk_dicts(document):
-        normalized = _normal_key(key)
-        if normalized in candidates or any(part in normalized for part in contains):
-            number = _numeric(value)
-            if number is not None:
-                return number
-    return None
-
-
-def _find_named_mapping(document: Any, name: str) -> Optional[Mapping[str, Any]]:
-    if isinstance(document, Mapping):
-        for key, child in document.items():
-            if _normal_key(str(key)) == name and isinstance(child, Mapping):
-                return child
-        for child in document.values():
-            result = _find_named_mapping(child, name)
-            if result is not None:
-                return result
-    elif isinstance(document, list):
-        for child in document:
-            result = _find_named_mapping(child, name)
-            if result is not None:
-                return result
-    return None
-
-
-def _operation_count(document: Any, operation: str) -> Optional[int]:
-    section = _find_named_mapping(document, operation)
-    if section is None:
-        return None
-    for key, value in section.items():
-        if _normal_key(str(key)) == "count":
-            number = _numeric(value)
-            return int(number) if number is not None else None
-    return None
-
-
-def extract_metrics(document: Any) -> dict[str, Optional[float]]:
-    """提取写入 BENCHMARK.md 的少量字段。"""
-
-    # 官方 memtier JSON 包含 Sets、Gets 和 Totals。未激活的命令区段仍会包含
-    # 0.007 ms 的百分位占位值，因此遍历整个文档可能静默报告错误的延迟。
-    # 优先使用 Totals 汇总，仅在旧客户端使用的通用布局中找不到时再回退。
-    totals = _find_named_mapping(document, "totals")
-    metrics_source: Any = totals if totals is not None else document
-    percentiles = _find_named_mapping(metrics_source, "percentilelatencies")
-    percentile_source: Any = percentiles if percentiles is not None else metrics_source
-    qps = _find_metric(metrics_source, {"opssec", "opspersec", "qps", "throughput"})
+    root = _mapping(document, "root")
+    totals = _totals(root)
     return {
-        "qps": qps,
-        "p50": _find_metric(percentile_source, {"p50", "p5000", "p50latency"}, ("p50",)),
-        "p95": _find_metric(percentile_source, {"p95", "p9500", "p95latency"}, ("p95",)),
-        "p99": _find_metric(percentile_source, {"p99", "p9900", "p99latency"}, ("p99",)),
+        "protocol": _counter(root, "protocol_errors"),
+        "connection": _counter(totals, "Connection Errors"),
+        "other": _counter(totals, "Errors"),
+    }
+
+
+def _prefill_count(document: Any) -> int:
+    all_stats = _mapping(_mapping(document, "root").get("ALL STATS"), "ALL STATS")
+    section = _mapping(all_stats.get("Sets"), "ALL STATS/Sets")
+    return _counter(section, "Count")
+
+
+def extract_metrics(document: Any) -> dict[str, float]:
+    """只读 Totals，避免误取未执行命令的百分位占位值。"""
+
+    totals = _totals(document)
+    percentiles = _mapping(totals.get("Percentile Latencies"), "Percentile Latencies")
+    return {
+        "qps": _metric(totals, "Ops/sec"),
+        "p50": _metric(percentiles, "p50.00"),
+        "p95": _metric(percentiles, "p95.00"),
+        "p99": _metric(percentiles, "p99.00"),
     }
 
 
@@ -643,7 +532,7 @@ def run_benchmark(config: BenchmarkConfig) -> Optional[BenchmarkResult]:
                         "memtier prefill reported errors: "
                         + json.dumps(prefill_errors, sort_keys=True)
                     )
-                prefill_count = _operation_count(prefill_document, "sets")
+                prefill_count = _prefill_count(prefill_document)
                 if prefill_count != config.key_space:
                     raise BenchmarkError(
                         f"memtier prefill wrote {prefill_count!r} keys; "

@@ -83,9 +83,11 @@ if mode != "missing":
             "Sets": {"Count": prefill_count if is_prefill else 0},
             "Totals": {
                 "Ops/sec": 123.5,
-                "p50": 1.0,
-                "p95": 2.0,
-                "p99": 3.0,
+                "Percentile Latencies": {
+                    "p50.00": 1.0,
+                    "p95.00": 2.0,
+                    "p99.00": 3.0,
+                },
                 "Connection Errors": connection,
                 "Errors": other,
             }
@@ -293,23 +295,21 @@ time.sleep(0.02)
             else:
                 os.environ["FAKE_SERVER_MODE"] = old_mode
 
-    def test_protocol_error_counter_supports_nested_layouts(self) -> None:
-        self.assertEqual(benchmark.protocol_error_count({"protocol_errors": 2}), 2)
-        self.assertEqual(benchmark.protocol_error_count({"Totals": {"Errors": 3}}), 3)
-        self.assertEqual(benchmark.protocol_error_count({"Totals": {"Errors": 0}}), 0)
+    def test_error_counters_use_fixed_totals_layout(self) -> None:
         self.assertEqual(
             benchmark.error_counts(
                 {
-                    "Totals": {
-                        "Connection Errors": 2,
-                        "Errors": 3,
-                        "Failed Requests": 4,
-                        "Errors/sec": 9,
-                    }
+                    "ALL STATS": {
+                        "Totals": {"Connection Errors": 2, "Errors": 3,
+                                   "Connection Errors/sec": 9}
+                    },
+                    "protocol_errors": 4,
                 }
             ),
-            {"connection": 2, "other": 7, "protocol": 0},
+            {"connection": 2, "other": 3, "protocol": 4},
         )
+        with self.assertRaises(benchmark.BenchmarkError):
+            benchmark.error_counts({"Totals": {"Errors": 3}})
 
     def test_metrics_come_from_totals_not_inactive_command_placeholders(self) -> None:
         document = {
