@@ -242,6 +242,71 @@ struct MySqlProductStore::Impl {
     throw_mysql_error(error, message);
   }
 
+  std::optional<Product> fetch_product_row(MYSQL_STMT* statement, std::uint64_t id) {
+    if (mysql_stmt_field_count(statement) != 4) {
+      throw StoreError{StoreErrorCode::Unexpected, "MySQL product query returned an invalid shape"};
+    }
+
+    Product product{};
+    std::array<char, max_product_name_bytes + 1> name_buffer{};
+    unsigned long name_length = 0;
+    bool id_is_null = false;
+    bool name_is_null = false;
+    bool price_is_null = false;
+    bool version_is_null = false;
+    bool id_error = false;
+    bool name_error = false;
+    bool price_error = false;
+    bool version_error = false;
+    MYSQL_BIND results[4]{};
+    bind_unsigned_result(&results[0], &product.id, &id_is_null, &id_error);
+    results[1].buffer_type = MYSQL_TYPE_STRING;
+    results[1].buffer = name_buffer.data();
+    results[1].buffer_length = name_buffer.size();
+    results[1].length = &name_length;
+    results[1].is_null = &name_is_null;
+    results[1].error = &name_error;
+    bind_unsigned_result(&results[2], &product.price_cents, &price_is_null, &price_error);
+    bind_unsigned_result(&results[3], &product.version, &version_is_null, &version_error);
+
+    if (mysql_stmt_bind_result(statement, results) != 0) {
+      throw_statement_error(statement, "MySQL product query result binding failed");
+    }
+    if (mysql_stmt_store_result(statement) != 0) {
+      throw_statement_error(statement, "MySQL product query result buffering failed");
+    }
+
+    const int fetch_result = mysql_stmt_fetch(statement);
+    // 只有确实没有结果行才返回 nullopt；截断或字段非法都不能冒充 NotFound。
+    if (fetch_result == MYSQL_NO_DATA) {
+      return std::nullopt;
+    }
+    if (fetch_result == MYSQL_DATA_TRUNCATED) {
+      throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
+    }
+    if (fetch_result != 0) {
+      throw_statement_error(statement, "MySQL product row fetch failed");
+    }
+    if (id_is_null || name_is_null || price_is_null || version_is_null || id_error ||
+        name_error || price_error || version_error || name_length > max_product_name_bytes ||
+        name_length > name_buffer.size()) {
+      throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
+    }
+    product.name.assign(name_buffer.data(), name_length);
+    if (product.id != id || !valid_product(product)) {
+      throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
+    }
+
+    const int next_fetch_result = mysql_stmt_fetch(statement);
+    if (next_fetch_result != MYSQL_NO_DATA) {
+      if (next_fetch_result != 0 && next_fetch_result != MYSQL_DATA_TRUNCATED) {
+        throw_statement_error(statement, "MySQL product result drain failed");
+      }
+      throw StoreError{StoreErrorCode::Unexpected, "MySQL product query returned multiple rows"};
+    }
+    return product;
+  }
+
   std::optional<Product> select_product(MYSQL_STMT*& slot, MYSQL_STMT* statement,
                                         std::uint64_t id) {
     std::uint64_t requested_id = id;
@@ -256,69 +321,7 @@ struct MySqlProductStore::Impl {
 
     std::optional<Product> result;
     try {
-      if (mysql_stmt_field_count(statement) != 4) {
-        throw StoreError{StoreErrorCode::Unexpected,
-                         "MySQL product query returned an invalid shape"};
-      }
-
-      Product product{};
-      std::array<char, max_product_name_bytes + 1> name_buffer{};
-      unsigned long name_length = 0;
-      bool id_is_null = false;
-      bool name_is_null = false;
-      bool price_is_null = false;
-      bool version_is_null = false;
-      bool id_error = false;
-      bool name_error = false;
-      bool price_error = false;
-      bool version_error = false;
-      MYSQL_BIND results[4]{};
-      bind_unsigned_result(&results[0], &product.id, &id_is_null, &id_error);
-      results[1].buffer_type = MYSQL_TYPE_STRING;
-      results[1].buffer = name_buffer.data();
-      results[1].buffer_length = name_buffer.size();
-      results[1].length = &name_length;
-      results[1].is_null = &name_is_null;
-      results[1].error = &name_error;
-      bind_unsigned_result(&results[2], &product.price_cents, &price_is_null, &price_error);
-      bind_unsigned_result(&results[3], &product.version, &version_is_null, &version_error);
-
-      if (mysql_stmt_bind_result(statement, results) != 0) {
-        throw_statement_error(statement, "MySQL product query result binding failed");
-      }
-      if (mysql_stmt_store_result(statement) != 0) {
-        throw_statement_error(statement, "MySQL product query result buffering failed");
-      }
-
-      const int fetch_result = mysql_stmt_fetch(statement);
-      // 只有确实没有结果行才返回 nullopt；截断或字段非法都不能冒充 NotFound。
-      if (fetch_result == MYSQL_NO_DATA) {
-        result = std::nullopt;
-      } else if (fetch_result == MYSQL_DATA_TRUNCATED) {
-        throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
-      } else if (fetch_result != 0) {
-        throw_statement_error(statement, "MySQL product row fetch failed");
-      } else {
-        if (id_is_null || name_is_null || price_is_null || version_is_null || id_error ||
-            name_error || price_error || version_error || name_length > max_product_name_bytes ||
-            name_length > name_buffer.size()) {
-          throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
-        }
-        product.name.assign(name_buffer.data(), name_length);
-        if (product.id != id || !valid_product(product)) {
-          throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
-        }
-
-        const int next_fetch_result = mysql_stmt_fetch(statement);
-        if (next_fetch_result != MYSQL_NO_DATA) {
-          if (next_fetch_result != 0 && next_fetch_result != MYSQL_DATA_TRUNCATED) {
-            throw_statement_error(statement, "MySQL product result drain failed");
-          }
-          throw StoreError{StoreErrorCode::Unexpected,
-                           "MySQL product query returned multiple rows"};
-        }
-        result = std::move(product);
-      }
+      result = fetch_product_row(statement, id);
     } catch (...) {
       if (slot == statement) {
         (void)clear_statement_result(slot, statement);
@@ -332,6 +335,70 @@ struct MySqlProductStore::Impl {
     }
     return result;
   }
+
+  void execute_versioned_update(MYSQL_STMT* statement, Product& product,
+                                std::uint64_t expected_version) {
+    unsigned long name_length = product.name.size();
+    std::uint64_t price_cents = product.price_cents;
+    std::uint64_t product_id = product.id;
+    bool name_is_null = false;
+    MYSQL_BIND parameters[4]{};
+    parameters[0].buffer_type = MYSQL_TYPE_STRING;
+    parameters[0].buffer = product.name.data();
+    parameters[0].buffer_length = name_length;
+    parameters[0].length = &name_length;
+    parameters[0].is_null = &name_is_null;
+    bind_unsigned_parameter(&parameters[1], &price_cents);
+    bind_unsigned_parameter(&parameters[2], &product_id);
+    bind_unsigned_parameter(&parameters[3], &expected_version);
+    if (mysql_stmt_bind_param(statement, parameters) != 0) {
+      throw_statement_error(statement, "MySQL product update parameter binding failed");
+    }
+    if (mysql_stmt_execute(statement) != 0) {
+      throw_statement_error(statement, "MySQL product update failed");
+    }
+    const auto affected_rows = mysql_stmt_affected_rows(statement);
+    const auto cleanup_error = clear_statement_result(update_statement, statement);
+    if (cleanup_error != 0) {
+      throw_mysql_error(cleanup_error, "MySQL product update cleanup failed");
+    }
+    if (affected_rows != 1) {
+      throw StoreError{StoreErrorCode::Unexpected,
+                       "MySQL product update affected an unexpected row count"};
+    }
+  }
+
+  struct Transaction {
+    explicit Transaction(Impl& store) : store{store} {
+      constexpr char query[] = "START TRANSACTION";
+      if (mysql_real_query(store.connection, query, sizeof(query) - 1) != 0) {
+        const auto error = mysql_errno(store.connection);
+        if (is_connection_failure(error)) {
+          store.reset_connection();
+        }
+        throw_mysql_error(error, "MySQL transaction start failed");
+      }
+    }
+
+    ~Transaction() {
+      if (active && store.connection != nullptr && mysql_rollback(store.connection) != 0) {
+        store.reset_connection();
+      }
+    }
+
+    void commit() {
+      if (mysql_commit(store.connection) != 0) {
+        // 可能已经提交，但确认响应丢失；绝不能将此结果当作可重试的回滚。
+        store.reset_connection();
+        active = false;
+        throw StoreError{StoreErrorCode::CommitUnknown, "MySQL commit result is unknown"};
+      }
+      active = false;
+    }
+
+    Impl& store;
+    bool active = true;
+  };
 
   void reset_connection() noexcept {
     // 先释放依附于连接的语句句柄，再关闭连接；后续独立请求会重新 prepare。
@@ -445,88 +512,22 @@ StoreUpdateResult MySqlProductStore::update(const UpdateProductRequest& request)
   MYSQL_STMT* lock_statement = _impl->prepare_lock_statement();
   MYSQL_STMT* update_statement = _impl->prepare_update_statement();
 
-  // 版本检查和实际更新必须处于同一事务，不能拆成两次独立数据库操作。
-  constexpr char start_transaction[] = "START TRANSACTION";
-  if (mysql_real_query(_impl->connection, start_transaction, sizeof(start_transaction) - 1) != 0) {
-    const auto error = mysql_errno(_impl->connection);
-    if (is_connection_failure(error)) {
-      _impl->reset_connection();
-    }
-    throw_mysql_error(error, "MySQL transaction start failed");
+  // 行锁、版本检查和更新必须在同一事务中；未提交就退出时自动回滚。
+  Impl::Transaction transaction{*_impl};
+  const auto existing = _impl->select_product(_impl->lock_statement, lock_statement, request.id);
+  if (!existing) {
+    return {StoreUpdateStatus::NotFound, std::nullopt};
   }
-  bool transaction_active = true;
-  const auto rollback = [&]() noexcept {
-    if (!transaction_active) {
-      return;
-    }
-    transaction_active = false;
-    if (_impl->connection != nullptr && mysql_rollback(_impl->connection) != 0) {
-      _impl->reset_connection();
-    }
-  };
-
-  try {
-    // 先锁住目标行并检查调用方持有的旧版本；冲突属于业务结果，不执行 UPDATE。
-    const auto existing = _impl->select_product(_impl->lock_statement, lock_statement, request.id);
-    if (!existing) {
-      rollback();
-      return {StoreUpdateStatus::NotFound, std::nullopt};
-    }
-    if (existing->version == std::numeric_limits<std::uint64_t>::max()) {
-      rollback();
-      throw StoreError{StoreErrorCode::InvalidData, "MySQL product version cannot be advanced"};
-    }
-    if (existing->version != request.expected_version) {
-      rollback();
-      return {StoreUpdateStatus::Conflict, std::nullopt};
-    }
-
-    auto& new_product = *committed_result.product;
-    unsigned long name_length = new_product.name.size();
-    std::uint64_t price_cents = new_product.price_cents;
-    std::uint64_t product_id = new_product.id;
-    std::uint64_t expected_version = request.expected_version;
-    bool name_is_null = false;
-    MYSQL_BIND parameters[4]{};
-    parameters[0].buffer_type = MYSQL_TYPE_STRING;
-    parameters[0].buffer = new_product.name.data();
-    parameters[0].buffer_length = name_length;
-    parameters[0].length = &name_length;
-    parameters[0].is_null = &name_is_null;
-    bind_unsigned_parameter(&parameters[1], &price_cents);
-    bind_unsigned_parameter(&parameters[2], &product_id);
-    bind_unsigned_parameter(&parameters[3], &expected_version);
-    if (mysql_stmt_bind_param(update_statement, parameters) != 0) {
-      _impl->throw_statement_error(update_statement,
-                                   "MySQL product update parameter binding failed");
-    }
-    if (mysql_stmt_execute(update_statement) != 0) {
-      _impl->throw_statement_error(update_statement, "MySQL product update failed");
-    }
-    const auto affected_rows = mysql_stmt_affected_rows(update_statement);
-    const auto cleanup_error =
-        _impl->clear_statement_result(_impl->update_statement, update_statement);
-    if (cleanup_error != 0) {
-      throw_mysql_error(cleanup_error, "MySQL product update cleanup failed");
-    }
-    if (affected_rows != 1) {
-      // 主键加版本条件应当恰好命中一行，否则不能报告更新成功。
-      throw StoreError{StoreErrorCode::Unexpected,
-                       "MySQL product update affected an unexpected row count"};
-    }
-  } catch (...) {
-    // 已知在事务中失败时尝试回滚，不把半途失败当作已提交。
-    rollback();
-    throw;
+  if (existing->version == std::numeric_limits<std::uint64_t>::max()) {
+    throw StoreError{StoreErrorCode::InvalidData, "MySQL product version cannot be advanced"};
+  }
+  if (existing->version != request.expected_version) {
+    return {StoreUpdateStatus::Conflict, std::nullopt};
   }
 
-  if (mysql_commit(_impl->connection) != 0) {
-    // COMMIT 返回失败不等于数据库一定回滚：可能已提交但确认响应丢失。
-    // 丢弃连接并向上报告结果未知，禁止在这里盲目重试更新。
-    _impl->reset_connection();
-    throw StoreError{StoreErrorCode::CommitUnknown, "MySQL commit result is unknown"};
-  }
-  transaction_active = false;
+  _impl->execute_versioned_update(update_statement, *committed_result.product,
+                                  request.expected_version);
+  transaction.commit();
   return committed_result;
 }
 
