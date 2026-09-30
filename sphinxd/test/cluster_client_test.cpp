@@ -6,14 +6,17 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -206,6 +209,42 @@ std::string read_request(int fd) {
   return request;
 }
 
+std::vector<std::string> parse_get_keys(const std::string& request) {
+  if (request.rfind("get ", 0) != 0) {
+    return {};
+  }
+  const auto line_end = request.find("\r\n");
+  if (line_end == std::string::npos) {
+    return {};
+  }
+
+  std::vector<std::string> keys;
+  size_t position = 4;
+  while (position < line_end) {
+    const auto next_space = request.find(' ', position);
+    const auto key_end =
+        next_space == std::string::npos || next_space > line_end ? line_end : next_space;
+    keys.emplace_back(request.substr(position, key_end - position));
+    position = key_end + 1;
+  }
+  return keys;
+}
+
+std::string multi_get_response(const std::vector<std::string>& keys,
+                               std::string_view missing_key = {}) {
+  std::string response;
+  for (auto key = keys.rbegin(); key != keys.rend(); ++key) {
+    if (*key == missing_key) {
+      continue;
+    }
+    const std::string value = "value:" + *key;
+    response += "VALUE " + *key + " 0 " + std::to_string(value.size()) + "\r\n";
+    response += value + "\r\n";
+  }
+  response += "END\r\n";
+  return response;
+}
+
 std::string node_spec(uint16_t port) { return "127.0.0.1:" + std::to_string(port); }
 
 TEST(ClusterClientTest, HandlesPartialResponsesAndBinaryValues) {
@@ -260,6 +299,129 @@ TEST(ClusterClientTest, GetMissReturnsNullopt) {
   sphinx::ClusterClient client{node_spec(server.port())};
   const auto result = client.get("missing");
   EXPECT_FALSE(result.has_value());
+}
+
+TEST(ClusterClientTest, MultiGetPreservesOrderAndParsesOutOfOrderBinaryValues) {
+  std::mutex request_mutex;
+  std::string received_request;
+  const std::string binary_value{"A\0B", 3};
+  FakeServer server{[&](int client) {
+    const auto request = read_request(client);
+    {
+      std::lock_guard<std::mutex> lock{request_mutex};
+      received_request = request;
+    }
+    std::string response{"VALUE binary 0 3\r\n"};
+    response += binary_value;
+    response += "\r\nVALUE first 0 5\r\nfirst\r\nEND\r\n";
+    send_chunks(client, response);
+  }};
+  server.start();
+  sphinx::ClusterClient client{node_spec(server.port())};
+  const std::vector<std::string> keys{"first", "missing", "binary"};
+
+  const auto values = client.get_many(keys);
+
+  ASSERT_EQ(values.size(), 3U);
+  EXPECT_EQ(values[0].value_or(""), "first");
+  EXPECT_FALSE(values[1]);
+  EXPECT_EQ(values[2].value_or(""), binary_value);
+  {
+    std::lock_guard<std::mutex> lock{request_mutex};
+    EXPECT_EQ(received_request, "get first missing binary\r\n");
+  }
+}
+
+TEST(ClusterClientTest, GroupsKeysByNodeAndRestoresDuplicateInputPositions) {
+  std::mutex requests_mutex;
+  std::vector<std::string> requests;
+  const std::string missing_key{"multi-get-missing"};
+  const auto handler = [&](int client) {
+    const auto request = read_request(client);
+    const auto keys = parse_get_keys(request);
+    {
+      std::lock_guard<std::mutex> lock{requests_mutex};
+      requests.push_back(request);
+    }
+    send_chunks(client, multi_get_response(keys, missing_key));
+  };
+  FakeServer first_server{handler};
+  FakeServer second_server{handler};
+  first_server.start();
+  second_server.start();
+  const sphinx::Node first_node{"127.0.0.1", first_server.port()};
+  const sphinx::Node second_node{"127.0.0.1", second_server.port()};
+  sphinx::ClusterClient client{{first_node, second_node}};
+
+  std::vector<std::string> first_node_keys;
+  std::vector<std::string> second_node_keys;
+  for (std::size_t index = 0;
+       index < 10000 && (first_node_keys.size() < 2 || second_node_keys.size() < 2); ++index) {
+    const std::string key = "multi-get-key-" + std::to_string(index);
+    const sphinx::Node node = client.route(key);
+    auto& node_keys = node == first_node ? first_node_keys : second_node_keys;
+    if (node_keys.size() < 2) {
+      node_keys.push_back(key);
+    }
+  }
+  ASSERT_EQ(first_node_keys.size(), 2U);
+  ASSERT_EQ(second_node_keys.size(), 2U);
+  const std::vector<std::string> keys{first_node_keys[0], second_node_keys[0], missing_key,
+                                      first_node_keys[1], second_node_keys[1], first_node_keys[0]};
+
+  const auto values = client.get_many(keys);
+
+  ASSERT_EQ(values.size(), keys.size());
+  for (std::size_t index = 0; index < keys.size(); ++index) {
+    if (keys[index] == missing_key) {
+      EXPECT_FALSE(values[index]);
+    } else {
+      EXPECT_EQ(values[index].value_or(""), "value:" + keys[index]);
+    }
+  }
+
+  const auto expected_request = [&](const sphinx::Node& target) {
+    std::vector<std::string> node_keys;
+    for (const auto& key : keys) {
+      if (client.route(key) == target &&
+          std::find(node_keys.begin(), node_keys.end(), key) == node_keys.end()) {
+        node_keys.push_back(key);
+      }
+    }
+    std::string request{"get"};
+    for (const auto& key : node_keys) {
+      request += " " + key;
+    }
+    return request + "\r\n";
+  };
+  std::vector<std::string> expected_requests{expected_request(first_node),
+                                             expected_request(second_node)};
+  std::sort(expected_requests.begin(), expected_requests.end());
+  {
+    std::lock_guard<std::mutex> lock{requests_mutex};
+    std::sort(requests.begin(), requests.end());
+    EXPECT_EQ(requests, expected_requests);
+  }
+}
+
+TEST(ClusterClientTest, RejectsUnknownAndDuplicateMultiGetValues) {
+  FakeServer unknown_key_server{[](int client) {
+    char request[128];
+    (void)recv(client, request, sizeof(request), 0);
+    send_chunks(client, "VALUE unexpected 0 1\nx\r\nEND\r\n");
+  }};
+  unknown_key_server.start();
+  sphinx::ClusterClient unknown_key_client{node_spec(unknown_key_server.port())};
+  EXPECT_THROW((void)unknown_key_client.get_many({"requested"}), sphinx::ClientError);
+
+  FakeServer duplicate_key_server{[](int client) {
+    char request[128];
+    (void)recv(client, request, sizeof(request), 0);
+    send_chunks(client, "VALUE requested 0 1\nx\r\nVALUE requested 0 1\ny\r\nEND\r\n");
+  }};
+  duplicate_key_server.start();
+  sphinx::ClusterClient duplicate_key_client{node_spec(duplicate_key_server.port())};
+  EXPECT_THROW((void)duplicate_key_client.get_many({"requested"}), sphinx::ClientError);
 }
 
 TEST(ClusterClientTest, ResolvesHostnameForOperation) {

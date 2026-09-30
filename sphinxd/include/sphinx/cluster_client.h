@@ -4,6 +4,7 @@
 #include <sphinx/cluster.h>
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -49,6 +50,9 @@ class ClusterClient final {
 
   std::optional<std::string> get(std::string_view key);
 
+  /// Reads several keys while preserving input order and duplicate positions.
+  std::vector<std::optional<std::string>> get_many(const std::vector<std::string>& keys);
+
   bool remove(std::string_view key);
 
   /// 返回协议层的删除结果。
@@ -57,7 +61,14 @@ class ClusterClient final {
  private:
   class MemcachedConnection;
 
+  struct NodeGetBatch {
+    Node node;
+    std::vector<std::string> keys;
+    std::vector<std::vector<std::size_t>> input_positions;
+  };
+
   MemcachedConnection& connection_for(const Node& node);
+  std::vector<NodeGetBatch> group_get_keys(const std::vector<std::string>& keys) const;
 
   template <typename Operation>
   auto execute(std::string_view key, Operation&& operation)

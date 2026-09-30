@@ -4,6 +4,7 @@
 #include <charconv>
 #include <chrono>
 #include <limits>
+#include <unordered_set>
 #include <utility>
 
 #include "cluster_transport.h"
@@ -43,9 +44,13 @@ void validate_timeout(std::chrono::milliseconds timeout) {
   }
 }
 
-// 解析 get 响应行头部：VALUE <key> <flags> <bytes>\r\n，返回载荷字节长度
-size_t parse_value_header(std::string_view target, const std::string& response,
-                          std::string_view key) {
+struct ValueHeader {
+  std::string key;
+  std::size_t value_size = 0;
+};
+
+// 解析 get 响应行头部：VALUE <key> <flags> <bytes>\r\n。
+ValueHeader parse_value_header(std::string_view target, const std::string& response) {
   // 1. 响应行前缀与后缀格式检查
   if (response.size() < 10 || response.compare(0, 6, "VALUE ") != 0 ||
       response.compare(response.size() - 2, 2, "\r\n") != 0) {
@@ -62,10 +67,8 @@ size_t parse_value_header(std::string_view target, const std::string& response,
     throw_node_error(target, "malformed get header " + quote(response));
   }
 
-  // 3. 校验返回的 key 是否与请求一致
-  if (body.substr(0, first_space) != key) {
-    throw_node_error(target, "get response key does not match request");
-  }
+  ValueHeader header;
+  header.key = std::string{body.substr(0, first_space)};
 
   // 4. 解析 flags 字段
   const auto flags =
@@ -85,7 +88,8 @@ size_t parse_value_header(std::string_view target, const std::string& response,
     throw_node_error(target, "value length is too large");
   }
 
-  return bytes;
+  header.value_size = static_cast<std::size_t>(bytes);
+  return header;
 }
 
 }  // namespace
@@ -125,31 +129,57 @@ class ClusterClient::MemcachedConnection final {
     return true;
   }
 
-  // 执行 get 查询命令
+  // 执行单 key get 查询。
   std::optional<std::string> get(std::string_view key) {
+    auto values = get_many({std::string{key}});
+    return std::move(values.front());
+  }
+
+  std::vector<std::optional<std::string>> get_many(const std::vector<std::string>& keys) {
+    if (keys.empty()) {
+      return {};
+    }
     _transport.begin_operation();
-    // 1. 发送 get 请求
-    _transport.write_all(make_key_request("get", key));
-
-    // 2. 读取第一行头部响应
-    const auto header = _transport.read_line();
-    if (header == "END\r\n") {
-      return std::nullopt;
+    std::string request{"get"};
+    for (const auto& key : keys) {
+      request.push_back(' ');
+      request += key;
     }
+    request += "\r\n";
+    _transport.write_all(request);
 
-    // 3. 解析 VALUE 头部并读取精准长度的正文载荷
-    const auto value_size = parse_value_header(_transport.target(), header, key);
-    auto value = _transport.read_exact(value_size);
-
-    // 4. 校验载荷末尾 CRLF 以及随后的 END\r\n 终结符
-    if (_transport.read_exact(2) != "\r\n") {
-      throw_node_error(_transport.target(), "value is not terminated by CRLF");
+    std::unordered_map<std::string, std::vector<std::size_t>> requested_positions;
+    requested_positions.reserve(keys.size());
+    for (std::size_t index = 0; index < keys.size(); ++index) {
+      requested_positions[keys[index]].push_back(index);
     }
-    if (_transport.read_line() != "END\r\n") {
-      throw_node_error(_transport.target(), "get response is not terminated by END");
-    }
+    std::unordered_set<std::string> returned_keys;
+    returned_keys.reserve(keys.size());
+    std::vector<std::optional<std::string>> values(keys.size());
 
-    return value;
+    while (true) {
+      const auto line = _transport.read_line();
+      if (line == "END\r\n") {
+        return values;
+      }
+
+      const ValueHeader header = parse_value_header(_transport.target(), line);
+      const auto requested = requested_positions.find(header.key);
+      if (requested == requested_positions.end()) {
+        throw_node_error(_transport.target(), "get response contains an unrequested key");
+      }
+      if (!returned_keys.emplace(header.key).second) {
+        throw_node_error(_transport.target(), "get response contains a duplicate key");
+      }
+
+      auto value = _transport.read_exact(header.value_size);
+      if (_transport.read_exact(2) != "\r\n") {
+        throw_node_error(_transport.target(), "value is not terminated by CRLF");
+      }
+      for (const auto position : requested->second) {
+        values[position] = value;
+      }
+    }
   }
 
   // 执行 delete 删除命令
@@ -232,6 +262,57 @@ bool ClusterClient::set(std::string_view key, std::string_view value, std::uint3
 // 集群客户端对外 get API
 std::optional<std::string> ClusterClient::get(std::string_view key) {
   return execute(key, [&](MemcachedConnection& connection) { return connection.get(key); });
+}
+
+std::vector<ClusterClient::NodeGetBatch> ClusterClient::group_get_keys(
+    const std::vector<std::string>& keys) const {
+  std::vector<NodeGetBatch> batches;
+  std::unordered_map<std::string, std::size_t> node_positions;
+  std::vector<std::unordered_map<std::string, std::size_t>> key_positions;
+
+  for (std::size_t input_position = 0; input_position < keys.size(); ++input_position) {
+    Node node = route(keys[input_position]);
+    const std::string node_id = node.id();
+    const auto [node_position, inserted_node] = node_positions.emplace(node_id, batches.size());
+    if (inserted_node) {
+      batches.push_back({std::move(node), {}, {}});
+      key_positions.emplace_back();
+    }
+
+    auto& batch = batches[node_position->second];
+    auto& node_key_positions = key_positions[node_position->second];
+    const auto [key_position, inserted_key] =
+        node_key_positions.emplace(keys[input_position], batch.keys.size());
+    if (inserted_key) {
+      batch.keys.push_back(keys[input_position]);
+      batch.input_positions.push_back({input_position});
+    } else {
+      batch.input_positions[key_position->second].push_back(input_position);
+    }
+  }
+  return batches;
+}
+
+std::vector<std::optional<std::string>> ClusterClient::get_many(
+    const std::vector<std::string>& keys) {
+  std::vector<std::optional<std::string>> values(keys.size());
+  for (const auto& batch : group_get_keys(keys)) {
+    try {
+      const auto node_values = connection_for(batch.node).get_many(batch.keys);
+      if (node_values.size() != batch.input_positions.size()) {
+        throw ClientError{"multi-get response count does not match request"};
+      }
+      for (std::size_t key_index = 0; key_index < batch.input_positions.size(); ++key_index) {
+        for (const auto input_position : batch.input_positions[key_index]) {
+          values[input_position] = node_values[key_index];
+        }
+      }
+    } catch (...) {
+      _connections.erase(batch.node.id());
+      throw;
+    }
+  }
+  return values;
 }
 
 // 集群客户端对外 remove API
