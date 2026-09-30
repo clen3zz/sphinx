@@ -350,6 +350,70 @@ class ProductHttpIntegrationTest(unittest.TestCase):
             "id": product_id, "name": "primary-v2", "price_cents": 220, "version": 2
         })
 
+    def test_batch_get_preserves_order_duplicates_and_cache_sources(self):
+        first_id = self.insert_product("batch-first", 110, 1)
+        second_id = self.insert_product("batch-second", 220, 2)
+        missing_id = self.new_product_id()
+        path = f"/products?ids={first_id},{missing_id},{first_id},{second_id}"
+
+        first = self.http_request("GET", path)
+        self.assertEqual(first[0], 200)
+        self.assertEqual(first[1].get("X-Cache"), "MISS")
+        self.assert_no_store(first[1])
+        self.assertEqual(json.loads(first[2]), {"items": [
+            {"id": first_id, "product": {
+                "id": first_id, "name": "batch-first", "price_cents": 110, "version": 1
+            }},
+            {"id": missing_id, "error": "not_found"},
+            {"id": first_id, "product": {
+                "id": first_id, "name": "batch-first", "price_cents": 110, "version": 1
+            }},
+            {"id": second_id, "product": {
+                "id": second_id, "name": "batch-second", "price_cents": 220, "version": 2
+            }},
+        ]})
+
+        second = self.http_request("GET", path)
+        self.assertEqual(second[0], 200)
+        self.assertEqual(second[1].get("X-Cache"), "MIXED")
+        self.assertEqual(json.loads(second[2])["items"][1], {
+            "id": missing_id, "error": "not_found"
+        })
+
+        fresh = self.http_request(
+            "GET", f"/products?fresh=1&ids={first_id},{missing_id},{second_id}"
+        )
+        self.assertEqual(fresh[0], 200)
+        self.assertEqual(fresh[1].get("X-Cache"), "BYPASS")
+
+    def test_batch_query_rejects_malformed_parameters_before_dependency_access(self):
+        self.start_service(cache_nodes=f"127.0.0.1:{reserve_port()}", mysql_port=reserve_port())
+        oversized_ids = ",".join(str(index + 1) for index in range(33))
+        invalid_paths = [
+            "/products",
+            "/products?ids=",
+            "/products?ids=,1",
+            "/products?ids=1,",
+            "/products?ids=1,,2",
+            "/products?ids=0",
+            "/products?ids=-1",
+            "/products?ids=%31",
+            "/products?ids=1&ids=2",
+            "/products?ids=1&other=2",
+            "/products?ids=1&fresh=0",
+            "/products?ids=1&fresh=1&fresh=1",
+            "/products?fresh=1",
+            "/products?ids=1&",
+            "/products?ids=+1",
+            f"/products?ids={oversized_ids}",
+        ]
+
+        for path in invalid_paths:
+            with self.subTest(path=path):
+                response = self.http_request("GET", path)
+                self.assert_json_error(response, 400, "invalid_argument")
+                self.assertEqual(response[1].get("X-Cache"), "NOT_CHECKED")
+
     def test_put_success_conflict_and_missing_row(self):
         product_id = self.insert_product("before-put", 10, 1)
         missing_id = self.new_product_id()
