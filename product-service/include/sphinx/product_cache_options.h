@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <sphinx/product_cache.h>
+
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <string_view>
 
 namespace sphinx {
 
@@ -29,5 +33,10 @@ struct ProductCacheOptions {
   SphinxCacheOptions sphinx;
   RedisOptions redis;
 };
+
+CacheBackend parse_cache_backend(std::string_view text);
+void validate_redis_options(const RedisOptions& options);
+void validate_product_cache_options(const ProductCacheOptions& options);
+std::unique_ptr<ProductCache> make_product_cache(const ProductCacheOptions& options);
 
 }  // namespace sphinx

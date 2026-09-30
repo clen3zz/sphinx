@@ -77,6 +77,8 @@ struct RedisArgv {
 
 }  // namespace
 
+void validate_redis_options(const RedisOptions& options) { (void)checked_options(options); }
+
 class RedisProductCache::Impl final {
  public:
   explicit Impl(RedisOptions options)

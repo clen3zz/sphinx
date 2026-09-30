@@ -11,6 +11,7 @@ pkg_check_modules(HIREDIS REQUIRED IMPORTED_TARGET hiredis>=1.0.0)
 
 add_library(sphinx_product_core STATIC
         src/product_cache.cpp
+        src/product_cache_options.cpp
         src/redis_product_cache.cpp
         src/product_rules.cpp
         src/product_codec.cpp
@@ -23,6 +24,7 @@ target_link_libraries(sphinx_product_core PUBLIC sphinx_core sphinx_json PkgConf
 if (GTEST_FOUND)
     add_executable(sphinx_product_tests
             test/product_cache_test.cpp
+            test/product_cache_options_test.cpp
             test/redis_product_cache_test.cpp
             test/product_codec_test.cpp
             test/product_service_test.cpp
