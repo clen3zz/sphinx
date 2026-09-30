@@ -17,9 +17,11 @@ class SphinxProductCache final : public ProductCache {
   std::optional<std::string> get(std::string_view key) override;
   void put(std::string_view key, std::string_view value, std::uint32_t ttl_seconds) override;
   void erase(std::string_view key) override;
+  std::vector<std::optional<std::string>> get_many(const std::vector<std::string>& keys) override;
+  void put_many(const std::vector<CacheWriteEntry>& entries) override;
 
  private:
   ClusterClient _client;
 };
 
-}  // 命名空间 sphinx
+}  // namespace sphinx

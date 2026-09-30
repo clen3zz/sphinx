@@ -27,6 +27,7 @@ if (GTEST_FOUND)
             test/product_cache_test.cpp
             test/product_cache_options_test.cpp
             test/redis_product_cache_test.cpp
+            test/sphinx_product_cache_test.cpp
             test/product_store_test.cpp
             test/product_codec_test.cpp
             test/product_service_test.cpp
