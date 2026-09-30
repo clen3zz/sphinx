@@ -3,6 +3,8 @@
 
 #include <sphinx/product.h>
 
+#include <vector>
+
 namespace sphinx {
 
 enum class StoreUpdateStatus : std::uint8_t { Updated, NotFound, Conflict };
@@ -22,9 +24,12 @@ class ProductStore {
   /// 要求 id > 0；记录不存在返回 nullopt；查询或连接失败抛出 StoreError。
   virtual std::optional<Product> find(std::uint64_t id) = 0;
 
+  /// 保持输入顺序和重复 ID；默认实现逐项查询，批量最多 32 项。
+  virtual std::vector<std::optional<Product>> find_many(const std::vector<std::uint64_t>& ids);
+
   /// 原子地检查版本并更新已有记录，不负责插入新记录。
   /// NotFound 和 Conflict 是正常业务结果；其他 SQL 失败抛出 StoreError。
   virtual StoreUpdateResult update(const UpdateProductRequest& request) = 0;
 };
 
-}  // 命名空间 sphinx
+}  // namespace sphinx

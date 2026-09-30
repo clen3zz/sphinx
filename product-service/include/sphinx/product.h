@@ -21,6 +21,7 @@ struct Product {
 
 inline constexpr std::uint64_t max_product_price_cents = 1'000'000'000'000ULL;
 inline constexpr std::size_t max_product_name_bytes = 128;
+inline constexpr std::size_t max_product_batch_size = 32;
 inline constexpr std::uint32_t max_product_cache_ttl_seconds = 30U * 24U * 60U * 60U;
 
 /// 更大的过期值会被 Memcached 文本协议解释为绝对 UNIX 时间戳。

@@ -15,6 +15,7 @@ add_library(sphinx_product_core STATIC
         src/redis_product_cache.cpp
         src/product_rules.cpp
         src/product_codec.cpp
+        src/product_store.cpp
         src/product_service.cpp
         src/sphinx_product_cache.cpp
 )
@@ -26,6 +27,7 @@ if (GTEST_FOUND)
             test/product_cache_test.cpp
             test/product_cache_options_test.cpp
             test/redis_product_cache_test.cpp
+            test/product_store_test.cpp
             test/product_codec_test.cpp
             test/product_service_test.cpp
     )
