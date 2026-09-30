@@ -6,12 +6,14 @@
 #include <chrono>
 #include <condition_variable>
 #include <exception>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -72,6 +74,91 @@ class FakeCache final : public sphinx::ProductCache {
       throw sphinx::CacheError{"cache unavailable"};
     }
     value.reset();
+  }
+};
+
+class BatchStore final : public sphinx::ProductStore {
+ public:
+  std::map<std::uint64_t, sphinx::Product> rows;
+  std::vector<std::vector<std::uint64_t>> batch_queries;
+  std::optional<sphinx::StoreErrorCode> batch_error;
+  int finds = 0;
+
+  std::optional<sphinx::Product> find(std::uint64_t id) override {
+    ++finds;
+    const auto product = rows.find(id);
+    if (product == rows.end()) {
+      return std::nullopt;
+    }
+    return product->second;
+  }
+
+  std::vector<std::optional<sphinx::Product>> find_many(
+      const std::vector<std::uint64_t>& ids) override {
+    batch_queries.push_back(ids);
+    if (batch_error) {
+      throw sphinx::StoreError{*batch_error, "simulated batch store failure"};
+    }
+    std::vector<std::optional<sphinx::Product>> products;
+    products.reserve(ids.size());
+    for (const auto id : ids) {
+      const auto product = rows.find(id);
+      if (product == rows.end()) {
+        products.emplace_back(std::nullopt);
+      } else {
+        products.emplace_back(product->second);
+      }
+    }
+    return products;
+  }
+
+  sphinx::StoreUpdateResult update(const sphinx::UpdateProductRequest&) override { return {}; }
+};
+
+class BatchCache final : public sphinx::ProductCache {
+ public:
+  std::map<std::string, std::string> values;
+  std::vector<std::vector<std::string>> batch_reads;
+  std::vector<sphinx::CacheWriteEntry> batch_writes;
+  bool fail_batch_read = false;
+
+  std::optional<std::string> get(std::string_view key) override {
+    const auto value = values.find(std::string{key});
+    if (value == values.end()) {
+      return std::nullopt;
+    }
+    return value->second;
+  }
+
+  void put(std::string_view key, std::string_view value, std::uint32_t) override {
+    values[std::string{key}] = std::string{value};
+  }
+
+  void erase(std::string_view key) override { values.erase(std::string{key}); }
+
+  std::vector<std::optional<std::string>> get_many(const std::vector<std::string>& keys) override {
+    batch_reads.push_back(keys);
+    if (fail_batch_read) {
+      throw sphinx::CacheError{"simulated batch cache failure"};
+    }
+    std::vector<std::optional<std::string>> results;
+    results.reserve(keys.size());
+    for (const auto& key : keys) {
+      const auto value = values.find(key);
+      if (value == values.end()) {
+        results.emplace_back(std::nullopt);
+      } else {
+        results.emplace_back(value->second);
+      }
+    }
+    return results;
+  }
+
+  void put_many(const std::vector<sphinx::CacheWriteEntry>& entries) override {
+    batch_writes.insert(batch_writes.end(), entries.begin(), entries.end());
+    for (const auto& entry : entries) {
+      values[entry.key] = entry.value;
+    }
   }
 };
 
@@ -462,4 +549,113 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
   EXPECT_EQ(fresh_hit.product->version, 2U);
 }
 
-}  // 匿名命名空间
+TEST(ProductServiceTest, BatchMissUsesOneStoreCallAndRestoresDuplicateItems) {
+  BatchStore store;
+  store.rows.emplace(1, sphinx::Product{1, "tea", 199, 1});
+  store.rows.emplace(2, sphinx::Product{2, "coffee", 299, 1});
+  BatchCache cache;
+  sphinx::ProductService service{store, cache};
+
+  const auto result = service.get_many({2, 99, 1, 2});
+
+  EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
+  ASSERT_EQ(result.items.size(), 4U);
+  EXPECT_EQ(result.items[0].id, 2U);
+  EXPECT_EQ(result.items[0].result.status, sphinx::ProductStatus::Ok);
+  EXPECT_EQ(result.items[0].result.product.value_or(sphinx::Product{}).id, 2U);
+  EXPECT_EQ(result.items[1].id, 99U);
+  EXPECT_EQ(result.items[1].result.status, sphinx::ProductStatus::NotFound);
+  EXPECT_EQ(result.items[2].id, 1U);
+  EXPECT_EQ(result.items[2].result.product.value_or(sphinx::Product{}).id, 1U);
+  EXPECT_EQ(result.items[3].id, 2U);
+  EXPECT_EQ(result.items[3].result.product.value_or(sphinx::Product{}).id, 2U);
+  EXPECT_EQ(store.batch_queries, (std::vector<std::vector<std::uint64_t>>{{2, 99, 1}}));
+  EXPECT_EQ(store.finds, 0);
+  EXPECT_EQ(
+      cache.batch_reads,
+      (std::vector<std::vector<std::string>>{{"product:v2:2", "product:v2:99", "product:v2:1"}}));
+  ASSERT_EQ(cache.batch_writes.size(), 2U);
+  EXPECT_EQ(cache.batch_writes[0].key, "product:v2:2");
+  EXPECT_EQ(cache.batch_writes[1].key, "product:v2:1");
+}
+
+TEST(ProductServiceTest, BatchCacheHitsLeaveOnlyMissesForTheStore) {
+  BatchStore store;
+  store.rows.emplace(2, sphinx::Product{2, "coffee", 299, 1});
+  BatchCache cache;
+  cache.values.emplace("product:v2:1", sphinx::encode_product_cache({1, "tea", 199, 1}));
+  sphinx::ProductService service{store, cache};
+
+  const auto result = service.get_many({1, 2, 1});
+
+  EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
+  ASSERT_EQ(result.items.size(), 3U);
+  EXPECT_EQ(result.items[0].result.cache_source, sphinx::CacheSource::Hit);
+  EXPECT_EQ(result.items[1].result.cache_source, sphinx::CacheSource::Miss);
+  EXPECT_EQ(result.items[2].result.product.value_or(sphinx::Product{}).id, 1U);
+  EXPECT_EQ(store.batch_queries, (std::vector<std::vector<std::uint64_t>>{{2}}));
+  EXPECT_EQ(store.finds, 0);
+  ASSERT_EQ(cache.batch_writes.size(), 1U);
+  EXPECT_EQ(cache.batch_writes[0].key, "product:v2:2");
+}
+
+TEST(ProductServiceTest, CacheBatchFailureFallsBackForEveryUnresolvedItem) {
+  BatchStore store;
+  store.rows.emplace(1, sphinx::Product{1, "tea", 199, 1});
+  store.rows.emplace(2, sphinx::Product{2, "coffee", 299, 1});
+  BatchCache cache;
+  cache.fail_batch_read = true;
+  sphinx::ProductService service{store, cache};
+
+  const auto result = service.get_many({1, 2});
+
+  ASSERT_EQ(result.items.size(), 2U);
+  EXPECT_EQ(result.items[0].result.status, sphinx::ProductStatus::Ok);
+  EXPECT_EQ(result.items[0].result.cache_source, sphinx::CacheSource::Bypass);
+  EXPECT_EQ(result.items[1].result.cache_source, sphinx::CacheSource::Bypass);
+  EXPECT_EQ(store.batch_queries, (std::vector<std::vector<std::uint64_t>>{{1, 2}}));
+}
+
+TEST(ProductServiceTest, StoreBatchFailureDoesNotReplaceEarlierCacheHits) {
+  BatchStore store;
+  store.batch_error = sphinx::StoreErrorCode::Unavailable;
+  BatchCache cache;
+  cache.values.emplace("product:v2:1", sphinx::encode_product_cache({1, "tea", 199, 1}));
+  sphinx::ProductService service{store, cache};
+
+  const auto result = service.get_many({1, 2});
+
+  ASSERT_EQ(result.items.size(), 2U);
+  EXPECT_EQ(result.items[0].result.status, sphinx::ProductStatus::Ok);
+  EXPECT_EQ(result.items[0].result.cache_source, sphinx::CacheSource::Hit);
+  EXPECT_EQ(result.items[1].result.status, sphinx::ProductStatus::StoreUnavailable);
+  EXPECT_EQ(result.items[1].result.cache_source, sphinx::CacheSource::Miss);
+  EXPECT_TRUE(cache.batch_writes.empty());
+}
+
+TEST(ProductServiceTest, InvalidAndFreshBatchesDoNotUseTheCache) {
+  BatchStore store;
+  store.rows.emplace(1, sphinx::Product{1, "tea", 199, 1});
+  BatchCache cache;
+  sphinx::ProductService service{store, cache};
+
+  const auto invalid = service.get_many({1, 0});
+  EXPECT_EQ(invalid.status, sphinx::ProductStatus::InvalidArgument);
+  EXPECT_TRUE(invalid.items.empty());
+  const std::vector<std::uint64_t> oversized(sphinx::max_product_batch_size + 1, 1);
+  EXPECT_EQ(service.get_many(oversized).status, sphinx::ProductStatus::InvalidArgument);
+  const auto empty = service.get_many({});
+  EXPECT_EQ(empty.status, sphinx::ProductStatus::Ok);
+  EXPECT_TRUE(empty.items.empty());
+
+  const auto fresh = service.get_many({1, 1}, true);
+  ASSERT_EQ(fresh.items.size(), 2U);
+  EXPECT_EQ(fresh.items[0].result.cache_source, sphinx::CacheSource::Bypass);
+  EXPECT_EQ(fresh.items[1].result.product.value_or(sphinx::Product{}).id, 1U);
+  EXPECT_TRUE(cache.batch_reads.empty());
+  EXPECT_TRUE(cache.batch_writes.empty());
+  EXPECT_TRUE(store.batch_queries.empty());
+  EXPECT_EQ(store.finds, 1);
+}
+
+}  // namespace

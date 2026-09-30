@@ -6,6 +6,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace sphinx {
 
@@ -61,6 +62,21 @@ struct GetProductResult {
   ProductStatus status = ProductStatus::InternalError;
   std::optional<Product> product;
   CacheSource cache_source = CacheSource::NotChecked;
+};
+
+struct ProductLoadResult {
+  ProductStatus status = ProductStatus::InternalError;
+  std::optional<Product> product;
+};
+
+struct BatchProductItem {
+  std::uint64_t id = 0;
+  GetProductResult result;
+};
+
+struct GetProductsResult {
+  ProductStatus status = ProductStatus::InternalError;
+  std::vector<BatchProductItem> items;
 };
 
 struct UpdateProductResult {
