@@ -48,6 +48,10 @@ void set_product_status_error(httplib::Response& response, ProductStatus status)
     case ProductStatus::StoreUnavailable:
       set_error_response(response, 503, "store_unavailable");
       return;
+    case ProductStatus::ReadBusy:
+      set_error_response(response, 503, "read_busy");
+      response.set_header("Retry-After", "1");
+      return;
     case ProductStatus::CommitUnknown:
       set_error_response(response, 503, "commit_unknown");
       return;
@@ -126,6 +130,8 @@ const char* product_status_error_name(ProductStatus status) noexcept {
       return "conflict";
     case ProductStatus::StoreUnavailable:
       return "store_unavailable";
+    case ProductStatus::ReadBusy:
+      return "read_busy";
     case ProductStatus::CommitUnknown:
       return "commit_unknown";
     case ProductStatus::Ok:

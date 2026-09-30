@@ -52,6 +52,7 @@ enum class ProductStatus : std::uint8_t {
   StoreUnavailable,
   CommitUnknown,
   InternalError,
+  ReadBusy,
 };
 
 /// Hit：缓存值解码成功；Miss：缓存中没有该 key；Bypass：缓存 I/O 失败或调用方要求直查数据库；

@@ -17,6 +17,7 @@ add_library(sphinx_product_core STATIC
         src/product_codec.cpp
         src/product_store.cpp
         src/product_service.cpp
+        src/product_read_coordinator.cpp
         src/sphinx_product_cache.cpp
 )
 target_include_directories(sphinx_product_core PUBLIC include)
@@ -31,6 +32,7 @@ if (GTEST_FOUND)
             test/product_store_test.cpp
             test/product_codec_test.cpp
             test/product_service_test.cpp
+            test/product_read_coordinator_test.cpp
     )
     target_link_libraries(sphinx_product_tests PRIVATE sphinx_product_core ${GTEST_BOTH_LIBRARIES} pthread)
     add_test(NAME sphinx_product_tests COMMAND sphinx_product_tests)
