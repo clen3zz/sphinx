@@ -10,6 +10,9 @@
 namespace sphinx {
 namespace {
 
+constexpr std::uint32_t max_negative_cache_ttl_seconds = 30;
+constexpr std::uint32_t max_product_cache_ttl_jitter_seconds = 30;
+
 ProductStatus status_from_store_error(StoreErrorCode code) noexcept {
   switch (code) {
     case StoreErrorCode::Unavailable:
@@ -24,6 +27,17 @@ ProductStatus status_from_store_error(StoreErrorCode code) noexcept {
 }
 
 }  // namespace
+
+void validate_product_cache_policy(const ProductCachePolicy& policy) {
+  const bool valid_mode =
+      policy.mode == CachePolicyMode::Basic || policy.mode == CachePolicyMode::Protected;
+  if (!valid_mode || !valid_product_cache_ttl(policy.ttl_seconds) ||
+      policy.negative_ttl_seconds < 1 ||
+      policy.negative_ttl_seconds > max_negative_cache_ttl_seconds ||
+      policy.ttl_jitter_seconds > max_product_cache_ttl_jitter_seconds) {
+    throw std::invalid_argument{"invalid product cache policy"};
+  }
+}
 
 struct ProductService::ReadWorkItem {
   std::uint64_t id = 0;
@@ -41,9 +55,7 @@ struct ProductService::ReadBatch {
 
 ProductService::ProductService(ProductStore& store, ProductCache& cache, ProductCachePolicy policy)
     : _store{store}, _cache{cache}, _policy{policy} {
-  if (!valid_product_cache_ttl(_policy.ttl_seconds)) {
-    throw std::invalid_argument{"product cache TTL must be in 1..30 days"};
-  }
+  validate_product_cache_policy(_policy);
 }
 
 GetProductResult ProductService::get(std::uint64_t id, bool bypass_cache) {
@@ -146,10 +158,19 @@ void ProductService::read_cache(ReadBatch& batch, const std::vector<std::size_t>
         continue;
       }
       const auto cached_value = values[index].value_or("");
-      auto product = decode_product_cache(cached_value);
-      if (product && product->id == item.id) {
+      auto entry = decode_product_cache_entry(cached_value, item.id);
+      if (entry.kind == CacheEntryKind::Product && entry.product) {
         item.source = CacheSource::Hit;
-        item.result = GetProductResult{ProductStatus::Ok, std::move(product), item.source};
+        item.result = GetProductResult{ProductStatus::Ok, std::move(entry.product), item.source};
+        continue;
+      }
+      if (entry.kind == CacheEntryKind::NotFound) {
+        if (_policy.mode == CachePolicyMode::Protected) {
+          item.source = CacheSource::Hit;
+          item.result = GetProductResult{ProductStatus::NotFound, std::nullopt, item.source};
+        } else {
+          item.source = CacheSource::Miss;
+        }
         continue;
       }
       erase_corrupt(batch, positions[index]);
@@ -245,8 +266,12 @@ void ProductService::fill_cache(ReadBatch& batch, const std::vector<std::size_t>
   for (const auto position : positions) {
     const auto& item = batch.work_items[position];
     if (item.result && item.result->status == ProductStatus::Ok && item.result->product) {
+      entries.push_back({item.key, encode_product_cache(*item.result->product),
+                         product_cache_ttl(item.id, _policy)});
+    } else if (_policy.mode == CachePolicyMode::Protected && item.result &&
+               item.result->status == ProductStatus::NotFound) {
       entries.push_back(
-          {item.key, encode_product_cache(*item.result->product), _policy.ttl_seconds});
+          {item.key, encode_product_not_found(item.id), _policy.negative_ttl_seconds});
     }
   }
   if (entries.empty()) {

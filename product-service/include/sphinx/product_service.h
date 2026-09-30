@@ -17,6 +17,9 @@ struct ProductCachePolicy {
   std::uint32_t ttl_jitter_seconds = 3;
 };
 
+/// Validates policy bounds before starting workers or constructing a service.
+void validate_product_cache_policy(const ProductCachePolicy& policy);
+
 /// 旁路缓存业务层：只借用 store 和 cache，二者的生命周期必须长于本对象。
 /// 三个对象都由同一个工作线程使用，因此这一层不加锁。
 class ProductService final {

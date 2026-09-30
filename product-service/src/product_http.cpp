@@ -11,11 +11,12 @@ namespace sphinx {
 namespace {
 
 ProductHttpConfig checked_config(ProductHttpConfig config) {
+  validate_product_cache_policy(config.cache_policy);
   if (config.bind_address.empty() || config.port == 0 || config.worker_count == 0 ||
-      config.worker_count > 64 || !valid_product_cache_ttl(config.cache_policy.ttl_seconds) ||
-      config.mysql.host.empty() || config.mysql.port == 0 || config.mysql.user.empty() ||
-      config.mysql.database.empty() || config.mysql.connect_timeout_seconds == 0 ||
-      config.mysql.read_timeout_seconds == 0 || config.mysql.write_timeout_seconds == 0) {
+      config.worker_count > 64 || config.mysql.host.empty() || config.mysql.port == 0 ||
+      config.mysql.user.empty() || config.mysql.database.empty() ||
+      config.mysql.connect_timeout_seconds == 0 || config.mysql.read_timeout_seconds == 0 ||
+      config.mysql.write_timeout_seconds == 0) {
     throw std::invalid_argument{"invalid product HTTP configuration"};
   }
   validate_product_cache_options(config.cache);

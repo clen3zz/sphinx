@@ -340,6 +340,129 @@ TEST(ProductServiceTest, MissReadsDatabaseAndFillsWithRelativeTtl) {
   EXPECT_EQ(decoded->version, 1U);
 }
 
+TEST(ProductServiceTest, BasicPolicyRechecksNegativeCacheEntriesAgainstTheStore) {
+  FakeStore store;
+  store.row = sphinx::Product{1, "tea", 199, 1};
+  FakeCache cache;
+  cache.value = sphinx::encode_product_not_found(1);
+  sphinx::ProductService service{store, cache};
+
+  const auto result = service.get(1);
+
+  EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
+  EXPECT_EQ(result.cache_source, sphinx::CacheSource::Miss);
+  ASSERT_TRUE(result.product.has_value());
+  EXPECT_EQ(result.product.value_or(sphinx::Product{}).name, "tea");
+  EXPECT_EQ(store.finds, 1);
+  EXPECT_EQ(cache.erases, 0);
+  ASSERT_TRUE(cache.value.has_value());
+  const auto cached_product = sphinx::decode_product_cache(cache.value.value_or(""));
+  ASSERT_TRUE(cached_product.has_value());
+  EXPECT_EQ(cached_product.value_or(sphinx::Product{}).name, "tea");
+}
+
+TEST(ProductServiceTest, ProtectedPolicyServesNegativeCacheEntriesWithoutStoreReads) {
+  FakeStore store;
+  FakeCache cache;
+  cache.value = sphinx::encode_product_not_found(9);
+  sphinx::ProductCachePolicy policy;
+  policy.mode = sphinx::CachePolicyMode::Protected;
+  sphinx::ProductService service{store, cache, policy};
+
+  const auto result = service.get(9);
+
+  EXPECT_EQ(result.status, sphinx::ProductStatus::NotFound);
+  EXPECT_EQ(result.cache_source, sphinx::CacheSource::Hit);
+  EXPECT_FALSE(result.product.has_value());
+  EXPECT_EQ(store.finds, 0);
+  EXPECT_EQ(cache.erases, 0);
+}
+
+TEST(ProductServiceTest, ProtectedPolicyWritesNegativeEntriesWithTheirOwnTtl) {
+  FakeStore store;
+  FakeCache cache;
+  sphinx::ProductCachePolicy policy;
+  policy.mode = sphinx::CachePolicyMode::Protected;
+  policy.negative_ttl_seconds = 7;
+  sphinx::ProductService service{store, cache, policy};
+
+  const auto result = service.get(9);
+
+  EXPECT_EQ(result.status, sphinx::ProductStatus::NotFound);
+  EXPECT_EQ(cache.puts, 1);
+  EXPECT_EQ(cache.last_ttl, 7U);
+  ASSERT_TRUE(cache.value.has_value());
+  EXPECT_EQ(sphinx::decode_product_cache_entry(cache.value.value_or(""), 9).kind,
+            sphinx::CacheEntryKind::NotFound);
+}
+
+TEST(ProductServiceTest, ProtectedBatchWritesNegativeEntriesForMissingProducts) {
+  BatchStore store;
+  BatchCache cache;
+  sphinx::ProductCachePolicy policy;
+  policy.mode = sphinx::CachePolicyMode::Protected;
+  policy.negative_ttl_seconds = 7;
+  sphinx::ProductService service{store, cache, policy};
+
+  const auto result = service.get_many({9, 1, 9});
+
+  ASSERT_EQ(result.items.size(), 3U);
+  EXPECT_EQ(result.items[0].result.status, sphinx::ProductStatus::NotFound);
+  EXPECT_EQ(result.items[1].result.status, sphinx::ProductStatus::NotFound);
+  EXPECT_EQ(result.items[2].result.status, sphinx::ProductStatus::NotFound);
+  ASSERT_EQ(cache.batch_writes.size(), 2U);
+  const std::vector<std::uint64_t> expected_ids{9, 1};
+  for (std::size_t index = 0; index < cache.batch_writes.size(); ++index) {
+    const auto& entry = cache.batch_writes[index];
+    EXPECT_EQ(entry.key, sphinx::make_product_cache_key(expected_ids[index]));
+    EXPECT_EQ(entry.ttl_seconds, 7U);
+    EXPECT_EQ(sphinx::decode_product_cache_entry(entry.value, expected_ids[index]).kind,
+              sphinx::CacheEntryKind::NotFound);
+  }
+}
+
+TEST(ProductServiceTest, ProtectedStoreFailureDoesNotWriteNegativeCache) {
+  FakeStore store;
+  store.find_error = sphinx::StoreErrorCode::Unavailable;
+  FakeCache cache;
+  sphinx::ProductCachePolicy policy;
+  policy.mode = sphinx::CachePolicyMode::Protected;
+  sphinx::ProductService service{store, cache, policy};
+
+  EXPECT_EQ(service.get(9).status, sphinx::ProductStatus::StoreUnavailable);
+  EXPECT_EQ(cache.puts, 0);
+}
+
+TEST(ProductServiceTest, ProtectedPolicyUsesStableJitterForPositiveCacheEntries) {
+  FakeStore store;
+  store.row = sphinx::Product{42, "tea", 199, 1};
+  FakeCache cache;
+  sphinx::ProductCachePolicy policy;
+  policy.mode = sphinx::CachePolicyMode::Protected;
+  policy.ttl_seconds = 30;
+  policy.ttl_jitter_seconds = 3;
+  sphinx::ProductService service{store, cache, policy};
+
+  const auto result = service.get(42);
+
+  EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
+  EXPECT_GE(cache.last_ttl, 27U);
+  EXPECT_LE(cache.last_ttl, 33U);
+  EXPECT_EQ(cache.last_ttl, sphinx::product_cache_ttl(42, policy));
+}
+
+TEST(ProductServiceTest, RejectsInvalidCachePolicyBounds) {
+  FakeStore store;
+  FakeCache cache;
+  sphinx::ProductCachePolicy policy;
+  policy.negative_ttl_seconds = 31;
+  EXPECT_THROW((sphinx::ProductService{store, cache, policy}), std::invalid_argument);
+
+  policy.negative_ttl_seconds = 5;
+  policy.ttl_jitter_seconds = 31;
+  EXPECT_THROW((sphinx::ProductService{store, cache, policy}), std::invalid_argument);
+}
+
 TEST(ProductServiceTest, CacheFailureBypassesAndDatabaseFailureIsUnavailable) {
   FakeStore store;
   store.find_error = sphinx::StoreErrorCode::Unavailable;
