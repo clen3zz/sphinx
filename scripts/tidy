@@ -42,9 +42,16 @@ server_src = os.path.join(project_dir, "sphinxd", "src")
 required = {
     os.path.join(product_src, name)
     for name in (
+        "cache_circuit_breaker.cpp",
+        "product_cache.cpp",
+        "product_cache_options.cpp",
+        "product_metrics.cpp",
+        "redis_product_cache.cpp",
         "product_rules.cpp",
         "product_codec.cpp",
+        "product_store.cpp",
         "product_service.cpp",
+        "product_read_coordinator.cpp",
         "sphinx_product_cache.cpp",
         "mysql_product_store.cpp",
         "product_http.cpp",

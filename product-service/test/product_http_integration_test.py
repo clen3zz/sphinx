@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""MySQL + Sphinx 商品服务的黑盒验收测试。"""
+"""MySQL + Sphinx/Redis 商品服务的黑盒验收测试。"""
 
 import concurrent.futures
 import http.client
@@ -49,6 +49,13 @@ def wait_for_port(process, port, log_file, timeout=5.0):
 class ProductHttpIntegrationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.cache_backend = os.environ.get("SPHINX_TEST_CACHE_BACKEND", "sphinx")
+        cls.cache_policy = os.environ.get("SPHINX_TEST_CACHE_POLICY", "basic")
+        if cls.cache_backend not in {"sphinx", "redis"}:
+            raise RuntimeError("SPHINX_TEST_CACHE_BACKEND must be sphinx or redis")
+        if cls.cache_policy not in {"basic", "protected"}:
+            raise RuntimeError("SPHINX_TEST_CACHE_POLICY must be basic or protected")
+
         mysql_values = {
             name: os.environ.get(name)
             for name in (
@@ -65,8 +72,10 @@ class ProductHttpIntegrationTest(unittest.TestCase):
             raise unittest.SkipTest("disposable MySQL database name must include test")
         if shutil.which("mysql") is None:
             raise unittest.SkipTest("requires the mysql client for disposable fixture setup")
-        if not SPHINXD_BINARY.is_file() or not PRODUCT_SERVICE_BINARY.is_file():
+        if not PRODUCT_SERVICE_BINARY.is_file():
             raise RuntimeError("optional service binaries are missing")
+        if cls.cache_backend == "sphinx" and not SPHINXD_BINARY.is_file():
+            raise RuntimeError("sphinxd binary is missing for the Sphinx backend")
 
         try:
             cls.mysql_port = int(mysql_values["SPHINX_TEST_MYSQL_PORT"], 10)
@@ -88,38 +97,89 @@ class ProductHttpIntegrationTest(unittest.TestCase):
                 "SPHINX_MYSQL_DATABASE": cls.mysql_database,
                 "SPHINX_HTTP_BIND": "127.0.0.1",
                 "SPHINX_HTTP_WORKERS": "2",
-                "SPHINX_CACHE_BACKEND": "sphinx",
-                "SPHINX_CACHE_POLICY": "basic",
+                "SPHINX_CACHE_BACKEND": cls.cache_backend,
+                "SPHINX_CACHE_POLICY": cls.cache_policy,
                 "SPHINX_CACHE_TIMEOUT_MS": "200",
                 "SPHINX_CACHE_TTL_SECONDS": "30",
             }
         )
-        cls.sphinx_port = reserve_port()
-        cls.sphinx_log = tempfile.TemporaryFile()
-        cls.sphinx_process = subprocess.Popen(
-            [
+        cls.cache_port = reserve_port()
+        if cls.cache_backend == "sphinx":
+            cache_command = [
                 str(SPHINXD_BINARY),
                 "--listen",
                 "127.0.0.1",
                 "--port",
-                str(cls.sphinx_port),
+                str(cls.cache_port),
                 "--threads",
                 "2",
-            ],
-            stdout=cls.sphinx_log,
-            stderr=cls.sphinx_log,
-        )
+            ]
+        else:
+            redis_server = os.environ.get("SPHINX_TEST_REDIS_SERVER") or shutil.which(
+                "redis-server"
+            )
+            if redis_server is None:
+                raise RuntimeError("redis-server is required for the Redis backend")
+            cls.redis_directory = tempfile.TemporaryDirectory(prefix="sphinx-redis-test-")
+            cache_command = [
+                redis_server,
+                "--bind",
+                "127.0.0.1",
+                "--port",
+                str(cls.cache_port),
+                "--save",
+                "",
+                "--appendonly",
+                "no",
+                "--dir",
+                cls.redis_directory.name,
+            ]
+        cls.cache_command = cache_command
         try:
-            wait_for_port(cls.sphinx_process, cls.sphinx_port, cls.sphinx_log)
+            cls.start_cache_server()
         except Exception:
-            cls._stop_process(cls.sphinx_process, cls.sphinx_log, expected=None)
+            if hasattr(cls, "redis_directory"):
+                cls.redis_directory.cleanup()
             raise
 
     @classmethod
     def tearDownClass(cls):
-        process = getattr(cls, "sphinx_process", None)
+        cls.stop_cache_server()
+        redis_directory = getattr(cls, "redis_directory", None)
+        if redis_directory is not None:
+            redis_directory.cleanup()
+
+    @classmethod
+    def start_cache_server(cls):
+        cls.cache_log = tempfile.TemporaryFile()
+        cls.cache_process = subprocess.Popen(
+            cls.cache_command,
+            stdout=cls.cache_log,
+            stderr=cls.cache_log,
+        )
+        try:
+            wait_for_port(cls.cache_process, cls.cache_port, cls.cache_log)
+        except Exception:
+            cls.stop_cache_server()
+            raise
+
+    @classmethod
+    def stop_cache_server(cls):
+        process = getattr(cls, "cache_process", None)
+        log_file = getattr(cls, "cache_log", None)
+        cls.cache_process = None
+        cls.cache_log = None
         if process is not None:
-            cls._stop_process(process, cls.sphinx_log, expected=None)
+            if cls.cache_backend == "redis" and process.poll() is None:
+                try:
+                    cls.redis_command("SHUTDOWN", "NOSAVE")
+                except (AssertionError, OSError):
+                    pass
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            cls._stop_process(process, log_file, expected=None)
 
     @staticmethod
     def _stop_process(process, log_file, expected):
@@ -232,12 +292,14 @@ class ProductHttpIntegrationTest(unittest.TestCase):
     def start_service(
         self,
         cache_nodes=None,
+        redis_port=None,
         mysql_port=None,
         workers=2,
         port=None,
-        cache_policy="basic",
+        cache_policy=None,
         negative_ttl=None,
         ttl_jitter=None,
+        ttl_seconds=None,
         breaker_threshold=None,
         breaker_open_interval=None,
     ):
@@ -247,9 +309,19 @@ class ProductHttpIntegrationTest(unittest.TestCase):
         environment = self.base_environment.copy()
         environment["SPHINX_HTTP_PORT"] = str(self.http_port)
         environment["SPHINX_HTTP_WORKERS"] = str(workers)
-        environment["SPHINX_CACHE_NODES"] = cache_nodes or f"127.0.0.1:{self.sphinx_port}"
+        environment["SPHINX_CACHE_BACKEND"] = self.cache_backend
+        environment["SPHINX_CACHE_POLICY"] = self.cache_policy if cache_policy is None else cache_policy
         environment["SPHINX_MYSQL_PORT"] = str(self.mysql_port if mysql_port is None else mysql_port)
-        environment["SPHINX_CACHE_POLICY"] = cache_policy
+        if self.cache_backend == "sphinx":
+            environment["SPHINX_CACHE_NODES"] = cache_nodes or f"127.0.0.1:{self.cache_port}"
+        else:
+            environment.pop("SPHINX_REDIS_USERNAME", None)
+            environment.pop("SPHINX_REDIS_PASSWORD", None)
+            environment["SPHINX_REDIS_HOST"] = "127.0.0.1"
+            environment["SPHINX_REDIS_PORT"] = str(
+                self.cache_port if redis_port is None else redis_port
+            )
+            environment["SPHINX_REDIS_DATABASE"] = "0"
         environment.pop("SPHINX_NEGATIVE_TTL_SECONDS", None)
         environment.pop("SPHINX_TTL_JITTER_SECONDS", None)
         environment.pop("SPHINX_CACHE_FAILURE_THRESHOLD", None)
@@ -258,6 +330,8 @@ class ProductHttpIntegrationTest(unittest.TestCase):
             environment["SPHINX_NEGATIVE_TTL_SECONDS"] = str(negative_ttl)
         if ttl_jitter is not None:
             environment["SPHINX_TTL_JITTER_SECONDS"] = str(ttl_jitter)
+        if ttl_seconds is not None:
+            environment["SPHINX_CACHE_TTL_SECONDS"] = str(ttl_seconds)
         if breaker_threshold is not None:
             environment["SPHINX_CACHE_FAILURE_THRESHOLD"] = str(breaker_threshold)
         if breaker_open_interval is not None:
@@ -325,10 +399,16 @@ class ProductHttpIntegrationTest(unittest.TestCase):
     def set_cache(self, product_id, name, price_cents, version, ttl=60):
         key = f"product:v3:{product_id}"
         value = self.encode_cached_product(product_id, name, price_cents, version)
-        with socket.create_connection(("127.0.0.1", self.sphinx_port), timeout=2) as client:
-            client.sendall(f"set {key} 0 {ttl} {len(value)}\r\n".encode() + value + b"\r\n")
-            response = self.read_line(client)
-        self.assertEqual(response, b"STORED\r\n")
+        if self.cache_backend == "redis":
+            response = self.redis_command("SET", key, value, "EX", ttl)
+            self.assertEqual(response, b"OK")
+        else:
+            with socket.create_connection(("127.0.0.1", self.cache_port), timeout=2) as client:
+                client.sendall(
+                    f"set {key} 0 {ttl} {len(value)}\r\n".encode() + value + b"\r\n"
+                )
+                response = self.read_line(client)
+            self.assertEqual(response, b"STORED\r\n")
         self.cache_keys.add(key)
 
     @staticmethod
@@ -341,11 +421,73 @@ class ProductHttpIntegrationTest(unittest.TestCase):
             line.extend(chunk)
         return bytes(line)
 
+    @classmethod
+    def _read_redis_line(cls, connection):
+        line = cls.read_line(connection)
+        if not line.endswith(b"\r\n"):
+            raise AssertionError("Redis returned an incomplete response line")
+        return line[:-2]
+
+    @classmethod
+    def _read_redis_exactly(cls, connection, size):
+        data = bytearray()
+        while len(data) < size:
+            chunk = connection.recv(size - len(data))
+            if not chunk:
+                raise AssertionError("Redis closed a response before its payload ended")
+            data.extend(chunk)
+        return bytes(data)
+
+    @classmethod
+    def _read_redis_reply(cls, connection):
+        line = cls._read_redis_line(connection)
+        if not line:
+            raise AssertionError("Redis returned an empty response")
+        kind, payload = line[:1], line[1:]
+        if kind == b"+":
+            return payload
+        if kind == b"-":
+            raise AssertionError(f"Redis command failed: {payload.decode(errors='replace')}")
+        if kind == b":":
+            return int(payload)
+        if kind == b"$":
+            size = int(payload)
+            if size == -1:
+                return None
+            value = cls._read_redis_exactly(connection, size)
+            if cls._read_redis_exactly(connection, 2) != b"\r\n":
+                raise AssertionError("Redis bulk response has an invalid terminator")
+            return value
+        if kind == b"*":
+            size = int(payload)
+            if size == -1:
+                return None
+            return [cls._read_redis_reply(connection) for _ in range(size)]
+        raise AssertionError(f"Redis returned an unsupported response type: {kind!r}")
+
+    @classmethod
+    def redis_command(cls, *arguments):
+        encoded = [
+            argument if isinstance(argument, bytes) else str(argument).encode("utf-8")
+            for argument in arguments
+        ]
+        request = bytearray(f"*{len(encoded)}\r\n".encode("ascii"))
+        for argument in encoded:
+            request.extend(f"${len(argument)}\r\n".encode("ascii"))
+            request.extend(argument)
+            request.extend(b"\r\n")
+        with socket.create_connection(("127.0.0.1", cls.cache_port), timeout=2) as connection:
+            connection.sendall(request)
+            return cls._read_redis_reply(connection)
+
     def delete_cache(self, key):
         try:
-            with socket.create_connection(("127.0.0.1", self.sphinx_port), timeout=1) as client:
-                client.sendall(f"delete {key}\r\n".encode())
-                self.read_line(client)
+            if self.cache_backend == "redis":
+                self.redis_command("DEL", key)
+            else:
+                with socket.create_connection(("127.0.0.1", self.cache_port), timeout=1) as client:
+                    client.sendall(f"delete {key}\r\n".encode())
+                    self.read_line(client)
         except OSError:
             pass
 
@@ -400,7 +542,8 @@ class ProductHttpIntegrationTest(unittest.TestCase):
 
         second = self.http_request("GET", path)
         self.assertEqual(second[0], 200)
-        self.assertEqual(second[1].get("X-Cache"), "MIXED")
+        expected_source = "HIT" if self.cache_policy == "protected" else "MIXED"
+        self.assertEqual(second[1].get("X-Cache"), expected_source)
         self.assertEqual(json.loads(second[2])["items"][1], {
             "id": missing_id, "error": "not_found"
         })
@@ -412,7 +555,13 @@ class ProductHttpIntegrationTest(unittest.TestCase):
         self.assertEqual(fresh[1].get("X-Cache"), "BYPASS")
 
     def test_batch_query_rejects_malformed_parameters_before_dependency_access(self):
-        self.start_service(cache_nodes=f"127.0.0.1:{reserve_port()}", mysql_port=reserve_port())
+        dead_cache_port = reserve_port()
+        cache_endpoint = (
+            {"cache_nodes": f"127.0.0.1:{dead_cache_port}"}
+            if self.cache_backend == "sphinx"
+            else {"redis_port": dead_cache_port}
+        )
+        self.start_service(**cache_endpoint, mysql_port=reserve_port())
         oversized_ids = ",".join(str(index + 1) for index in range(33))
         invalid_paths = [
             "/products",
@@ -495,7 +644,7 @@ class ProductHttpIntegrationTest(unittest.TestCase):
         self.assertEqual(metrics_response[0], 200)
         self.assertEqual(metrics_response[1].get("Cache-Control"), "no-store")
         metrics = json.loads(metrics_response[2])
-        self.assertEqual(metrics["backend"], "sphinx")
+        self.assertEqual(metrics["backend"], self.cache_backend)
         self.assertEqual(metrics["policy"], "protected")
         self.assertEqual(metrics["counters"]["get_requests"], 2)
         self.assertEqual(metrics["counters"]["cache_misses"], 2)
@@ -503,6 +652,52 @@ class ProductHttpIntegrationTest(unittest.TestCase):
         self.assertEqual(metrics["counters"]["negative_hits"], 1)
         self.assertEqual(metrics["counters"]["store_read_operations"], 1)
         self.assertEqual(metrics["counters"]["read_leaders"], 1)
+
+    def test_protected_negative_cache_expires_and_reads_mysql_again(self):
+        missing_id = self.new_product_id()
+        self.start_service(cache_policy="protected", negative_ttl=1, ttl_jitter=0)
+
+        first = self.http_request("GET", f"/products/{missing_id}")
+        self.assert_json_error(first, 404, "not_found")
+        self.assertEqual(first[1].get("X-Cache"), "MISS")
+        second = self.http_request("GET", f"/products/{missing_id}")
+        self.assert_json_error(second, 404, "not_found")
+        self.assertEqual(second[1].get("X-Cache"), "HIT")
+
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
+            expired = self.http_request("GET", f"/products/{missing_id}")
+            self.assert_json_error(expired, 404, "not_found")
+            if expired[1].get("X-Cache") == "MISS":
+                break
+        else:
+            self.fail("negative cache entry did not expire within the test deadline")
+
+        metrics = json.loads(self.http_request("GET", "/metrics")[2])
+        self.assertEqual(metrics["counters"]["store_read_operations"], 2)
+
+    def test_protected_positive_cache_expires_and_refreshes(self):
+        product_id = self.insert_product("before-expiry", 80, 1)
+        self.start_service(cache_policy="protected", ttl_seconds=1, ttl_jitter=0)
+
+        first = self.http_request("GET", f"/products/{product_id}")
+        self.assertEqual(first[0], 200)
+        self.assertEqual(first[1].get("X-Cache"), "MISS")
+        self.update_database_product(product_id, "after-expiry", 90, 2)
+
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
+            refreshed = self.http_request("GET", f"/products/{product_id}")
+            self.assertEqual(refreshed[0], 200)
+            if refreshed[1].get("X-Cache") == "MISS":
+                break
+            self.assertEqual(json.loads(refreshed[2])["version"], 1)
+        else:
+            self.fail("positive cache entry did not expire within the test deadline")
+
+        self.assertEqual(json.loads(refreshed[2])["version"], 2)
 
     def test_metrics_does_not_create_a_worker_or_connect_to_mysql(self):
         dead_mysql_port = reserve_port()
@@ -513,16 +708,21 @@ class ProductHttpIntegrationTest(unittest.TestCase):
         self.assertEqual(response[0], 200)
         self.assertEqual(response[1].get("Cache-Control"), "no-store")
         metrics = json.loads(response[2])
-        self.assertEqual(metrics["backend"], "sphinx")
-        self.assertEqual(metrics["policy"], "basic")
+        self.assertEqual(metrics["backend"], self.cache_backend)
+        self.assertEqual(metrics["policy"], self.cache_policy)
         self.assertEqual(metrics["counters"]["get_requests"], 0)
         self.assertEqual(metrics["read_coordinator"], {"active_keys": 0, "active_loads": 0})
 
     def test_protected_cache_breaker_opens_and_bypasses_cache(self):
         product_id = self.insert_product("breaker-fallback", 70, 5)
         dead_cache_port = reserve_port()
+        cache_endpoint = (
+            {"cache_nodes": f"127.0.0.1:{dead_cache_port}"}
+            if self.cache_backend == "sphinx"
+            else {"redis_port": dead_cache_port}
+        )
         self.start_service(
-            cache_nodes=f"127.0.0.1:{dead_cache_port}",
+            **cache_endpoint,
             cache_policy="protected",
             breaker_threshold=2,
             breaker_open_interval=10000,
@@ -559,7 +759,10 @@ class ProductHttpIntegrationTest(unittest.TestCase):
     def test_cache_outage_and_mysql_outage(self):
         product_id = self.insert_product("cache-fallback", 50, 3)
         dead_cache_port = reserve_port()
-        self.start_service(cache_nodes=f"127.0.0.1:{dead_cache_port}")
+        if self.cache_backend == "sphinx":
+            self.start_service(cache_nodes=f"127.0.0.1:{dead_cache_port}")
+        else:
+            self.start_service(redis_port=dead_cache_port)
         cache_outage = self.http_request("GET", f"/products/{product_id}")
         self.assertEqual(cache_outage[0], 200)
         self.assertEqual(cache_outage[1].get("X-Cache"), "BYPASS")
@@ -577,6 +780,35 @@ class ProductHttpIntegrationTest(unittest.TestCase):
         cache_miss = self.http_request("GET", f"/products/{missing_id}")
         self.assert_json_error(cache_miss, 503, "store_unavailable")
         self.assertEqual(cache_miss[1].get("X-Cache"), "MISS")
+
+    def test_cache_restart_recovers_after_a_bypassed_read(self):
+        product_id = self.insert_product("restart-cache", 75, 6)
+        warm = self.http_request("GET", f"/products/{product_id}")
+        self.assertEqual(warm[0], 200)
+        self.assertEqual(warm[1].get("X-Cache"), "MISS")
+        hit = self.http_request("GET", f"/products/{product_id}")
+        self.assertEqual(hit[1].get("X-Cache"), "HIT")
+
+        self.stop_cache_server()
+        try:
+            bypassed = self.http_request("GET", f"/products/{product_id}")
+        finally:
+            self.start_cache_server()
+
+        self.assertEqual(bypassed[0], 200)
+        self.assertEqual(bypassed[1].get("X-Cache"), "BYPASS")
+        recovered = None
+        for _ in range(3):
+            recovered = self.http_request("GET", f"/products/{product_id}")
+            if recovered[1].get("X-Cache") != "BYPASS":
+                break
+            time.sleep(0.05)
+        self.assertIsNotNone(recovered)
+        self.assertEqual(recovered[0], 200)
+        self.assertIn(recovered[1].get("X-Cache"), {"HIT", "MISS"})
+        self.assertEqual(json.loads(recovered[2])["version"], 6)
+        metrics = json.loads(self.http_request("GET", "/metrics")[2])
+        self.assertGreaterEqual(metrics["counters"]["cache_read_failures"], 1)
 
     def test_invalid_json_body_and_oversize_payload(self):
         product_id = self.insert_product("unchanged", 70, 1)
@@ -674,7 +906,7 @@ class ProductHttpIntegrationTest(unittest.TestCase):
         second_environment = self.base_environment.copy()
         second_environment["SPHINX_HTTP_BIND"] = "127.0.0.1"
         second_environment["SPHINX_HTTP_PORT"] = str(bind_blocker.getsockname()[1])
-        second_environment["SPHINX_CACHE_NODES"] = f"127.0.0.1:{self.sphinx_port}"
+        second_environment["SPHINX_CACHE_NODES"] = f"127.0.0.1:{self.cache_port}"
         second = subprocess.Popen(
             [str(PRODUCT_SERVICE_BINARY)],
             env=second_environment,

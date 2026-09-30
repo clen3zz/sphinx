@@ -103,6 +103,15 @@ protected 模式还可设置 `SPHINX_READ_MAX_INFLIGHT_KEYS`（默认 1024）、
 `SPHINX_REDIS_USERNAME`、`SPHINX_REDIS_PASSWORD`；Redis 连接在对应 HTTP Worker 第一次
 收到请求时建立，MySQL 仍是商品权威数据。
 
+查看进程内指标：
+
+```bash
+curl -s http://127.0.0.1:8080/metrics
+```
+
+该 JSON 包含 backend/policy、商品与缓存计数、固定延迟桶、回源协调器和熔断器快照。路由不创建
+Worker，也不连接 MySQL 或缓存；延迟桶用于观察分布，不等于精确的 P50/P99。
+
 ## 严格集成验收
 
 准备名称包含 `test` 的独立临时数据库，并配置 `SPHINX_TEST_MYSQL_HOST`、`SPHINX_TEST_MYSQL_PORT`、`SPHINX_TEST_MYSQL_USER`、`SPHINX_TEST_MYSQL_PASSWORD`、`SPHINX_TEST_MYSQL_DATABASE` 后执行：
@@ -112,6 +121,36 @@ protected 模式还可设置 `SPHINX_READ_MAX_INFLIGHT_KEYS`（默认 1024）、
 ```
 
 脚本缺少数据库凭据时会报错，不会把跳过测试当作验收成功。
+
+要严格验收同一 HTTP 业务测试在两种缓存和两种策略下的行为，安装 `redis-server` 后执行：
+
+```bash
+./scripts/verify_product_cache.sh build
+```
+
+该脚本保留原有 `verify_mysql_sphinx.sh` 入口，先运行真实 MySQL 集成测试，再顺序运行
+Sphinx/Redis × basic/protected 四种组合。Redis 测试会启动绑定回环地址、关闭 RDB/AOF 的自有
+临时实例，不会清空或写入用户配置的 Redis。
+
+准备名称包含 `test` 的隔离数据库后，可重复运行 HTTP 对照并将原始请求延迟、商品指标、进程
+CPU/RSS、缓存内部统计和可用的 Performance Schema SQL 计数保存在 JSON：
+
+```bash
+python3 scripts/compare_product_cache.py \
+  --build-dir build --products 20000 --requests 1000 --concurrency 16 \
+  --cache-memory-mb 64 --redis-policy allkeys-lru --repeat 3 \
+  --output-dir build/product-cache-results
+```
+
+脚本只比较 Sphinx 与 Redis，不提供纯 MySQL 后端。内存预算相同不代表两种缓存的可用容量相同；
+结果应连同 TTL、淘汰策略、数据分布、并发和重复样本一起解释。
+
+### 四组合严格验收记录（2026-10-01）
+
+- 环境：WSL2 Ubuntu 26.04、MySQL 8.4.11、Redis 8.0.5；MySQL 使用独立且名称含 `test` 的数据库。
+- 执行：`scripts/verify_product_cache.sh`，脚本启动自有 Sphinx/Redis 临时实例。
+- 结果：MySQL 集成测试 **3/3 通过**；Sphinx/Redis × basic/protected 的 HTTP 黑盒测试各 **15/15 通过**。
+- 该记录证明这四种组合的当前业务验收路径可以实际运行；不代表性能结论、长期运行或高可用能力。
 
 ### 一次真实数据库验收记录（2026-09-29）
 
@@ -123,6 +162,8 @@ protected 模式还可设置 `SPHINX_READ_MAX_INFLIGHT_KEYS`（默认 1024）、
 ## 文档
 
 - [架构与调用链](docs/ARCHITECTURE.md)
+- [Redis 开发计划（接口、数据结构、分阶段验收）](docs/REDIS_DEVELOPMENT_PLAN.md)
+- [Redis 学习路线](docs/REDIS_LEARNING_ROUTE.md)
 - [代码与命名规范](docs/CODING_STANDARDS.md)
 
 ## License
