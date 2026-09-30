@@ -6,19 +6,24 @@ FetchContent_Populate(nlohmann_json
 add_library(sphinx_json INTERFACE)
 target_include_directories(sphinx_json INTERFACE ${nlohmann_json_SOURCE_DIR}/include)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(HIREDIS REQUIRED IMPORTED_TARGET hiredis>=1.0.0)
+
 add_library(sphinx_product_core STATIC
         src/product_cache.cpp
+        src/redis_product_cache.cpp
         src/product_rules.cpp
         src/product_codec.cpp
         src/product_service.cpp
         src/sphinx_product_cache.cpp
 )
 target_include_directories(sphinx_product_core PUBLIC include)
-target_link_libraries(sphinx_product_core PUBLIC sphinx_core sphinx_json)
+target_link_libraries(sphinx_product_core PUBLIC sphinx_core sphinx_json PkgConfig::HIREDIS)
 
 if (GTEST_FOUND)
     add_executable(sphinx_product_tests
             test/product_cache_test.cpp
+            test/redis_product_cache_test.cpp
             test/product_codec_test.cpp
             test/product_service_test.cpp
     )
@@ -26,7 +31,6 @@ if (GTEST_FOUND)
     add_test(NAME sphinx_product_tests COMMAND sphinx_product_tests)
 endif ()
 
-find_package(PkgConfig REQUIRED)
 pkg_check_modules(MYSQLCLIENT REQUIRED IMPORTED_TARGET mysqlclient)
 
 # 这两个依赖仅使用头文件：拉取源码即可，不引入它们自己的 CMake 项目。

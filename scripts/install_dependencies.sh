@@ -22,6 +22,7 @@ case "${ID:-}" in
             ccache
             git
             libgtest-dev
+            libhiredis-dev
             libmysqlclient-dev
             netcat-openbsd
             ninja-build
@@ -39,6 +40,7 @@ case "${ID:-}" in
             ccache
             git
             gtest-devel
+            hiredis-devel
             mysql-devel
             ninja-build
             nmap-ncat
