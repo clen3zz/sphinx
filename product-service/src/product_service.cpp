@@ -53,8 +53,9 @@ struct ProductService::ReadBatch {
   bool cache_failed = false;
 };
 
-ProductService::ProductService(ProductStore& store, ProductCache& cache, ProductCachePolicy policy)
-    : _store{store}, _cache{cache}, _policy{policy} {
+ProductService::ProductService(ProductStore& store, ProductCache& cache, ProductSharedState& shared,
+                               ProductCachePolicy policy)
+    : _store{store}, _cache{cache}, _shared{shared}, _policy{policy} {
   validate_product_cache_policy(_policy);
 }
 
@@ -104,7 +105,11 @@ std::vector<GetProductResult> ProductService::read_products(const std::vector<st
       unresolved.push_back(index);
     }
   }
-  load_basic(batch, unresolved);
+  if (_policy.mode == CachePolicyMode::Protected) {
+    load_protected(batch, unresolved);
+  } else {
+    load_basic(batch, unresolved);
+  }
   return restore_results(batch);
 }
 
@@ -216,6 +221,128 @@ void ProductService::load_basic(ReadBatch& batch, const std::vector<std::size_t>
   fill_cache(batch, positions);
 }
 
+void ProductService::load_protected(ReadBatch& batch, const std::vector<std::size_t>& positions) {
+  if (positions.empty()) {
+    return;
+  }
+
+  if (batch.bypass_cache) {
+    auto permit = _shared.reads.try_acquire_load();
+    if (!permit) {
+      for (const auto position : positions) {
+        auto& item = batch.work_items[position];
+        item.result = GetProductResult{ProductStatus::ReadBusy, std::nullopt, item.source};
+      }
+      return;
+    }
+
+    std::vector<std::uint64_t> ids;
+    ids.reserve(positions.size());
+    for (const auto position : positions) {
+      ids.push_back(batch.work_items[position].id);
+    }
+    const auto loaded = load_from_store(ids, batch.work_items.size() > 1);
+    permit.reset();
+    for (std::size_t index = 0; index < positions.size(); ++index) {
+      auto& item = batch.work_items[positions[index]];
+      const auto& load = loaded[index];
+      item.result = GetProductResult{load.status, load.product, item.source};
+    }
+    fill_cache(batch, positions);
+    return;
+  }
+
+  std::vector<std::uint64_t> ids;
+  ids.reserve(positions.size());
+  for (const auto position : positions) {
+    ids.push_back(batch.work_items[position].id);
+  }
+  auto tickets = _shared.reads.acquire_many(ids);
+  std::vector<std::size_t> leader_indexes;
+  std::vector<std::size_t> follower_indexes;
+  leader_indexes.reserve(positions.size());
+  follower_indexes.reserve(positions.size());
+
+  for (std::size_t index = 0; index < tickets.size(); ++index) {
+    const auto position = positions[index];
+    switch (tickets[index].role()) {
+      case ReadRole::Leader:
+        leader_indexes.push_back(index);
+        break;
+      case ReadRole::Follower:
+        follower_indexes.push_back(index);
+        break;
+      case ReadRole::Rejected: {
+        auto& item = batch.work_items[position];
+        item.result = GetProductResult{ProductStatus::ReadBusy, std::nullopt, item.source};
+        break;
+      }
+    }
+  }
+
+  std::vector<std::size_t> second_check_positions;
+  second_check_positions.reserve(leader_indexes.size());
+  if (!batch.cache_failed) {
+    for (const auto index : leader_indexes) {
+      const auto position = positions[index];
+      if (!batch.work_items[position].result) {
+        second_check_positions.push_back(position);
+      }
+    }
+    read_cache(batch, second_check_positions);
+  }
+
+  std::vector<std::size_t> load_indexes;
+  load_indexes.reserve(leader_indexes.size());
+  for (const auto index : leader_indexes) {
+    if (!batch.work_items[positions[index]].result) {
+      load_indexes.push_back(index);
+    }
+  }
+
+  if (!load_indexes.empty()) {
+    auto permit = _shared.reads.try_acquire_load();
+    if (!permit) {
+      for (const auto index : load_indexes) {
+        auto& item = batch.work_items[positions[index]];
+        item.result = GetProductResult{ProductStatus::ReadBusy, std::nullopt, item.source};
+      }
+    } else {
+      std::vector<std::uint64_t> load_ids;
+      load_ids.reserve(load_indexes.size());
+      std::vector<std::size_t> load_positions;
+      load_positions.reserve(load_indexes.size());
+      for (const auto index : load_indexes) {
+        const auto position = positions[index];
+        load_ids.push_back(batch.work_items[position].id);
+        load_positions.push_back(position);
+      }
+      const auto loaded = load_from_store(load_ids, batch.work_items.size() > 1);
+      permit.reset();
+      for (std::size_t index = 0; index < load_positions.size(); ++index) {
+        auto& item = batch.work_items[load_positions[index]];
+        const auto& load = loaded[index];
+        item.result = GetProductResult{load.status, load.product, item.source};
+      }
+      fill_cache(batch, load_positions);
+    }
+  }
+
+  for (const auto index : leader_indexes) {
+    const auto& item = batch.work_items[positions[index]];
+    const auto result = item.result.value_or(
+        GetProductResult{ProductStatus::InternalError, std::nullopt, item.source});
+    tickets[index].complete({result.status, result.product});
+  }
+
+  const auto deadline = std::chrono::steady_clock::now() + _shared.reads.wait_timeout();
+  for (const auto index : follower_indexes) {
+    auto& item = batch.work_items[positions[index]];
+    const auto result = tickets[index].wait_until(deadline);
+    item.result = GetProductResult{result.status, result.product, item.source};
+  }
+}
+
 std::vector<ProductLoadResult> ProductService::load_from_store(
     const std::vector<std::uint64_t>& ids, bool batch_request) {
   if (ids.empty()) {
@@ -257,7 +384,7 @@ std::vector<ProductLoadResult> ProductService::load_from_store(
 }
 
 void ProductService::fill_cache(ReadBatch& batch, const std::vector<std::size_t>& positions) {
-  if (batch.bypass_cache) {
+  if (_policy.mode == CachePolicyMode::Protected && batch.cache_failed) {
     return;
   }
 

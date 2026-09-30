@@ -84,6 +84,7 @@ class ProductReadCoordinator final {
   std::optional<ProductLoadPermit> try_acquire_load();
   std::size_t active_key_count() const;
   std::size_t active_load_count() const;
+  std::chrono::milliseconds wait_timeout() const noexcept;
 
  private:
   void complete(std::uint64_t id, const std::shared_ptr<ProductReadFlight>& flight,

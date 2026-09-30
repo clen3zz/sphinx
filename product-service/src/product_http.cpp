@@ -13,8 +13,12 @@ namespace {
 ProductHttpConfig checked_config(ProductHttpConfig config) {
   validate_product_cache_policy(config.cache_policy);
   if (config.bind_address.empty() || config.port == 0 || config.worker_count == 0 ||
-      config.worker_count > 64 || config.mysql.host.empty() || config.mysql.port == 0 ||
-      config.mysql.user.empty() || config.mysql.database.empty() ||
+      config.worker_count > 64 || config.read_options.max_inflight_keys == 0 ||
+      config.read_options.max_concurrent_loads == 0 ||
+      config.read_options.max_concurrent_loads > config.worker_count ||
+      config.read_options.wait_timeout.count() <= 0 ||
+      config.read_options.wait_timeout.count() > 10000 || config.mysql.host.empty() ||
+      config.mysql.port == 0 || config.mysql.user.empty() || config.mysql.database.empty() ||
       config.mysql.connect_timeout_seconds == 0 || config.mysql.read_timeout_seconds == 0 ||
       config.mysql.write_timeout_seconds == 0) {
     throw std::invalid_argument{"invalid product HTTP configuration"};
@@ -24,10 +28,10 @@ ProductHttpConfig checked_config(ProductHttpConfig config) {
 }
 
 struct WorkerContext final {
-  explicit WorkerContext(const ProductHttpConfig& config)
+  WorkerContext(const ProductHttpConfig& config, ProductSharedState& shared)
       : store{config.mysql},
         cache{make_product_cache(config.cache)},
-        service{store, *cache, config.cache_policy} {}
+        service{store, *cache, shared, config.cache_policy} {}
 
   // 先初始化本线程的 MySQL 环境，再创建 store；C++ 会按成员声明的逆序析构。
   // 因此 guard 最后销毁，不会让仍在使用 MySQL 的对象失去线程环境。
@@ -40,11 +44,13 @@ struct WorkerContext final {
 }  // namespace
 
 struct ProductHttpServer::Impl {
-  explicit Impl(ProductHttpConfig&& source_config) : config{std::move(source_config)} {}
+  explicit Impl(ProductHttpConfig&& source_config)
+      : config{std::move(source_config)}, shared{config.read_options} {}
 
   ProductHttpConfig config;
   // server 及其工作队列先于 mysql_runtime 析构，确保工作线程先退出再关闭客户端库。
   [[maybe_unused]] MySqlRuntime mysql_runtime;
+  ProductSharedState shared;
   httplib::Server server;
   std::mutex state_mutex;
   bool stopping = false;
@@ -78,11 +84,12 @@ bool ProductHttpServer::serve() {
   }
 
   const auto* config = &_impl->config;
+  auto* shared = &_impl->shared;
   // 每个 HTTP 工作线程第一次处理请求时才创建自己的数据库连接持有者和缓存客户端。
-  install_product_routes(_impl->server, [config]() -> ProductService& {
+  install_product_routes(_impl->server, [config, shared]() -> ProductService& {
     thread_local std::unique_ptr<WorkerContext> context;
     if (!context) {
-      context = std::make_unique<WorkerContext>(*config);
+      context = std::make_unique<WorkerContext>(*config, *shared);
     }
     return context->service;
   });

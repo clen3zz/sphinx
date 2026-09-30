@@ -3,6 +3,7 @@
 #include <sphinx/product_http.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <charconv>
@@ -91,6 +92,17 @@ sphinx::ProductHttpConfig load_config() {
       static_cast<std::uint16_t>(unsigned_environment_value("SPHINX_HTTP_PORT", 8080, 1, 65535));
   config.worker_count =
       static_cast<std::uint32_t>(unsigned_environment_value("SPHINX_HTTP_WORKERS", 4, 1, 64));
+  config.read_options.max_concurrent_loads = std::min(2U, config.worker_count);
+  if (config.cache_policy.mode == sphinx::CachePolicyMode::Protected) {
+    config.read_options.max_inflight_keys = static_cast<std::size_t>(
+        unsigned_environment_value("SPHINX_READ_MAX_INFLIGHT_KEYS", 1024, 1, 65536));
+    config.read_options.max_concurrent_loads = static_cast<std::size_t>(
+        unsigned_environment_value("SPHINX_READ_MAX_CONCURRENT_LOADS",
+                                   std::min(2U, config.worker_count), 1, config.worker_count));
+    config.read_options.wait_timeout =
+        std::chrono::milliseconds{static_cast<std::chrono::milliseconds::rep>(
+            unsigned_environment_value("SPHINX_READ_WAIT_TIMEOUT_MS", 500, 1, 10000))};
+  }
   config.cache_policy.ttl_seconds = static_cast<std::uint32_t>(unsigned_environment_value(
       "SPHINX_CACHE_TTL_SECONDS", 30, 1, sphinx::max_product_cache_ttl_seconds));
   if (config.cache_policy.mode == sphinx::CachePolicyMode::Protected) {

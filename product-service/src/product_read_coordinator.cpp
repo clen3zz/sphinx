@@ -155,6 +155,10 @@ std::size_t ProductReadCoordinator::active_load_count() const {
   return _active_loads;
 }
 
+std::chrono::milliseconds ProductReadCoordinator::wait_timeout() const noexcept {
+  return _options.wait_timeout;
+}
+
 void ProductReadCoordinator::complete(std::uint64_t id,
                                       const std::shared_ptr<ProductReadFlight>& flight,
                                       ProductLoadResult result) noexcept {

@@ -304,8 +304,9 @@ class RaceCache final : public sphinx::ProductCache {
 TEST(ProductServiceTest, HitDoesNotReadDatabase) {
   FakeStore store;
   FakeCache cache;
+  sphinx::ProductSharedState shared;
   cache.value = sphinx::encode_product_cache({1, "tea", 199, 1});
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductService service{store, cache, shared};
   const auto result = service.get(1);
   EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
   EXPECT_EQ(result.cache_source, sphinx::CacheSource::Hit);
@@ -321,7 +322,8 @@ TEST(ProductServiceTest, MissReadsDatabaseAndFillsWithRelativeTtl) {
   FakeStore store;
   store.row = sphinx::Product{1, "tea", 199, 1};
   FakeCache cache;
-  sphinx::ProductService service{store, cache, {sphinx::CachePolicyMode::Basic, 45, 5, 3}};
+  sphinx::ProductSharedState shared;
+  sphinx::ProductService service{store, cache, shared, {sphinx::CachePolicyMode::Basic, 45, 5, 3}};
   const auto result = service.get(1);
   EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
   EXPECT_EQ(result.cache_source, sphinx::CacheSource::Miss);
@@ -344,8 +346,9 @@ TEST(ProductServiceTest, BasicPolicyRechecksNegativeCacheEntriesAgainstTheStore)
   FakeStore store;
   store.row = sphinx::Product{1, "tea", 199, 1};
   FakeCache cache;
+  sphinx::ProductSharedState shared;
   cache.value = sphinx::encode_product_not_found(1);
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductService service{store, cache, shared};
 
   const auto result = service.get(1);
 
@@ -364,10 +367,11 @@ TEST(ProductServiceTest, BasicPolicyRechecksNegativeCacheEntriesAgainstTheStore)
 TEST(ProductServiceTest, ProtectedPolicyServesNegativeCacheEntriesWithoutStoreReads) {
   FakeStore store;
   FakeCache cache;
+  sphinx::ProductSharedState shared;
   cache.value = sphinx::encode_product_not_found(9);
   sphinx::ProductCachePolicy policy;
   policy.mode = sphinx::CachePolicyMode::Protected;
-  sphinx::ProductService service{store, cache, policy};
+  sphinx::ProductService service{store, cache, shared, policy};
 
   const auto result = service.get(9);
 
@@ -381,10 +385,11 @@ TEST(ProductServiceTest, ProtectedPolicyServesNegativeCacheEntriesWithoutStoreRe
 TEST(ProductServiceTest, ProtectedPolicyWritesNegativeEntriesWithTheirOwnTtl) {
   FakeStore store;
   FakeCache cache;
+  sphinx::ProductSharedState shared;
   sphinx::ProductCachePolicy policy;
   policy.mode = sphinx::CachePolicyMode::Protected;
   policy.negative_ttl_seconds = 7;
-  sphinx::ProductService service{store, cache, policy};
+  sphinx::ProductService service{store, cache, shared, policy};
 
   const auto result = service.get(9);
 
@@ -399,10 +404,11 @@ TEST(ProductServiceTest, ProtectedPolicyWritesNegativeEntriesWithTheirOwnTtl) {
 TEST(ProductServiceTest, ProtectedBatchWritesNegativeEntriesForMissingProducts) {
   BatchStore store;
   BatchCache cache;
+  sphinx::ProductSharedState shared;
   sphinx::ProductCachePolicy policy;
   policy.mode = sphinx::CachePolicyMode::Protected;
   policy.negative_ttl_seconds = 7;
-  sphinx::ProductService service{store, cache, policy};
+  sphinx::ProductService service{store, cache, shared, policy};
 
   const auto result = service.get_many({9, 1, 9});
 
@@ -425,23 +431,54 @@ TEST(ProductServiceTest, ProtectedStoreFailureDoesNotWriteNegativeCache) {
   FakeStore store;
   store.find_error = sphinx::StoreErrorCode::Unavailable;
   FakeCache cache;
+  sphinx::ProductSharedState shared;
   sphinx::ProductCachePolicy policy;
   policy.mode = sphinx::CachePolicyMode::Protected;
-  sphinx::ProductService service{store, cache, policy};
+  sphinx::ProductService service{store, cache, shared, policy};
 
   EXPECT_EQ(service.get(9).status, sphinx::ProductStatus::StoreUnavailable);
   EXPECT_EQ(cache.puts, 0);
+}
+
+TEST(ProductServiceTest, ProtectedFreshReadUsesAdmissionWithoutJoiningAFlight) {
+  FakeStore store;
+  store.row = sphinx::Product{1, "tea", 199, 1};
+  FakeCache cache;
+  sphinx::ProductReadOptions read_options;
+  read_options.max_concurrent_loads = 1;
+  sphinx::ProductSharedState shared{read_options};
+  sphinx::ProductCachePolicy policy;
+  policy.mode = sphinx::CachePolicyMode::Protected;
+  auto occupied_permit = shared.reads.try_acquire_load();
+  ASSERT_TRUE(occupied_permit.has_value());
+  sphinx::ProductService service{store, cache, shared, policy};
+
+  const auto busy = service.get(1, true);
+  EXPECT_EQ(busy.status, sphinx::ProductStatus::ReadBusy);
+  EXPECT_EQ(busy.cache_source, sphinx::CacheSource::Bypass);
+  EXPECT_EQ(store.finds, 0);
+  EXPECT_EQ(cache.gets, 0);
+  EXPECT_EQ(shared.reads.active_key_count(), 0U);
+
+  occupied_permit.reset();
+  const auto fresh = service.get(1, true);
+  EXPECT_EQ(fresh.status, sphinx::ProductStatus::Ok);
+  EXPECT_EQ(fresh.cache_source, sphinx::CacheSource::Bypass);
+  EXPECT_EQ(store.finds, 1);
+  EXPECT_EQ(cache.puts, 1);
+  EXPECT_EQ(shared.reads.active_key_count(), 0U);
 }
 
 TEST(ProductServiceTest, ProtectedPolicyUsesStableJitterForPositiveCacheEntries) {
   FakeStore store;
   store.row = sphinx::Product{42, "tea", 199, 1};
   FakeCache cache;
+  sphinx::ProductSharedState shared;
   sphinx::ProductCachePolicy policy;
   policy.mode = sphinx::CachePolicyMode::Protected;
   policy.ttl_seconds = 30;
   policy.ttl_jitter_seconds = 3;
-  sphinx::ProductService service{store, cache, policy};
+  sphinx::ProductService service{store, cache, shared, policy};
 
   const auto result = service.get(42);
 
@@ -454,21 +491,23 @@ TEST(ProductServiceTest, ProtectedPolicyUsesStableJitterForPositiveCacheEntries)
 TEST(ProductServiceTest, RejectsInvalidCachePolicyBounds) {
   FakeStore store;
   FakeCache cache;
+  sphinx::ProductSharedState shared;
   sphinx::ProductCachePolicy policy;
   policy.negative_ttl_seconds = 31;
-  EXPECT_THROW((sphinx::ProductService{store, cache, policy}), std::invalid_argument);
+  EXPECT_THROW((sphinx::ProductService{store, cache, shared, policy}), std::invalid_argument);
 
   policy.negative_ttl_seconds = 5;
   policy.ttl_jitter_seconds = 31;
-  EXPECT_THROW((sphinx::ProductService{store, cache, policy}), std::invalid_argument);
+  EXPECT_THROW((sphinx::ProductService{store, cache, shared, policy}), std::invalid_argument);
 }
 
 TEST(ProductServiceTest, CacheFailureBypassesAndDatabaseFailureIsUnavailable) {
   FakeStore store;
   store.find_error = sphinx::StoreErrorCode::Unavailable;
   FakeCache cache;
+  sphinx::ProductSharedState shared;
   cache.fail_get = true;
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductService service{store, cache, shared};
   const auto result = service.get(1);
   EXPECT_EQ(result.status, sphinx::ProductStatus::StoreUnavailable);
   EXPECT_EQ(result.cache_source, sphinx::CacheSource::Bypass);
@@ -479,8 +518,9 @@ TEST(ProductServiceTest, CorruptOrWrongIdCacheValueIsErasedAndReplaced) {
   FakeStore store;
   store.row = sphinx::Product{1, "fresh", 300, 2};
   FakeCache cache;
+  sphinx::ProductSharedState shared;
   cache.value = sphinx::encode_product_cache({2, "wrong", 100, 1});
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductService service{store, cache, shared};
   const auto result = service.get(1);
   EXPECT_EQ(result.cache_source, sphinx::CacheSource::Corrupt);
   EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
@@ -495,7 +535,8 @@ TEST(ProductServiceTest, CorruptOrWrongIdCacheValueIsErasedAndReplaced) {
 TEST(ProductServiceTest, MissingRowIsNotNegativelyCached) {
   FakeStore store;
   FakeCache cache;
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductSharedState shared;
+  sphinx::ProductService service{store, cache, shared};
   EXPECT_EQ(service.get(1).status, sphinx::ProductStatus::NotFound);
   EXPECT_EQ(cache.puts, 0);
 }
@@ -504,8 +545,9 @@ TEST(ProductServiceTest, FreshReadBypassesStaleCacheForCommitReconciliation) {
   FakeStore store;
   store.row = sphinx::Product{1, "new", 300, 2};
   FakeCache cache;
+  sphinx::ProductSharedState shared;
   cache.value = sphinx::encode_product_cache({1, "old", 200, 1});
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductService service{store, cache, shared};
   const auto result = service.get(1, true);
   EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
   EXPECT_EQ(result.cache_source, sphinx::CacheSource::Bypass);
@@ -522,8 +564,9 @@ TEST(ProductServiceTest, SuccessfulUpdateCommitsBeforeInvalidation) {
   FakeStore store;
   store.next_update = {sphinx::StoreUpdateStatus::Updated, sphinx::Product{1, "new", 250, 2}};
   FakeCache cache;
+  sphinx::ProductSharedState shared;
   cache.value = sphinx::encode_product_cache({1, "old", 200, 1});
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductService service{store, cache, shared};
   const auto result = service.update({1, "new", 250, 1});
   EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
   EXPECT_FALSE(result.cache_invalidation_failed);
@@ -536,8 +579,9 @@ TEST(ProductServiceTest, CommittedUpdateSurvivesCacheFailure) {
   FakeStore store;
   store.next_update = {sphinx::StoreUpdateStatus::Updated, sphinx::Product{1, "new", 250, 2}};
   FakeCache cache;
+  sphinx::ProductSharedState shared;
   cache.fail_erase = true;
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductService service{store, cache, shared};
   const auto result = service.update({1, "new", 250, 1});
   EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
   EXPECT_TRUE(result.cache_invalidation_failed);
@@ -546,7 +590,8 @@ TEST(ProductServiceTest, CommittedUpdateSurvivesCacheFailure) {
 TEST(ProductServiceTest, ConflictAndUnknownCommitDoNotTouchCache) {
   FakeStore store;
   FakeCache cache;
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductSharedState shared;
+  sphinx::ProductService service{store, cache, shared};
   store.next_update = {sphinx::StoreUpdateStatus::Conflict, std::nullopt};
   EXPECT_EQ(service.update({1, "new", 250, 1}).status, sphinx::ProductStatus::Conflict);
   store.update_error = sphinx::StoreErrorCode::CommitUnknown;
@@ -558,7 +603,8 @@ TEST(ProductServiceTest, ConflictAndUnknownCommitDoNotTouchCache) {
 TEST(ProductServiceTest, InvalidInputDoesNotUseDependencies) {
   FakeStore store;
   FakeCache cache;
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductSharedState shared;
+  sphinx::ProductService service{store, cache, shared};
   EXPECT_EQ(service.get(0).status, sphinx::ProductStatus::InvalidArgument);
   EXPECT_EQ(service.update({1, "", 1, 1}).status, sphinx::ProductStatus::InvalidArgument);
   EXPECT_EQ(store.finds, 0);
@@ -574,13 +620,14 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
 
   RaceStore old_read_store{database, true};
   RaceCache old_read_cache{cache_state};
+  sphinx::ProductSharedState shared;
   sphinx::ProductService old_reader{
-      old_read_store, old_read_cache, {sphinx::CachePolicyMode::Basic, ttl_seconds, 5, 3}};
+      old_read_store, old_read_cache, shared, {sphinx::CachePolicyMode::Basic, ttl_seconds, 5, 3}};
 
   RaceStore update_store{database, false};
   RaceCache update_cache{cache_state};
   sphinx::ProductService updater{
-      update_store, update_cache, {sphinx::CachePolicyMode::Basic, ttl_seconds, 5, 3}};
+      update_store, update_cache, shared, {sphinx::CachePolicyMode::Basic, ttl_seconds, 5, 3}};
 
   std::optional<sphinx::GetProductResult> old_read_result;
   std::exception_ptr old_read_error;
@@ -630,8 +677,10 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
 
   RaceStore later_read_store{database, false};
   RaceCache later_read_cache{cache_state};
-  sphinx::ProductService later_reader{
-      later_read_store, later_read_cache, {sphinx::CachePolicyMode::Basic, ttl_seconds, 5, 3}};
+  sphinx::ProductService later_reader{later_read_store,
+                                      later_read_cache,
+                                      shared,
+                                      {sphinx::CachePolicyMode::Basic, ttl_seconds, 5, 3}};
   auto stale_hit = later_reader.get(product_id);
   ASSERT_EQ(stale_hit.status, sphinx::ProductStatus::Ok);
   if (!stale_hit.product) {
@@ -675,12 +724,65 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
   EXPECT_EQ(fresh_hit.product->version, 2U);
 }
 
+TEST(ProductServiceTest, ProtectedFollowerTimeoutDoesNotCancelItsLeader) {
+  constexpr std::uint64_t product_id = 42;
+  auto database = std::make_shared<RaceDatabase>(sphinx::Product{product_id, "tea", 199, 1});
+  auto cache_state = std::make_shared<ManualCacheState>();
+  sphinx::ProductReadOptions read_options;
+  read_options.wait_timeout = std::chrono::milliseconds{20};
+  sphinx::ProductSharedState shared{read_options};
+  sphinx::ProductCachePolicy policy;
+  policy.mode = sphinx::CachePolicyMode::Protected;
+
+  RaceStore leader_store{database, true};
+  RaceCache leader_cache{cache_state};
+  sphinx::ProductService leader{leader_store, leader_cache, shared, policy};
+  RaceStore follower_store{database, false};
+  RaceCache follower_cache{cache_state};
+  sphinx::ProductService follower{follower_store, follower_cache, shared, policy};
+
+  std::optional<sphinx::GetProductResult> leader_result;
+  std::exception_ptr leader_error;
+  std::thread leader_thread{[&] {
+    try {
+      leader_result = leader.get(product_id);
+    } catch (...) {
+      leader_error = std::current_exception();
+    }
+  }};
+
+  if (!database->wait_until_old_read_paused(std::chrono::seconds{2})) {
+    database->release_old_read();
+    leader_thread.join();
+    FAIL() << "leader did not pause after entering the store";
+    return;
+  }
+
+  const auto follower_result = follower.get(product_id);
+  EXPECT_EQ(follower_result.status, sphinx::ProductStatus::ReadBusy);
+  EXPECT_EQ(follower_result.cache_source, sphinx::CacheSource::Miss);
+  EXPECT_EQ(database->find_calls(), 1);
+  EXPECT_EQ(shared.reads.active_key_count(), 1U);
+  EXPECT_EQ(shared.reads.active_load_count(), 1U);
+
+  database->release_old_read();
+  leader_thread.join();
+  if (leader_error) {
+    std::rethrow_exception(leader_error);
+  }
+  ASSERT_TRUE(leader_result.has_value());
+  EXPECT_EQ(leader_result.value_or(sphinx::GetProductResult{}).status, sphinx::ProductStatus::Ok);
+  EXPECT_EQ(shared.reads.active_key_count(), 0U);
+  EXPECT_EQ(shared.reads.active_load_count(), 0U);
+}
+
 TEST(ProductServiceTest, BatchMissUsesOneStoreCallAndRestoresDuplicateItems) {
   BatchStore store;
   store.rows.emplace(1, sphinx::Product{1, "tea", 199, 1});
   store.rows.emplace(2, sphinx::Product{2, "coffee", 299, 1});
   BatchCache cache;
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductSharedState shared;
+  sphinx::ProductService service{store, cache, shared};
 
   const auto result = service.get_many({2, 99, 1, 2});
 
@@ -709,8 +811,9 @@ TEST(ProductServiceTest, BatchCacheHitsLeaveOnlyMissesForTheStore) {
   BatchStore store;
   store.rows.emplace(2, sphinx::Product{2, "coffee", 299, 1});
   BatchCache cache;
+  sphinx::ProductSharedState shared;
   cache.values.emplace("product:v3:1", sphinx::encode_product_cache({1, "tea", 199, 1}));
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductService service{store, cache, shared};
 
   const auto result = service.get_many({1, 2, 1});
 
@@ -730,8 +833,9 @@ TEST(ProductServiceTest, CacheBatchFailureFallsBackForEveryUnresolvedItem) {
   store.rows.emplace(1, sphinx::Product{1, "tea", 199, 1});
   store.rows.emplace(2, sphinx::Product{2, "coffee", 299, 1});
   BatchCache cache;
+  sphinx::ProductSharedState shared;
   cache.fail_batch_read = true;
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductService service{store, cache, shared};
 
   const auto result = service.get_many({1, 2});
 
@@ -746,8 +850,9 @@ TEST(ProductServiceTest, StoreBatchFailureDoesNotReplaceEarlierCacheHits) {
   BatchStore store;
   store.batch_error = sphinx::StoreErrorCode::Unavailable;
   BatchCache cache;
+  sphinx::ProductSharedState shared;
   cache.values.emplace("product:v3:1", sphinx::encode_product_cache({1, "tea", 199, 1}));
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductService service{store, cache, shared};
 
   const auto result = service.get_many({1, 2});
 
@@ -759,11 +864,12 @@ TEST(ProductServiceTest, StoreBatchFailureDoesNotReplaceEarlierCacheHits) {
   EXPECT_TRUE(cache.batch_writes.empty());
 }
 
-TEST(ProductServiceTest, InvalidAndFreshBatchesDoNotUseTheCache) {
+TEST(ProductServiceTest, InvalidBatchSkipsDependenciesAndFreshBatchRefillsCache) {
   BatchStore store;
   store.rows.emplace(1, sphinx::Product{1, "tea", 199, 1});
   BatchCache cache;
-  sphinx::ProductService service{store, cache};
+  sphinx::ProductSharedState shared;
+  sphinx::ProductService service{store, cache, shared};
 
   const auto invalid = service.get_many({1, 0});
   EXPECT_EQ(invalid.status, sphinx::ProductStatus::InvalidArgument);
@@ -780,6 +886,7 @@ TEST(ProductServiceTest, InvalidAndFreshBatchesDoNotUseTheCache) {
   EXPECT_EQ(fresh.items[1].result.product.value_or(sphinx::Product{}).id, 1U);
   EXPECT_TRUE(cache.batch_reads.empty());
   EXPECT_TRUE(cache.batch_writes.empty());
+  EXPECT_NE(cache.values.find("product:v3:1"), cache.values.end());
   EXPECT_TRUE(store.batch_queries.empty());
   EXPECT_EQ(store.finds, 1);
 }

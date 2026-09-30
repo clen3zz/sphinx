@@ -3,6 +3,7 @@
 
 #include <sphinx/product_cache.h>
 #include <sphinx/product_cache_options.h>
+#include <sphinx/product_shared_state.h>
 #include <sphinx/product_store.h>
 
 #include <vector>
@@ -24,7 +25,8 @@ void validate_product_cache_policy(const ProductCachePolicy& policy);
 /// 三个对象都由同一个工作线程使用，因此这一层不加锁。
 class ProductService final {
  public:
-  ProductService(ProductStore& store, ProductCache& cache, ProductCachePolicy policy = {});
+  ProductService(ProductStore& store, ProductCache& cache, ProductSharedState& shared,
+                 ProductCachePolicy policy = {});
 
   /// 查询：先读缓存并解码、校验 id；未命中或缓存出错时查数据库，再尽力回填。
   /// bypass_cache=true 时直接查权威数据库，用于核实提交结果；不存在的商品不缓存。
@@ -48,6 +50,7 @@ class ProductService final {
   void read_cache(ReadBatch& batch, const std::vector<std::size_t>& positions);
   void erase_corrupt(ReadBatch& batch, std::size_t position);
   void load_basic(ReadBatch& batch, const std::vector<std::size_t>& positions);
+  void load_protected(ReadBatch& batch, const std::vector<std::size_t>& positions);
   std::vector<ProductLoadResult> load_from_store(const std::vector<std::uint64_t>& ids,
                                                  bool batch_request);
   void fill_cache(ReadBatch& batch, const std::vector<std::size_t>& positions);
@@ -55,6 +58,7 @@ class ProductService final {
 
   ProductStore& _store;
   ProductCache& _cache;
+  ProductSharedState& _shared;
   ProductCachePolicy _policy;
 };
 

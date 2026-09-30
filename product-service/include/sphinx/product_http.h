@@ -3,7 +3,9 @@
 
 #include <sphinx/mysql_product_store.h>
 #include <sphinx/product_cache_options.h>
+#include <sphinx/product_read_coordinator.h>
 #include <sphinx/product_service.h>
+#include <sphinx/product_shared_state.h>
 
 #include <chrono>
 #include <cstdint>
@@ -18,11 +20,12 @@ struct ProductHttpConfig {
   std::uint32_t worker_count = 4;
   ProductCacheOptions cache;
   ProductCachePolicy cache_policy{};
+  ProductReadOptions read_options{};
   MySqlOptions mysql{};
 };
 
-/// 持有固定大小的 HTTP 工作线程池。每个线程按顺序创建自己的 MySqlThreadGuard、
-/// MySqlProductStore、SphinxProductCache 和 ProductService，销毁顺序相反。
+/// 持有固定大小的 HTTP 工作线程池。每个线程创建自己的 MySqlThreadGuard、
+/// MySqlProductStore、ProductCache 和 ProductService，并共用进程级协调状态。
 class ProductHttpServer final {
  public:
   explicit ProductHttpServer(ProductHttpConfig config);
