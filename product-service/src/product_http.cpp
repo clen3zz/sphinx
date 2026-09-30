@@ -45,7 +45,7 @@ struct WorkerContext final {
 
 struct ProductHttpServer::Impl {
   explicit Impl(ProductHttpConfig&& source_config)
-      : config{std::move(source_config)}, shared{config.read_options} {}
+      : config{std::move(source_config)}, shared{config.read_options, config.breaker_options} {}
 
   ProductHttpConfig config;
   // server 及其工作队列先于 mysql_runtime 析构，确保工作线程先退出再关闭客户端库。

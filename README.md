@@ -97,6 +97,7 @@ export SPHINX_REDIS_DATABASE=0
 
 默认策略是 `basic`。设置 `SPHINX_CACHE_POLICY=protected` 可启用短期负缓存和正缓存 TTL 抖动；`SPHINX_NEGATIVE_TTL_SECONDS`（1～30，默认 5）和 `SPHINX_TTL_JITTER_SECONDS`（0～30，默认 3）只在该模式读取。
 protected 模式还可设置 `SPHINX_READ_MAX_INFLIGHT_KEYS`（默认 1024）、`SPHINX_READ_MAX_CONCURRENT_LOADS`（默认不超过 2 且不超过 Worker 数）和 `SPHINX_READ_WAIT_TIMEOUT_MS`（默认 500）。同一进程内的相同商品回源会合并；读并发或 flight 容量用尽时返回 `read_busy`。
+缓存熔断阈值和 Open 时长可用 `SPHINX_CACHE_FAILURE_THRESHOLD`（默认 3）与 `SPHINX_CACHE_OPEN_INTERVAL_MS`（默认 2000）配置。
 
 先用 `redis-server --bind 127.0.0.1 --port 6379` 启动本地 Redis。需要认证时设置
 `SPHINX_REDIS_USERNAME`、`SPHINX_REDIS_PASSWORD`；Redis 连接在对应 HTTP Worker 第一次

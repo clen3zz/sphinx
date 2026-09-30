@@ -21,6 +21,7 @@ struct ProductHttpConfig {
   ProductCacheOptions cache;
   ProductCachePolicy cache_policy{};
   ProductReadOptions read_options{};
+  CacheBreakerOptions breaker_options{};
   MySqlOptions mysql{};
 };
 

@@ -10,6 +10,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(HIREDIS REQUIRED IMPORTED_TARGET hiredis>=1.0.0)
 
 add_library(sphinx_product_core STATIC
+        src/cache_circuit_breaker.cpp
         src/product_cache.cpp
         src/product_cache_options.cpp
         src/redis_product_cache.cpp
@@ -27,6 +28,7 @@ if (GTEST_FOUND)
     add_executable(sphinx_product_tests
             test/product_cache_test.cpp
             test/product_cache_options_test.cpp
+            test/cache_circuit_breaker_test.cpp
             test/redis_product_cache_test.cpp
             test/sphinx_product_cache_test.cpp
             test/product_store_test.cpp

@@ -102,6 +102,11 @@ sphinx::ProductHttpConfig load_config() {
     config.read_options.wait_timeout =
         std::chrono::milliseconds{static_cast<std::chrono::milliseconds::rep>(
             unsigned_environment_value("SPHINX_READ_WAIT_TIMEOUT_MS", 500, 1, 10000))};
+    config.breaker_options.failure_threshold = static_cast<std::uint32_t>(
+        unsigned_environment_value("SPHINX_CACHE_FAILURE_THRESHOLD", 3, 1, 100));
+    config.breaker_options.open_interval =
+        std::chrono::milliseconds{static_cast<std::chrono::milliseconds::rep>(
+            unsigned_environment_value("SPHINX_CACHE_OPEN_INTERVAL_MS", 2000, 1, 60000))};
   }
   config.cache_policy.ttl_seconds = static_cast<std::uint32_t>(unsigned_environment_value(
       "SPHINX_CACHE_TTL_SECONDS", 30, 1, sphinx::max_product_cache_ttl_seconds));
