@@ -23,7 +23,8 @@ ProductReadTicket::ProductReadTicket(ProductReadTicket&& other) noexcept
     : _owner{std::exchange(other._owner, nullptr)},
       _id{other._id},
       _role{other._role},
-      _flight{std::move(other._flight)} {}
+      _flight{std::move(other._flight)},
+      _wait_timed_out{other._wait_timed_out} {}
 
 ProductReadTicket& ProductReadTicket::operator=(ProductReadTicket&& other) noexcept {
   if (this != &other) {
@@ -32,6 +33,7 @@ ProductReadTicket& ProductReadTicket::operator=(ProductReadTicket&& other) noexc
     _id = other._id;
     _role = other._role;
     _flight = std::move(other._flight);
+    _wait_timed_out = other._wait_timed_out;
   }
   return *this;
 }
@@ -42,6 +44,7 @@ std::uint64_t ProductReadTicket::id() const noexcept { return _id; }
 
 ProductLoadResult ProductReadTicket::wait_until(
     std::chrono::steady_clock::time_point deadline) const {
+  _wait_timed_out = false;
   if (_role == ReadRole::Rejected) {
     return {ProductStatus::ReadBusy, std::nullopt};
   }
@@ -53,10 +56,13 @@ ProductLoadResult ProductReadTicket::wait_until(
   const bool completed =
       _flight->ready.wait_until(lock, deadline, [this] { return _flight->result.has_value(); });
   if (!completed) {
+    _wait_timed_out = true;
     return {ProductStatus::ReadBusy, std::nullopt};
   }
   return _flight->result.value_or(ProductLoadResult{});
 }
+
+bool ProductReadTicket::wait_timed_out() const noexcept { return _wait_timed_out; }
 
 void ProductReadTicket::complete(ProductLoadResult result) noexcept {
   if (_owner == nullptr || _role != ReadRole::Leader || !_flight) {

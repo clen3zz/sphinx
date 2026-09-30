@@ -238,6 +238,8 @@ class ProductHttpIntegrationTest(unittest.TestCase):
         cache_policy="basic",
         negative_ttl=None,
         ttl_jitter=None,
+        breaker_threshold=None,
+        breaker_open_interval=None,
     ):
         if self.service_process is not None:
             self.stop_service(expected=0)
@@ -250,10 +252,16 @@ class ProductHttpIntegrationTest(unittest.TestCase):
         environment["SPHINX_CACHE_POLICY"] = cache_policy
         environment.pop("SPHINX_NEGATIVE_TTL_SECONDS", None)
         environment.pop("SPHINX_TTL_JITTER_SECONDS", None)
+        environment.pop("SPHINX_CACHE_FAILURE_THRESHOLD", None)
+        environment.pop("SPHINX_CACHE_OPEN_INTERVAL_MS", None)
         if negative_ttl is not None:
             environment["SPHINX_NEGATIVE_TTL_SECONDS"] = str(negative_ttl)
         if ttl_jitter is not None:
             environment["SPHINX_TTL_JITTER_SECONDS"] = str(ttl_jitter)
+        if breaker_threshold is not None:
+            environment["SPHINX_CACHE_FAILURE_THRESHOLD"] = str(breaker_threshold)
+        if breaker_open_interval is not None:
+            environment["SPHINX_CACHE_OPEN_INTERVAL_MS"] = str(breaker_open_interval)
         self.service_log = tempfile.TemporaryFile()
         self.service_process = subprocess.Popen(
             [str(PRODUCT_SERVICE_BINARY)],
@@ -482,6 +490,62 @@ class ProductHttpIntegrationTest(unittest.TestCase):
         second = self.http_request("GET", f"/products/{missing_id}")
         self.assert_json_error(second, 404, "not_found")
         self.assertEqual(second[1].get("X-Cache"), "HIT")
+
+        metrics_response = self.http_request("GET", "/metrics")
+        self.assertEqual(metrics_response[0], 200)
+        self.assertEqual(metrics_response[1].get("Cache-Control"), "no-store")
+        metrics = json.loads(metrics_response[2])
+        self.assertEqual(metrics["backend"], "sphinx")
+        self.assertEqual(metrics["policy"], "protected")
+        self.assertEqual(metrics["counters"]["get_requests"], 2)
+        self.assertEqual(metrics["counters"]["cache_misses"], 2)
+        self.assertEqual(metrics["counters"]["cache_lookup_keys"], 3)
+        self.assertEqual(metrics["counters"]["negative_hits"], 1)
+        self.assertEqual(metrics["counters"]["store_read_operations"], 1)
+        self.assertEqual(metrics["counters"]["read_leaders"], 1)
+
+    def test_metrics_does_not_create_a_worker_or_connect_to_mysql(self):
+        dead_mysql_port = reserve_port()
+        self.start_service(mysql_port=dead_mysql_port)
+
+        response = self.http_request("GET", "/metrics")
+
+        self.assertEqual(response[0], 200)
+        self.assertEqual(response[1].get("Cache-Control"), "no-store")
+        metrics = json.loads(response[2])
+        self.assertEqual(metrics["backend"], "sphinx")
+        self.assertEqual(metrics["policy"], "basic")
+        self.assertEqual(metrics["counters"]["get_requests"], 0)
+        self.assertEqual(metrics["read_coordinator"], {"active_keys": 0, "active_loads": 0})
+
+    def test_protected_cache_breaker_opens_and_bypasses_cache(self):
+        product_id = self.insert_product("breaker-fallback", 70, 5)
+        dead_cache_port = reserve_port()
+        self.start_service(
+            cache_nodes=f"127.0.0.1:{dead_cache_port}",
+            cache_policy="protected",
+            breaker_threshold=2,
+            breaker_open_interval=10000,
+        )
+
+        first = self.http_request("GET", f"/products/{product_id}")
+        self.assertEqual(first[0], 200)
+        self.assertEqual(first[1].get("X-Cache"), "BYPASS")
+        second = self.http_request("GET", f"/products/{product_id}")
+        self.assertEqual(second[0], 200)
+        self.assertEqual(second[1].get("X-Cache"), "BYPASS")
+        third = self.http_request("GET", f"/products/{product_id}")
+        self.assertEqual(third[0], 200)
+        self.assertEqual(third[1].get("X-Cache"), "BYPASS")
+
+        metrics_response = self.http_request("GET", "/metrics")
+        self.assertEqual(metrics_response[0], 200)
+        metrics = json.loads(metrics_response[2])
+        self.assertEqual(metrics["cache_breaker"]["state"], "open")
+        self.assertEqual(metrics["counters"]["cache_read_failures"], 2)
+        self.assertEqual(metrics["counters"]["cache_fill_failures"], 0)
+        self.assertEqual(metrics["counters"]["cache_circuit_bypasses"], 1)
+        self.assertEqual(metrics["counters"]["store_read_operations"], 3)
 
     def test_basic_policy_ignores_protected_only_environment_values(self):
         product_id = self.insert_product("basic-policy", 90, 1)

@@ -86,13 +86,16 @@ bool ProductHttpServer::serve() {
   const auto* config = &_impl->config;
   auto* shared = &_impl->shared;
   // 每个 HTTP 工作线程第一次处理请求时才创建自己的数据库连接持有者和缓存客户端。
-  install_product_routes(_impl->server, [config, shared]() -> ProductService& {
-    thread_local std::unique_ptr<WorkerContext> context;
-    if (!context) {
-      context = std::make_unique<WorkerContext>(*config, *shared);
-    }
-    return context->service;
-  });
+  install_product_routes(
+      _impl->server,
+      [config, shared]() -> ProductService& {
+        thread_local std::unique_ptr<WorkerContext> context;
+        if (!context) {
+          context = std::make_unique<WorkerContext>(*config, *shared);
+        }
+        return context->service;
+      },
+      *shared, config->cache.backend, config->cache_policy.mode);
 
   {
     std::lock_guard lock{_impl->state_mutex};

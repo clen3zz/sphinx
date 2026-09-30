@@ -3,6 +3,7 @@
 
 #include <httplib.h>
 #include <sphinx/product_service.h>
+#include <sphinx/product_shared_state.h>
 
 #include <functional>
 
@@ -12,6 +13,8 @@ namespace sphinx {
 /// 线程初始化可能抛出 StoreError；路由将 Unavailable 映射为 503，
 /// 其他初始化错误返回不泄露内部细节的 500 响应。
 void install_product_routes(httplib::Server& server,
-                            const std::function<ProductService&()>& current_service);
+                            const std::function<ProductService&()>& current_service,
+                            const ProductSharedState& shared, CacheBackend backend,
+                            CachePolicyMode policy_mode);
 
-}  // 命名空间 sphinx
+}  // namespace sphinx

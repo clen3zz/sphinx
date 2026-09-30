@@ -2,7 +2,9 @@
 #include "product_http_routes.h"
 
 #include <sphinx/product.h>
+#include <sphinx/product_metrics.h>
 
+#include <array>
 #include <charconv>
 #include <cstdint>
 #include <exception>
@@ -366,10 +368,80 @@ bool is_product_path(std::string_view path) noexcept {
   return path == "/products" || path.substr(0, sizeof("/products/") - 1) == "/products/";
 }
 
+const char* cache_backend_name(CacheBackend backend) noexcept {
+  return backend == CacheBackend::Redis ? "redis" : "sphinx";
+}
+
+const char* cache_policy_name(CachePolicyMode policy) noexcept {
+  return policy == CachePolicyMode::Protected ? "protected" : "basic";
+}
+
+const char* cache_breaker_state_name(CacheBreakerState state) noexcept {
+  switch (state) {
+    case CacheBreakerState::Closed:
+      return "closed";
+    case CacheBreakerState::Open:
+      return "open";
+    case CacheBreakerState::HalfOpen:
+      return "half_open";
+  }
+  return "closed";
+}
+
+Json make_metrics_response(const ProductSharedState& shared, CacheBackend backend,
+                           CachePolicyMode policy_mode) {
+  constexpr std::array<std::string_view, product_metric_count> metric_names{
+      "get_requests",           "batch_requests",        "update_requests",
+      "request_unique_ids",     "cache_lookup_keys",     "cache_hits",
+      "negative_hits",          "cache_misses",          "cache_corrupt",
+      "cache_read_failures",    "cache_fill_failures",   "cache_invalidation_failures",
+      "cache_cleanup_failures", "store_read_operations", "store_read_ids",
+      "store_read_failures",    "read_leaders",          "read_followers",
+      "read_rejected",          "read_wait_timeouts",    "read_admission_rejected",
+      "cache_circuit_bypasses",
+  };
+  constexpr std::array<std::string_view, product_latency_count> latency_names{
+      "cache_read", "store_read",  "cache_fill",    "cache_erase",
+      "read_wait",  "get_request", "batch_request", "update_request",
+  };
+
+  const auto metrics = shared.metrics.snapshot();
+  Json counters = Json::object();
+  for (std::size_t index = 0; index < metric_names.size(); ++index) {
+    counters[std::string{metric_names[index]}] = metrics.counters[index];
+  }
+
+  Json latencies = Json::object();
+  for (std::size_t index = 0; index < latency_names.size(); ++index) {
+    const auto& latency = metrics.latencies[index];
+    latencies[std::string{latency_names[index]}] =
+        Json{{"buckets", latency.buckets},
+             {"count", latency.count},
+             {"total_microseconds", latency.total_microseconds}};
+  }
+
+  const auto reads_active_keys = shared.reads.active_key_count();
+  const auto reads_active_loads = shared.reads.active_load_count();
+  const auto breaker = shared.breaker.snapshot();
+  return Json{
+      {"backend", cache_backend_name(backend)},
+      {"policy", cache_policy_name(policy_mode)},
+      {"counters", std::move(counters)},
+      {"latency_bucket_upper_bounds_microseconds", latency_bucket_upper_bounds_microseconds},
+      {"latencies", std::move(latencies)},
+      {"read_coordinator",
+       Json{{"active_keys", reads_active_keys}, {"active_loads", reads_active_loads}}},
+      {"cache_breaker", Json{{"state", cache_breaker_state_name(breaker.state)},
+                             {"consecutive_failures", breaker.consecutive_failures},
+                             {"retry_after_milliseconds", breaker.retry_after.count()}}}};
+}
+
 }  // namespace
 
 void install_product_routes(httplib::Server& server,
-                            const std::function<ProductService&()>& current_service) {
+                            const std::function<ProductService&()>& current_service,
+                            const ProductSharedState& shared, CacheBackend backend,
+                            CachePolicyMode policy_mode) {
   server.set_post_routing_handler([](const httplib::Request&, httplib::Response& response) {
     response.set_header("Cache-Control", "no-store");
   });
@@ -382,6 +454,11 @@ void install_product_routes(httplib::Server& server,
       response.set_header("X-Cache", "NOT_CHECKED");
     }
     return httplib::Server::HandlerResponse::Unhandled;
+  });
+
+  server.Get("/metrics", [&shared, backend, policy_mode](const httplib::Request&,
+                                                         httplib::Response& response) {
+    set_json_response(response, 200, make_metrics_response(shared, backend, policy_mode).dump());
   });
 
   server.Get("/products",

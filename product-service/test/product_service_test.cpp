@@ -467,6 +467,9 @@ TEST(ProductServiceTest, ProtectedFreshReadUsesAdmissionWithoutJoiningAFlight) {
   EXPECT_EQ(store.finds, 1);
   EXPECT_EQ(cache.puts, 1);
   EXPECT_EQ(shared.reads.active_key_count(), 0U);
+  EXPECT_EQ(shared.metrics.snapshot()
+                .counters[static_cast<std::size_t>(sphinx::ProductMetric::ReadAdmissionRejected)],
+            1U);
 }
 
 TEST(ProductServiceTest, ProtectedPolicyUsesStableJitterForPositiveCacheEntries) {
@@ -774,6 +777,11 @@ TEST(ProductServiceTest, ProtectedFollowerTimeoutDoesNotCancelItsLeader) {
   EXPECT_EQ(leader_result.value_or(sphinx::GetProductResult{}).status, sphinx::ProductStatus::Ok);
   EXPECT_EQ(shared.reads.active_key_count(), 0U);
   EXPECT_EQ(shared.reads.active_load_count(), 0U);
+  const auto metrics = shared.metrics.snapshot();
+  EXPECT_EQ(metrics.counters[static_cast<std::size_t>(sphinx::ProductMetric::ReadLeaders)], 1U);
+  EXPECT_EQ(metrics.counters[static_cast<std::size_t>(sphinx::ProductMetric::ReadFollowers)], 1U);
+  EXPECT_EQ(metrics.counters[static_cast<std::size_t>(sphinx::ProductMetric::ReadWaitTimeouts)],
+            1U);
 }
 
 TEST(ProductServiceTest, BatchMissUsesOneStoreCallAndRestoresDuplicateItems) {
@@ -826,6 +834,29 @@ TEST(ProductServiceTest, BatchCacheHitsLeaveOnlyMissesForTheStore) {
   EXPECT_EQ(store.finds, 0);
   ASSERT_EQ(cache.batch_writes.size(), 1U);
   EXPECT_EQ(cache.batch_writes[0].key, "product:v3:2");
+}
+
+TEST(ProductServiceTest, MetricsCountUniqueCacheAndStoreOperations) {
+  BatchStore store;
+  store.rows.emplace(1, sphinx::Product{1, "coffee", 299, 1});
+  BatchCache cache;
+  cache.values.emplace("product:v3:2", sphinx::encode_product_cache({2, "tea", 199, 1}));
+  sphinx::ProductSharedState shared;
+  sphinx::ProductService service{store, cache, shared};
+
+  const auto result = service.get_many({2, 1, 2});
+
+  ASSERT_EQ(result.items.size(), 3U);
+  const auto metrics = shared.metrics.snapshot();
+  EXPECT_EQ(metrics.counters[static_cast<std::size_t>(sphinx::ProductMetric::BatchRequests)], 1U);
+  EXPECT_EQ(metrics.counters[static_cast<std::size_t>(sphinx::ProductMetric::RequestUniqueIds)],
+            2U);
+  EXPECT_EQ(metrics.counters[static_cast<std::size_t>(sphinx::ProductMetric::CacheLookupKeys)], 2U);
+  EXPECT_EQ(metrics.counters[static_cast<std::size_t>(sphinx::ProductMetric::CacheHits)], 1U);
+  EXPECT_EQ(metrics.counters[static_cast<std::size_t>(sphinx::ProductMetric::CacheMisses)], 1U);
+  EXPECT_EQ(metrics.counters[static_cast<std::size_t>(sphinx::ProductMetric::StoreReadOperations)],
+            1U);
+  EXPECT_EQ(metrics.counters[static_cast<std::size_t>(sphinx::ProductMetric::StoreReadIds)], 1U);
 }
 
 TEST(ProductServiceTest, CacheBatchFailureFallsBackForEveryUnresolvedItem) {

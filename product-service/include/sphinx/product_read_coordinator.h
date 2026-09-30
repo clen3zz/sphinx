@@ -38,6 +38,7 @@ class ProductReadTicket final {
   ReadRole role() const noexcept;
   std::uint64_t id() const noexcept;
   ProductLoadResult wait_until(std::chrono::steady_clock::time_point deadline) const;
+  bool wait_timed_out() const noexcept;
   void complete(ProductLoadResult result) noexcept;
 
  private:
@@ -49,6 +50,8 @@ class ProductReadTicket final {
   std::uint64_t _id = 0;
   ReadRole _role = ReadRole::Rejected;
   std::shared_ptr<ProductReadFlight> _flight;
+  // Lets metrics distinguish a follower deadline from ReadBusy published by its leader.
+  mutable bool _wait_timed_out = false;
 
   friend class ProductReadCoordinator;
 };
