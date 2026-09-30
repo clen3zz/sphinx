@@ -95,6 +95,8 @@ export SPHINX_REDIS_DATABASE=0
 ./build/product-service/sphinx-product-service
 ```
 
+默认策略是 `basic`。设置 `SPHINX_CACHE_POLICY=protected` 可启用短期负缓存和正缓存 TTL 抖动；`SPHINX_NEGATIVE_TTL_SECONDS`（1～30，默认 5）和 `SPHINX_TTL_JITTER_SECONDS`（0～30，默认 3）只在该模式读取。
+
 先用 `redis-server --bind 127.0.0.1 --port 6379` 启动本地 Redis。需要认证时设置
 `SPHINX_REDIS_USERNAME`、`SPHINX_REDIS_PASSWORD`；Redis 连接在对应 HTTP Worker 第一次
 收到请求时建立，MySQL 仍是商品权威数据。

@@ -66,6 +66,8 @@ sphinx::ProductHttpConfig load_config() {
       static_cast<std::uint16_t>(unsigned_environment_value("SPHINX_MYSQL_PORT", 3306, 1, 65535));
   config.cache.backend =
       sphinx::parse_cache_backend(optional_environment_value("SPHINX_CACHE_BACKEND", "sphinx"));
+  config.cache_policy.mode =
+      sphinx::parse_cache_policy_mode(optional_environment_value("SPHINX_CACHE_POLICY", "basic"));
   const auto cache_timeout_ms =
       unsigned_environment_value("SPHINX_CACHE_TIMEOUT_MS", 200, 1, 10000);
   const auto cache_timeout =
@@ -91,6 +93,12 @@ sphinx::ProductHttpConfig load_config() {
       static_cast<std::uint32_t>(unsigned_environment_value("SPHINX_HTTP_WORKERS", 4, 1, 64));
   config.cache_policy.ttl_seconds = static_cast<std::uint32_t>(unsigned_environment_value(
       "SPHINX_CACHE_TTL_SECONDS", 30, 1, sphinx::max_product_cache_ttl_seconds));
+  if (config.cache_policy.mode == sphinx::CachePolicyMode::Protected) {
+    config.cache_policy.negative_ttl_seconds = static_cast<std::uint32_t>(
+        unsigned_environment_value("SPHINX_NEGATIVE_TTL_SECONDS", 5, 1, 30));
+    config.cache_policy.ttl_jitter_seconds = static_cast<std::uint32_t>(
+        unsigned_environment_value("SPHINX_TTL_JITTER_SECONDS", 3, 0, 30));
+  }
   return config;
 }
 

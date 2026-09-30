@@ -89,6 +89,7 @@ class ProductHttpIntegrationTest(unittest.TestCase):
                 "SPHINX_HTTP_BIND": "127.0.0.1",
                 "SPHINX_HTTP_WORKERS": "2",
                 "SPHINX_CACHE_BACKEND": "sphinx",
+                "SPHINX_CACHE_POLICY": "basic",
                 "SPHINX_CACHE_TIMEOUT_MS": "200",
                 "SPHINX_CACHE_TTL_SECONDS": "30",
             }
@@ -228,7 +229,16 @@ class ProductHttpIntegrationTest(unittest.TestCase):
             "version": int(version),
         }
 
-    def start_service(self, cache_nodes=None, mysql_port=None, workers=2, port=None):
+    def start_service(
+        self,
+        cache_nodes=None,
+        mysql_port=None,
+        workers=2,
+        port=None,
+        cache_policy="basic",
+        negative_ttl=None,
+        ttl_jitter=None,
+    ):
         if self.service_process is not None:
             self.stop_service(expected=0)
         self.http_port = reserve_port() if port is None else port
@@ -237,6 +247,13 @@ class ProductHttpIntegrationTest(unittest.TestCase):
         environment["SPHINX_HTTP_WORKERS"] = str(workers)
         environment["SPHINX_CACHE_NODES"] = cache_nodes or f"127.0.0.1:{self.sphinx_port}"
         environment["SPHINX_MYSQL_PORT"] = str(self.mysql_port if mysql_port is None else mysql_port)
+        environment["SPHINX_CACHE_POLICY"] = cache_policy
+        environment.pop("SPHINX_NEGATIVE_TTL_SECONDS", None)
+        environment.pop("SPHINX_TTL_JITTER_SECONDS", None)
+        if negative_ttl is not None:
+            environment["SPHINX_NEGATIVE_TTL_SECONDS"] = str(negative_ttl)
+        if ttl_jitter is not None:
+            environment["SPHINX_TTL_JITTER_SECONDS"] = str(ttl_jitter)
         self.service_log = tempfile.TemporaryFile()
         self.service_process = subprocess.Popen(
             [str(PRODUCT_SERVICE_BINARY)],
@@ -453,6 +470,27 @@ class ProductHttpIntegrationTest(unittest.TestCase):
             {"name": "absent", "price_cents": 1, "expected_version": 1},
         )
         self.assert_json_error(missing_put, 404, "not_found")
+
+    def test_protected_policy_uses_negative_cache_for_missing_product(self):
+        missing_id = self.new_product_id()
+        self.start_service(cache_policy="protected", negative_ttl=5, ttl_jitter=0)
+
+        first = self.http_request("GET", f"/products/{missing_id}")
+        self.assert_json_error(first, 404, "not_found")
+        self.assertEqual(first[1].get("X-Cache"), "MISS")
+
+        second = self.http_request("GET", f"/products/{missing_id}")
+        self.assert_json_error(second, 404, "not_found")
+        self.assertEqual(second[1].get("X-Cache"), "HIT")
+
+    def test_basic_policy_ignores_protected_only_environment_values(self):
+        product_id = self.insert_product("basic-policy", 90, 1)
+        self.start_service(cache_policy="basic", negative_ttl=0, ttl_jitter=31)
+
+        response = self.http_request("GET", f"/products/{product_id}")
+
+        self.assertEqual(response[0], 200)
+        self.assertEqual(json.loads(response[2])["id"], product_id)
 
     def test_cache_outage_and_mysql_outage(self):
         product_id = self.insert_product("cache-fallback", 50, 3)
