@@ -46,6 +46,18 @@ if ! command -v mysql >/dev/null 2>&1; then
     exit 2
 fi
 
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+mysql_args=(
+    --protocol=tcp
+    "--host=$SPHINX_TEST_MYSQL_HOST"
+    "--port=$SPHINX_TEST_MYSQL_PORT"
+    "--user=$SPHINX_TEST_MYSQL_USER"
+    "--database=$SPHINX_TEST_MYSQL_DATABASE"
+    --batch
+)
+MYSQL_PWD="$SPHINX_TEST_MYSQL_PASSWORD" mysql "${mysql_args[@]}" \
+    < "$repo_root/product-service/schema.sql"
+
 "$mysql_test" --gtest_filter=MySqlProductStoreIntegrationTest.*
 
 for backend in sphinx redis; do
