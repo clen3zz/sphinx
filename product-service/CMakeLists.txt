@@ -7,6 +7,7 @@ add_library(sphinx_json INTERFACE)
 target_include_directories(sphinx_json INTERFACE ${nlohmann_json_SOURCE_DIR}/include)
 
 add_library(sphinx_product_core STATIC
+        src/product_cache.cpp
         src/product_rules.cpp
         src/product_codec.cpp
         src/product_service.cpp
@@ -17,6 +18,7 @@ target_link_libraries(sphinx_product_core PUBLIC sphinx_core sphinx_json)
 
 if (GTEST_FOUND)
     add_executable(sphinx_product_tests
+            test/product_cache_test.cpp
             test/product_codec_test.cpp
             test/product_service_test.cpp
     )

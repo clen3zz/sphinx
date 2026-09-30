@@ -5,6 +5,9 @@
 
 namespace sphinx {
 
+/// 商品缓存 key 的共同字节限制：非空、不超过 250 字节、不含空白或控制字符。
+bool valid_product_cache_key(std::string_view key) noexcept;
+
 /// 缓存接口：值可以包含零字节，每个实例只在所属工作线程使用。
 /// 传输或协议失败抛出 CacheError；key 不存在返回 nullopt。
 class ProductCache {
@@ -17,4 +20,4 @@ class ProductCache {
   virtual void erase(std::string_view key) = 0;
 };
 
-}  // 命名空间 sphinx
+}  // namespace sphinx
