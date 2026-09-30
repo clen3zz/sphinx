@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
 #include <sphinx/product_codec.h>
+#include <sphinx/product_service.h>
 
 #include <limits>
 #include <stdexcept>
@@ -51,8 +52,66 @@ TEST(ProductCodecTest, SupportsUtf8AndMaximumNameLength) {
 }
 
 TEST(ProductCodecTest, KeyIsNamespacedAndRejectsZero) {
-  EXPECT_EQ(sphinx::make_product_cache_key(42), "product:v2:42");
+  EXPECT_EQ(sphinx::make_product_cache_key(42), "product:v3:42");
   EXPECT_THROW(sphinx::make_product_cache_key(0), std::invalid_argument);
+}
+
+TEST(ProductCodecTest, EncodesAndDecodesMatchingNegativeCacheEntries) {
+  const auto payload = sphinx::encode_product_not_found(42);
+  EXPECT_EQ(payload, R"({"id":42,"not_found":true})");
+  const auto decoded = sphinx::decode_product_cache_entry(payload, 42);
+  EXPECT_EQ(decoded.kind, sphinx::CacheEntryKind::NotFound);
+  EXPECT_FALSE(decoded.product);
+  EXPECT_THROW(sphinx::encode_product_not_found(0), std::invalid_argument);
+}
+
+TEST(ProductCodecTest, RejectsMalformedNegativeCacheEntries) {
+  EXPECT_EQ(sphinx::decode_product_cache_entry(R"({"id":42,"not_found":false})", 42).kind,
+            sphinx::CacheEntryKind::Corrupt);
+  EXPECT_EQ(sphinx::decode_product_cache_entry(R"({"id":42,"not_found":1})", 42).kind,
+            sphinx::CacheEntryKind::Corrupt);
+  EXPECT_EQ(sphinx::decode_product_cache_entry(R"({"id":42,"not_found":true,"name":"x"})", 42).kind,
+            sphinx::CacheEntryKind::Corrupt);
+  EXPECT_EQ(sphinx::decode_product_cache_entry(R"({"id":42})", 42).kind,
+            sphinx::CacheEntryKind::Corrupt);
+  EXPECT_EQ(sphinx::decode_product_cache_entry(R"({"id":43,"not_found":true})", 42).kind,
+            sphinx::CacheEntryKind::Corrupt);
+  EXPECT_EQ(sphinx::decode_product_cache_entry(R"({"id":42,"not_found":true)", 42).kind,
+            sphinx::CacheEntryKind::Corrupt);
+}
+
+TEST(ProductCodecTest, DecodesOnlyMatchingPositiveCacheEntries) {
+  const auto payload = sphinx::encode_product_cache({42, "tea", 199, 2});
+  const auto decoded = sphinx::decode_product_cache_entry(payload, 42);
+  ASSERT_EQ(decoded.kind, sphinx::CacheEntryKind::Product);
+  ASSERT_TRUE(decoded.product.has_value());
+  const auto product = decoded.product.value_or(sphinx::Product{});
+  EXPECT_EQ(product.id, 42);
+  EXPECT_EQ(sphinx::decode_product_cache_entry(payload, 43).kind, sphinx::CacheEntryKind::Corrupt);
+  EXPECT_EQ(sphinx::decode_product_cache_entry(
+                R"({"id":42,"name":"tea","price_cents":199,"version":2,"extra":0})", 42)
+                .kind,
+            sphinx::CacheEntryKind::Corrupt);
+}
+
+TEST(ProductCodecTest, ProductCacheTtlIsStableAndBounded) {
+  sphinx::ProductCachePolicy basic;
+  basic.ttl_seconds = 30;
+  EXPECT_EQ(sphinx::product_cache_ttl(42, basic), 30U);
+
+  sphinx::ProductCachePolicy protected_policy;
+  protected_policy.mode = sphinx::CachePolicyMode::Protected;
+  protected_policy.ttl_seconds = 30;
+  protected_policy.ttl_jitter_seconds = 3;
+  const auto first = sphinx::product_cache_ttl(42, protected_policy);
+  EXPECT_EQ(sphinx::product_cache_ttl(42, protected_policy), first);
+  EXPECT_GE(first, 27U);
+  EXPECT_LE(first, 33U);
+
+  protected_policy.ttl_seconds = 1;
+  EXPECT_GE(sphinx::product_cache_ttl(1, protected_policy), 1U);
+  protected_policy.ttl_seconds = sphinx::max_product_cache_ttl_seconds;
+  EXPECT_LE(sphinx::product_cache_ttl(1, protected_policy), sphinx::max_product_cache_ttl_seconds);
 }
 
 TEST(ProductRulesTest, UpdateVersionAndCacheTtlBoundaries) {

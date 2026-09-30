@@ -5,6 +5,15 @@
 
 namespace sphinx {
 
+struct ProductCachePolicy;
+
+enum class CacheEntryKind : std::uint8_t { Product, NotFound, Corrupt };
+
+struct DecodedProductCacheEntry {
+  CacheEntryKind kind = CacheEntryKind::Corrupt;
+  std::optional<Product> product;
+};
+
 /// 生成带命名空间的缓存 key；缓存格式变化时需更新版本前缀；要求 id > 0。
 std::string make_product_cache_key(std::uint64_t id);
 
@@ -16,4 +25,14 @@ std::string encode_product_cache(const Product& product);
 /// id/version 为零或价格越界时返回 nullopt。
 std::optional<Product> decode_product_cache(std::string_view bytes);
 
-}  // 命名空间 sphinx
+/// Encodes a strict negative-cache marker for a positive product ID.
+std::string encode_product_not_found(std::uint64_t id);
+
+/// Decodes either a positive product or a matching negative-cache marker.
+DecodedProductCacheEntry decode_product_cache_entry(std::string_view payload,
+                                                    std::uint64_t expected_id);
+
+/// Applies deterministic positive-cache TTL jitter only in protected mode.
+std::uint32_t product_cache_ttl(std::uint64_t id, const ProductCachePolicy& policy) noexcept;
+
+}  // namespace sphinx

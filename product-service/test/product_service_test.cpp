@@ -321,7 +321,7 @@ TEST(ProductServiceTest, MissReadsDatabaseAndFillsWithRelativeTtl) {
   FakeStore store;
   store.row = sphinx::Product{1, "tea", 199, 1};
   FakeCache cache;
-  sphinx::ProductService service{store, cache, {45}};
+  sphinx::ProductService service{store, cache, {sphinx::CachePolicyMode::Basic, 45, 5, 3}};
   const auto result = service.get(1);
   EXPECT_EQ(result.status, sphinx::ProductStatus::Ok);
   EXPECT_EQ(result.cache_source, sphinx::CacheSource::Miss);
@@ -451,11 +451,13 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
 
   RaceStore old_read_store{database, true};
   RaceCache old_read_cache{cache_state};
-  sphinx::ProductService old_reader{old_read_store, old_read_cache, {ttl_seconds}};
+  sphinx::ProductService old_reader{
+      old_read_store, old_read_cache, {sphinx::CachePolicyMode::Basic, ttl_seconds, 5, 3}};
 
   RaceStore update_store{database, false};
   RaceCache update_cache{cache_state};
-  sphinx::ProductService updater{update_store, update_cache, {ttl_seconds}};
+  sphinx::ProductService updater{
+      update_store, update_cache, {sphinx::CachePolicyMode::Basic, ttl_seconds, 5, 3}};
 
   std::optional<sphinx::GetProductResult> old_read_result;
   std::exception_ptr old_read_error;
@@ -505,7 +507,8 @@ TEST(ProductServiceTest, ConcurrentStaleFillExpiresByOwnTtl) {
 
   RaceStore later_read_store{database, false};
   RaceCache later_read_cache{cache_state};
-  sphinx::ProductService later_reader{later_read_store, later_read_cache, {ttl_seconds}};
+  sphinx::ProductService later_reader{
+      later_read_store, later_read_cache, {sphinx::CachePolicyMode::Basic, ttl_seconds, 5, 3}};
   auto stale_hit = later_reader.get(product_id);
   ASSERT_EQ(stale_hit.status, sphinx::ProductStatus::Ok);
   if (!stale_hit.product) {
@@ -573,17 +576,17 @@ TEST(ProductServiceTest, BatchMissUsesOneStoreCallAndRestoresDuplicateItems) {
   EXPECT_EQ(store.finds, 0);
   EXPECT_EQ(
       cache.batch_reads,
-      (std::vector<std::vector<std::string>>{{"product:v2:2", "product:v2:99", "product:v2:1"}}));
+      (std::vector<std::vector<std::string>>{{"product:v3:2", "product:v3:99", "product:v3:1"}}));
   ASSERT_EQ(cache.batch_writes.size(), 2U);
-  EXPECT_EQ(cache.batch_writes[0].key, "product:v2:2");
-  EXPECT_EQ(cache.batch_writes[1].key, "product:v2:1");
+  EXPECT_EQ(cache.batch_writes[0].key, "product:v3:2");
+  EXPECT_EQ(cache.batch_writes[1].key, "product:v3:1");
 }
 
 TEST(ProductServiceTest, BatchCacheHitsLeaveOnlyMissesForTheStore) {
   BatchStore store;
   store.rows.emplace(2, sphinx::Product{2, "coffee", 299, 1});
   BatchCache cache;
-  cache.values.emplace("product:v2:1", sphinx::encode_product_cache({1, "tea", 199, 1}));
+  cache.values.emplace("product:v3:1", sphinx::encode_product_cache({1, "tea", 199, 1}));
   sphinx::ProductService service{store, cache};
 
   const auto result = service.get_many({1, 2, 1});
@@ -596,7 +599,7 @@ TEST(ProductServiceTest, BatchCacheHitsLeaveOnlyMissesForTheStore) {
   EXPECT_EQ(store.batch_queries, (std::vector<std::vector<std::uint64_t>>{{2}}));
   EXPECT_EQ(store.finds, 0);
   ASSERT_EQ(cache.batch_writes.size(), 1U);
-  EXPECT_EQ(cache.batch_writes[0].key, "product:v2:2");
+  EXPECT_EQ(cache.batch_writes[0].key, "product:v3:2");
 }
 
 TEST(ProductServiceTest, CacheBatchFailureFallsBackForEveryUnresolvedItem) {
@@ -620,7 +623,7 @@ TEST(ProductServiceTest, StoreBatchFailureDoesNotReplaceEarlierCacheHits) {
   BatchStore store;
   store.batch_error = sphinx::StoreErrorCode::Unavailable;
   BatchCache cache;
-  cache.values.emplace("product:v2:1", sphinx::encode_product_cache({1, "tea", 199, 1}));
+  cache.values.emplace("product:v3:1", sphinx::encode_product_cache({1, "tea", 199, 1}));
   sphinx::ProductService service{store, cache};
 
   const auto result = service.get_many({1, 2});

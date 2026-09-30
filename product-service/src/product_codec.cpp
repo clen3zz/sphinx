@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <sphinx/product_codec.h>
+#include <sphinx/product_service.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+#include <utility>
 
 namespace sphinx {
 
@@ -11,7 +15,7 @@ std::string make_product_cache_key(std::uint64_t id) {
     throw std::invalid_argument{"product id must be positive"};
   }
   // 使用独立命名空间，避免与其他缓存 key 冲突；格式变更时可更新版本前缀。
-  return "product:v2:" + std::to_string(id);
+  return "product:v3:" + std::to_string(id);
 }
 
 std::string encode_product_cache(const Product& product) {
@@ -43,6 +47,67 @@ std::optional<Product> decode_product_cache(std::string_view bytes) {
     return std::nullopt;
   }
   return product;
+}
+
+std::string encode_product_not_found(std::uint64_t id) {
+  if (id == 0) {
+    throw std::invalid_argument{"product id must be positive"};
+  }
+  return nlohmann::json{{"id", id}, {"not_found", true}}.dump();
+}
+
+DecodedProductCacheEntry decode_product_cache_entry(std::string_view payload,
+                                                    std::uint64_t expected_id) {
+  if (expected_id == 0 || payload.size() > 512) {
+    return {};
+  }
+
+  const auto value = nlohmann::json::parse(payload.begin(), payload.end(), nullptr, false);
+  if (!value.is_object()) {
+    return {};
+  }
+
+  if (value.size() == 4 && value.contains("id") && value.contains("name") &&
+      value.contains("price_cents") && value.contains("version")) {
+    auto product = decode_product_cache(payload);
+    if (!product || product->id != expected_id) {
+      return {};
+    }
+    return {CacheEntryKind::Product, std::move(product)};
+  }
+
+  if (value.size() == 2 && value.contains("id") && value.contains("not_found") &&
+      value["id"].is_number_unsigned() && value["not_found"].is_boolean() &&
+      value["id"].get<std::uint64_t>() == expected_id && value["not_found"].get<bool>()) {
+    return {CacheEntryKind::NotFound, std::nullopt};
+  }
+
+  return {};
+}
+
+std::uint32_t product_cache_ttl(std::uint64_t id, const ProductCachePolicy& policy) noexcept {
+  if (policy.mode != CachePolicyMode::Protected) {
+    return policy.ttl_seconds;
+  }
+
+  constexpr std::uint64_t hash_increment = 0x9E3779B97F4A7C15ULL;
+  constexpr std::uint64_t hash_multiplier_one = 0xBF58476D1CE4E5B9ULL;
+  constexpr std::uint64_t hash_multiplier_two = 0x94D049BB133111EBULL;
+  std::uint64_t hash = id + hash_increment;
+  hash = (hash ^ (hash >> 30U)) * hash_multiplier_one;
+  hash = (hash ^ (hash >> 27U)) * hash_multiplier_two;
+  hash ^= hash >> 31U;
+
+  const auto jitter = static_cast<std::uint64_t>(policy.ttl_jitter_seconds);
+  const auto span = jitter * 2U + 1U;
+  const auto offset =
+      static_cast<std::int64_t>(hash % span) - static_cast<std::int64_t>(policy.ttl_jitter_seconds);
+  const auto ttl = static_cast<std::int64_t>(policy.ttl_seconds) + offset;
+  if (ttl < 1) {
+    return 1;
+  }
+  return static_cast<std::uint32_t>(
+      std::min<std::uint64_t>(static_cast<std::uint64_t>(ttl), max_product_cache_ttl_seconds));
 }
 
 }  // namespace sphinx

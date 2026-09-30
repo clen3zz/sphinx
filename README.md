@@ -78,7 +78,7 @@ curl -i http://127.0.0.1:8080/products/42
 
 ```bash
 ./build/sphinxd/sphinx-cluster \
-  --nodes 127.0.0.1:11211,127.0.0.1:11212 route product:v2:42
+  --nodes 127.0.0.1:11211,127.0.0.1:11212 route product:v3:42
 ```
 
 节点列表是静态配置；本项目没有副本、自动故障转移或数据迁移。MySQL 是权威数据，缓存节点不可用时商品查询会尝试回源。

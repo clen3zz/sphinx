@@ -12,6 +12,7 @@
 namespace sphinx {
 
 enum class CacheBackend : std::uint8_t { Sphinx, Redis };
+enum class CachePolicyMode : std::uint8_t { Basic, Protected };
 
 struct SphinxCacheOptions {
   std::string nodes = "127.0.0.1:11211";
@@ -35,6 +36,7 @@ struct ProductCacheOptions {
 };
 
 CacheBackend parse_cache_backend(std::string_view text);
+CachePolicyMode parse_cache_policy_mode(std::string_view text);
 void validate_redis_options(const RedisOptions& options);
 void validate_product_cache_options(const ProductCacheOptions& options);
 std::unique_ptr<ProductCache> make_product_cache(const ProductCacheOptions& options);

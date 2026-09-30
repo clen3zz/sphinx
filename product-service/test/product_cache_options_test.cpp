@@ -18,6 +18,13 @@ TEST(ProductCacheOptionsTest, ParsesOnlySupportedBackends) {
   EXPECT_THROW(parse_cache_backend("Redis"), std::invalid_argument);
 }
 
+TEST(ProductCacheOptionsTest, ParsesOnlySupportedPolicyModes) {
+  EXPECT_EQ(parse_cache_policy_mode("basic"), CachePolicyMode::Basic);
+  EXPECT_EQ(parse_cache_policy_mode("protected"), CachePolicyMode::Protected);
+  EXPECT_THROW(parse_cache_policy_mode("Basic"), std::invalid_argument);
+  EXPECT_THROW(parse_cache_policy_mode("other"), std::invalid_argument);
+}
+
 TEST(ProductCacheOptionsTest, ValidatesOnlyTheSelectedBackend) {
   ProductCacheOptions options;
   options.redis.port = 0;

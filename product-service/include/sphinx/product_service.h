@@ -2,6 +2,7 @@
 #pragma once
 
 #include <sphinx/product_cache.h>
+#include <sphinx/product_cache_options.h>
 #include <sphinx/product_store.h>
 
 #include <vector>
@@ -9,8 +10,11 @@
 namespace sphinx {
 
 struct ProductCachePolicy {
+  CachePolicyMode mode = CachePolicyMode::Basic;
   /// 必须在 1..2,592,000 秒内；更大的过期值会被 Sphinx 解释为 UNIX 时间戳。
   std::uint32_t ttl_seconds = 30;
+  std::uint32_t negative_ttl_seconds = 5;
+  std::uint32_t ttl_jitter_seconds = 3;
 };
 
 /// 旁路缓存业务层：只借用 store 和 cache，二者的生命周期必须长于本对象。

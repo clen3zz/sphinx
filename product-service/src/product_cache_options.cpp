@@ -21,6 +21,16 @@ CacheBackend parse_cache_backend(std::string_view text) {
   throw std::invalid_argument{"cache backend must be sphinx or redis"};
 }
 
+CachePolicyMode parse_cache_policy_mode(std::string_view text) {
+  if (text == "basic") {
+    return CachePolicyMode::Basic;
+  }
+  if (text == "protected") {
+    return CachePolicyMode::Protected;
+  }
+  throw std::invalid_argument{"cache policy must be basic or protected"};
+}
+
 void validate_product_cache_options(const ProductCacheOptions& options) {
   constexpr std::chrono::milliseconds max_timeout{10000};
   switch (options.backend) {
