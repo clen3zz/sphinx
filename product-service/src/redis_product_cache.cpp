@@ -109,6 +109,32 @@ class RedisProductCache::Impl final {
     return RedisReplyPtr{raw_reply};
   }
 
+  void append_command(const std::vector<std::string_view>& arguments) {
+    check_owner();
+    if (arguments.empty() ||
+        arguments.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+      throw std::invalid_argument{"invalid Redis command argument count"};
+    }
+    ensure_connection();
+
+    RedisArgv argv{arguments};
+    if (redisAppendCommandArgv(_context.get(), static_cast<int>(argv.pointers.size()),
+                               argv.pointers.data(), argv.lengths.data()) != REDIS_OK) {
+      reset_connection();
+      throw CacheError{"Redis pipeline append failed"};
+    }
+  }
+
+  RedisReplyPtr read_reply() {
+    check_owner();
+    void* raw_reply = nullptr;
+    if (redisGetReply(_context.get(), &raw_reply) != REDIS_OK || raw_reply == nullptr) {
+      reset_connection();
+      throw CacheError{"Redis pipeline reply failed"};
+    }
+    return RedisReplyPtr{static_cast<redisReply*>(raw_reply)};
+  }
+
   std::optional<std::string> parse_value(const redisReply& reply) {
     if (reply.type == REDIS_REPLY_NIL) {
       return std::nullopt;
@@ -120,10 +146,10 @@ class RedisProductCache::Impl final {
       return std::string{reply.str, reply.len};
     }
     if (reply.type == REDIS_REPLY_ERROR) {
-      throw CacheError{"Redis GET was rejected"};
+      throw CacheError{"Redis cache read was rejected"};
     }
     reset_connection();
-    throw CacheError{"Redis GET returned an unexpected response"};
+    throw CacheError{"Redis cache read returned an unexpected response"};
   }
 
   void expect_ok(const redisReply& reply, const char* operation) {
@@ -147,6 +173,84 @@ class RedisProductCache::Impl final {
     }
     reset_connection();
     throw CacheError{"Redis DEL returned an unexpected response"};
+  }
+
+  std::vector<std::optional<std::string>> get_many(const std::vector<std::string>& keys) {
+    check_owner();
+    if (keys.size() > max_product_batch_size) {
+      throw std::invalid_argument{"product cache batch exceeds 32 keys"};
+    }
+    for (const auto& key : keys) {
+      if (!valid_product_cache_key(key)) {
+        throw std::invalid_argument{"product cache batch contains an invalid key"};
+      }
+    }
+    if (keys.empty()) {
+      return {};
+    }
+
+    std::vector<std::string_view> arguments;
+    arguments.reserve(keys.size() + 1);
+    arguments.emplace_back("MGET");
+    for (const auto& key : keys) {
+      arguments.emplace_back(key);
+    }
+    const RedisReplyPtr reply = command(arguments);
+    if (reply->type == REDIS_REPLY_ERROR) {
+      throw CacheError{"Redis MGET was rejected"};
+    }
+    if (reply->type != REDIS_REPLY_ARRAY || reply->elements != keys.size() ||
+        reply->element == nullptr) {
+      reset_connection();
+      throw CacheError{"Redis MGET returned an unexpected response"};
+    }
+
+    std::vector<std::optional<std::string>> values;
+    values.reserve(keys.size());
+    for (std::size_t index = 0; index < keys.size(); ++index) {
+      if (reply->element[index] == nullptr) {
+        reset_connection();
+        throw CacheError{"Redis MGET returned an invalid element"};
+      }
+      values.push_back(parse_value(*reply->element[index]));
+    }
+    return values;
+  }
+
+  void put_many(const std::vector<CacheWriteEntry>& entries) {
+    check_owner();
+    if (entries.size() > max_product_batch_size) {
+      throw std::invalid_argument{"product cache batch exceeds 32 writes"};
+    }
+    for (const auto& entry : entries) {
+      if (!valid_product_cache_key(entry.key)) {
+        throw std::invalid_argument{"product cache batch contains an invalid key"};
+      }
+      if (!valid_product_cache_ttl(entry.ttl_seconds)) {
+        throw std::invalid_argument{"product cache batch contains an invalid TTL"};
+      }
+    }
+    if (entries.empty()) {
+      return;
+    }
+
+    for (const auto& entry : entries) {
+      const std::string ttl = std::to_string(entry.ttl_seconds);
+      append_command({"SET", entry.key, entry.value, "EX", ttl});
+    }
+
+    bool command_rejected = false;
+    for (std::size_t index = 0; index < entries.size(); ++index) {
+      const RedisReplyPtr reply = read_reply();
+      if (reply->type == REDIS_REPLY_ERROR) {
+        command_rejected = true;
+        continue;
+      }
+      expect_ok(*reply, "SET");
+    }
+    if (command_rejected) {
+      throw CacheError{"Redis pipeline SET was rejected"};
+    }
   }
 
  private:
@@ -230,6 +334,15 @@ void RedisProductCache::erase(std::string_view key) {
   }
   const RedisReplyPtr reply = _impl->command({"DEL", key});
   (void)_impl->expect_deleted(*reply);
+}
+
+std::vector<std::optional<std::string>> RedisProductCache::get_many(
+    const std::vector<std::string>& keys) {
+  return _impl->get_many(keys);
+}
+
+void RedisProductCache::put_many(const std::vector<CacheWriteEntry>& entries) {
+  _impl->put_many(entries);
 }
 
 }  // namespace sphinx

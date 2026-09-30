@@ -74,7 +74,7 @@ std::optional<RedisTestCommand> read_command(int socket) {
     throw std::runtime_error{"Redis test request is not an array"};
   }
   const std::size_t count = parse_size(std::string_view{*header}.substr(1));
-  if (count == 0 || count > 16) {
+  if (count == 0 || count > 64) {
     throw std::runtime_error{"Redis test request has an invalid argument count"};
   }
 
@@ -269,6 +269,18 @@ std::string bulk_reply(std::string_view value) {
   return "$" + std::to_string(value.size()) + "\r\n" + std::string{value} + "\r\n";
 }
 
+std::string array_reply(const std::vector<std::optional<std::string>>& values) {
+  std::string reply = "*" + std::to_string(values.size()) + "\r\n";
+  for (const auto& value : values) {
+    if (value) {
+      reply += bulk_reply(value.value_or(""));
+    } else {
+      reply += "$-1\r\n";
+    }
+  }
+  return reply;
+}
+
 TEST(RedisProductCacheTest, UsesBinarySafeGetSetAndDeleteCommands) {
   const std::string key{"product:v2:42"};
   const std::string value{"A\0B\r\nZ", 6};
@@ -332,6 +344,102 @@ TEST(RedisProductCacheTest, ResetsMalformedRepliesBeforeTheNextOperation) {
   EXPECT_THROW(cache.get("product:v2:1"), CacheError);
   EXPECT_FALSE(cache.get("product:v2:1"));
   EXPECT_EQ(server.commands().size(), 2U);
+  EXPECT_TRUE(server.error().empty());
+}
+
+TEST(RedisProductCacheTest, MGetPreservesOrderDuplicatesAndBinaryValues) {
+  const std::string binary_value{"A\0B", 3};
+  ScriptedRedisServer server{[&](const RedisTestCommand&) {
+    return array_reply({std::string{"value"}, std::nullopt, std::string{"value"}, binary_value});
+  }};
+  RedisProductCache cache{test_options(server.port())};
+  const std::vector<std::string> keys{"first", "missing", "first", "binary"};
+
+  const auto values = cache.get_many(keys);
+
+  ASSERT_EQ(values.size(), keys.size());
+  EXPECT_EQ(values[0].value_or(""), "value");
+  EXPECT_FALSE(values[1]);
+  EXPECT_EQ(values[2].value_or(""), "value");
+  EXPECT_EQ(values[3].value_or(""), binary_value);
+  EXPECT_EQ(server.commands(),
+            (std::vector<RedisTestCommand>{{"MGET", "first", "missing", "first", "binary"}}));
+  EXPECT_TRUE(server.error().empty());
+}
+
+TEST(RedisProductCacheTest, PutsBatchWithPipelinedSetCommandsAndExpiration) {
+  ScriptedRedisServer server{[](const RedisTestCommand&) { return std::string{"+OK\r\n"}; }};
+  RedisProductCache cache{test_options(server.port())};
+  const std::vector<CacheWriteEntry> entries{
+      {"first", "one", 10}, {"second", std::string{"A\0B", 3}, 20}, {"third", "three", 30}};
+
+  cache.put_many(entries);
+
+  EXPECT_EQ(server.commands(),
+            (std::vector<RedisTestCommand>{{"SET", "first", "one", "EX", "10"},
+                                           {"SET", "second", std::string{"A\0B", 3}, "EX", "20"},
+                                           {"SET", "third", "three", "EX", "30"}}));
+  EXPECT_TRUE(server.error().empty());
+}
+
+TEST(RedisProductCacheTest, DrainsPipelineRepliesAfterServerCommandError) {
+  ScriptedRedisServer server{[](const RedisTestCommand& command) {
+    if (command[0] == "SET" && command[1] == "second") {
+      return std::string{"-ERR simulated rejection\r\n"};
+    }
+    if (command[0] == "GET") {
+      return std::string{"$-1\r\n"};
+    }
+    return std::string{"+OK\r\n"};
+  }};
+  RedisProductCache cache{test_options(server.port())};
+  const std::vector<CacheWriteEntry> entries{
+      {"first", "one", 10}, {"second", "two", 20}, {"third", "three", 30}};
+
+  EXPECT_THROW(cache.put_many(entries), CacheError);
+  EXPECT_FALSE(cache.get("after-pipeline-error"));
+
+  EXPECT_EQ(server.commands().size(), 4U);
+  EXPECT_EQ(server.commands()[2][1], "third");
+  EXPECT_EQ(server.commands()[3][0], "GET");
+  EXPECT_TRUE(server.error().empty());
+}
+
+TEST(RedisProductCacheTest, ValidatesWholeBatchBeforeConnecting) {
+  ScriptedRedisServer server{[](const RedisTestCommand&) { return std::string{"+OK\r\n"}; }};
+  RedisProductCache cache{test_options(server.port())};
+
+  EXPECT_TRUE(cache.get_many({}).empty());
+  cache.put_many({});
+  EXPECT_THROW(cache.get_many({"valid", "bad key"}), std::invalid_argument);
+  EXPECT_THROW(cache.put_many({{"valid", "value", 10}, {"later", "value", 0}}),
+               std::invalid_argument);
+  const std::vector<std::string> oversized_keys(max_product_batch_size + 1, "valid");
+  EXPECT_THROW(cache.get_many(oversized_keys), std::invalid_argument);
+  std::vector<CacheWriteEntry> oversized_entries(max_product_batch_size + 1,
+                                                 {"valid", "value", 10});
+  EXPECT_THROW(cache.put_many(oversized_entries), std::invalid_argument);
+  EXPECT_TRUE(server.commands().empty());
+}
+
+TEST(RedisProductCacheTest, ResetsMalformedMGetRepliesBeforeTheNextOperation) {
+  std::atomic<unsigned int> request_count{0};
+  ScriptedRedisServer server{[&](const RedisTestCommand&) {
+    const unsigned int index = request_count.fetch_add(1, std::memory_order_relaxed);
+    if (index == 0) {
+      return std::string{"*0\r\n"};
+    }
+    if (index == 1) {
+      return std::string{"*1\r\n:3\r\n"};
+    }
+    return std::string{"*1\r\n$-1\r\n"};
+  }};
+  RedisProductCache cache{test_options(server.port())};
+
+  EXPECT_THROW(cache.get_many({"first"}), CacheError);
+  EXPECT_THROW(cache.get_many({"second"}), CacheError);
+  EXPECT_FALSE(cache.get_many({"third"})[0]);
+  EXPECT_EQ(server.commands().size(), 3U);
   EXPECT_TRUE(server.error().empty());
 }
 
