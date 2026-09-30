@@ -42,6 +42,10 @@ METRIC_NAMES = (
 )
 
 
+class RedisCommandError(RuntimeError):
+    """A complete Redis error reply, distinct from a broken connection."""
+
+
 def reserve_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
@@ -78,7 +82,7 @@ def read_redis_reply(connection):
     if kind == b"+":
         return payload
     if kind == b"-":
-        raise RuntimeError(f"Redis command failed: {payload.decode(errors='replace')}")
+        raise RedisCommandError(payload.decode(errors="replace"))
     if kind == b":":
         return int(payload)
     if kind == b"$":
@@ -207,11 +211,16 @@ class MySqlDatabase:
 
     def statement_count(self):
         escaped_database = self.database.replace("'", "''")
+        escaped_user = self.user.replace("'", "''")
         query = (
-            "SELECT COALESCE(SUM(COUNT_STAR),0) "
-            "FROM performance_schema.events_statements_summary_by_digest "
-            f"WHERE SCHEMA_NAME='{escaped_database}' "
-            "AND DIGEST_TEXT LIKE 'SELECT%products%'"
+            "SELECT COALESCE(SUM(statement.COUNT_EXECUTE),0) "
+            "FROM performance_schema.prepared_statements_instances AS statement "
+            "JOIN performance_schema.threads AS thread "
+            "ON thread.THREAD_ID=statement.OWNER_THREAD_ID "
+            f"WHERE thread.PROCESSLIST_USER='{escaped_user}' "
+            f"AND thread.PROCESSLIST_DB='{escaped_database}' "
+            "AND statement.SQL_TEXT LIKE 'SELECT%products%' "
+            "AND statement.SQL_TEXT NOT LIKE '%FOR UPDATE%'"
         )
         result = self.run(query, check=False)
         try:
@@ -475,6 +484,112 @@ def cache_info(cache_server):
         return None
 
 
+def count_sphinx_keys(port, keys):
+    present = 0
+    for offset in range(0, len(keys), 32):
+        group = keys[offset : offset + 32]
+        request = "get " + " ".join(group) + "\r\n"
+        with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
+            connection.sendall(request.encode("ascii"))
+            while True:
+                line = read_line(connection)
+                if line == b"END":
+                    break
+                fields = line.split()
+                if len(fields) != 4 or fields[0] != b"VALUE":
+                    raise RuntimeError("Sphinx returned an invalid pressure-probe reply")
+                value_size = int(fields[3])
+                read_exactly(connection, value_size)
+                if read_exactly(connection, 2) != b"\r\n":
+                    raise RuntimeError("Sphinx returned an invalid pressure-probe terminator")
+                present += 1
+    return present
+
+
+def run_memory_pressure(cache_server, entry_count, value_bytes):
+    """Compare write failure, eviction, and segment reclamation under a bounded cache."""
+    cache_before = cache_info(cache_server)
+    payload = b"x" * value_bytes
+    keys = [f"compare:pressure:{index}" for index in range(entry_count)]
+    accepted = 0
+    rejected = 0
+
+    for key in keys:
+        if cache_server.backend == "redis":
+            try:
+                reply = redis_command(cache_server.port, "SET", key, payload, "EX", 60)
+            except RedisCommandError:
+                rejected += 1
+                continue
+            if reply != b"OK":
+                raise RuntimeError("Redis returned an unexpected pressure-write reply")
+            accepted += 1
+            continue
+
+        request = (
+            f"set {key} 0 60 {len(payload)}\r\n".encode("ascii")
+            + payload
+            + b"\r\n"
+        )
+        with socket.create_connection(("127.0.0.1", cache_server.port), timeout=2) as connection:
+            connection.sendall(request)
+            reply = read_line(connection)
+        if reply == b"STORED":
+            accepted += 1
+        elif reply in (b"NOT_STORED", b"SERVER_ERROR out of memory storing object"):
+            rejected += 1
+        else:
+            raise RuntimeError(f"Sphinx returned an unexpected pressure-write reply: {reply!r}")
+
+    cache_after_fill = cache_info(cache_server)
+    if cache_server.backend == "redis":
+        retained = 0
+        for offset in range(0, len(keys), 32):
+            reply = redis_command(cache_server.port, "EXISTS", *keys[offset : offset + 32])
+            if not isinstance(reply, int):
+                raise RuntimeError("Redis returned an unexpected pressure-probe reply")
+            retained += reply
+    else:
+        retained = count_sphinx_keys(cache_server.port, keys)
+    cache_after_probe = cache_info(cache_server)
+
+    evicted_before = cache_before.get("evicted_keys") if cache_before else None
+    evicted_after = cache_after_fill.get("evicted_keys") if cache_after_fill else None
+    evicted_delta = (
+        evicted_after - evicted_before
+        if isinstance(evicted_before, int) and isinstance(evicted_after, int)
+        else None
+    )
+    if cache_server.backend == "sphinx":
+        pressure_observed = retained < accepted
+    elif cache_server.redis_policy == "noeviction":
+        pressure_observed = rejected > 0
+    else:
+        pressure_observed = evicted_delta is not None and evicted_delta > 0
+    return {
+        "scenario": "memory_pressure",
+        "configured_memory_mb": cache_server.memory_mb,
+        "redis_maxmemory_policy": (
+            cache_server.redis_policy if cache_server.backend == "redis" else None
+        ),
+        "offered_entries": entry_count,
+        "value_bytes_each": value_bytes,
+        "offered_value_bytes": entry_count * value_bytes,
+        "write_accepted": accepted,
+        "write_rejected": rejected,
+        "retained_entries_after_fill": retained,
+        "redis_evicted_keys_delta": evicted_delta,
+        "pressure_observed": pressure_observed,
+        "cache_info_before": cache_before,
+        "cache_info_after_fill": cache_after_fill,
+        "cache_info_after_probe": cache_after_probe,
+        "interpretation": (
+            "Redis write rejection/eviction and Sphinx retained-key loss are observed separately; "
+            "Sphinx exposes no exact reclaimed-byte counter."
+        ),
+    }
+
+
 def delete_cache_keys(cache_server, product_ids):
     for product_id in product_ids:
         key = f"product:v3:{product_id}"
@@ -512,6 +627,17 @@ def run_workload(service, database, label, jobs, workers):
     metric_deltas = {
         name: after.get(name, 0) - before.get(name, 0) for name in METRIC_NAMES
     }
+    mysql_select_delta = (
+        sql_after - sql_before if sql_before is not None and sql_after is not None else None
+    )
+    if mysql_select_delta is not None and (
+        mysql_select_delta < 0
+        or (
+            metric_deltas["store_read_operations"] > mysql_select_delta
+            and metric_deltas["store_read_failures"] < metric_deltas["store_read_operations"]
+        )
+    ):
+        mysql_select_delta = None
     return {
         "scenario": label,
         "request_count": len(jobs),
@@ -521,9 +647,7 @@ def run_workload(service, database, label, jobs, workers):
         "cache_source_counts": dict(cache_sources),
         "product_error_counts": dict(product_errors),
         "metrics_delta": metric_deltas,
-        "mysql_product_select_digest_delta": (
-            sql_after - sql_before if sql_before is not None and sql_after is not None else None
-        ),
+        "mysql_product_select_execute_delta": mysql_select_delta,
         "latency_ms": {
             "p50": percentile(latencies, 50),
             "p95": percentile(latencies, 95),
@@ -653,6 +777,9 @@ def parse_args():
     parser.add_argument("--requests", type=int, default=200)
     parser.add_argument("--concurrency", type=int, default=16)
     parser.add_argument("--cache-memory-mb", type=int, default=64)
+    parser.add_argument("--pressure-cache-memory-mb", type=int, default=8)
+    parser.add_argument("--pressure-entries", type=int, default=64)
+    parser.add_argument("--pressure-value-kib", type=int, default=256)
     parser.add_argument(
         "--redis-policy", choices=("noeviction", "allkeys-lru"), default="allkeys-lru"
     )
@@ -664,6 +791,10 @@ def parse_args():
         parser.error("products must be >= 32; requests, concurrency and repeat must be positive")
     if args.cache_memory_mb < 4 or args.cache_memory_mb % 4 != 0:
         parser.error("cache-memory-mb must be a positive multiple of 4")
+    if args.pressure_cache_memory_mb < 8 or args.pressure_cache_memory_mb % 4 != 0:
+        parser.error("pressure-cache-memory-mb must be a multiple of 4 and at least 8")
+    if args.pressure_entries < 1 or not 1 <= args.pressure_value_kib <= 1024:
+        parser.error("pressure-entries must be positive and pressure-value-kib must be in 1..1024")
     if not 1 <= args.ttl_seconds <= 2592000:
         parser.error("ttl-seconds must be in 1..2592000")
     if not re_database(os.environ.get("SPHINX_TEST_MYSQL_DATABASE", "")):
@@ -794,6 +925,30 @@ def main():
                         "cache": process_snapshot(cache_server.process),
                     }
                     cache_after = cache_info(cache_server)
+                    service.stop()
+                    cache_server.close()
+
+                    pressure_cache = CacheServer(
+                        backend,
+                        str(sphinx_binary) if backend == "sphinx" else redis_binary,
+                        args.pressure_cache_memory_mb,
+                        args.redis_policy,
+                    )
+                    try:
+                        pressure_cache.start()
+                        pressure_process_before = process_snapshot(pressure_cache.process)
+                        memory_pressure = run_memory_pressure(
+                            pressure_cache,
+                            args.pressure_entries,
+                            args.pressure_value_kib * 1024,
+                        )
+                        memory_pressure["cache_process_before"] = pressure_process_before
+                        memory_pressure["cache_process_after"] = process_snapshot(
+                            pressure_cache.process
+                        )
+                    finally:
+                        pressure_cache.close()
+
                     runs.append(
                         {
                             "repeat": repeat + 1,
@@ -815,6 +970,7 @@ def main():
                             "process_after": process_after,
                             "cache_info_before": cache_before,
                             "cache_info_after": cache_after,
+                            "memory_pressure": memory_pressure,
                         }
                     )
                 finally:
@@ -846,6 +1002,9 @@ def main():
             "client_concurrency": args.concurrency,
             "http_workers": max(2, min(64, args.concurrency)),
             "cache_memory_budget_mb": args.cache_memory_mb,
+            "pressure_cache_memory_mb": args.pressure_cache_memory_mb,
+            "pressure_entries": args.pressure_entries,
+            "pressure_value_kib": args.pressure_value_kib,
             "redis_maxmemory_policy": args.redis_policy,
             "ttl_seconds": args.ttl_seconds,
             "repeat_count": args.repeat,
@@ -873,6 +1032,14 @@ def main():
                     f"store_reads={workload['metrics_delta']['store_read_operations']}"
                 )
         print(f"{run['backend']}/{run['policy']}: " + ", ".join(highlights))
+        pressure = run["memory_pressure"]
+        print(
+            f"  memory pressure: accepted={pressure['write_accepted']} "
+            f"rejected={pressure['write_rejected']} "
+            f"retained={pressure['retained_entries_after_fill']} "
+            f"evicted={pressure['redis_evicted_keys_delta']} "
+            f"observed={pressure['pressure_observed']}"
+        )
     return 0
 
 

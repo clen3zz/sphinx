@@ -128,12 +128,15 @@ Worker，也不连接 MySQL 或缓存；延迟桶用于观察分布，不等于�
 ./scripts/verify_product_cache.sh build
 ```
 
-该脚本保留原有 `verify_mysql_sphinx.sh` 入口，先运行真实 MySQL 集成测试，再顺序运行
-Sphinx/Redis × basic/protected 四种组合。Redis 测试会启动绑定回环地址、关闭 RDB/AOF 的自有
-临时实例，不会清空或写入用户配置的 Redis。
+该脚本会在隔离测试库中执行 `CREATE TABLE IF NOT EXISTS` 对应的 `schema.sql`，保留原有
+`verify_mysql_sphinx.sh` 入口，先运行真实 MySQL 集成测试，再顺序运行 Sphinx/Redis ×
+basic/protected 四种组合。Redis 测试会启动绑定回环地址、关闭 RDB/AOF 的自有临时实例，不会
+清空或写入用户配置的 Redis。
 
 准备名称包含 `test` 的隔离数据库后，可重复运行 HTTP 对照并将原始请求延迟、商品指标、进程
-CPU/RSS、缓存内部统计和可用的 Performance Schema SQL 计数保存在 JSON：
+CPU/RSS、缓存内部统计和可用的 Performance Schema SQL 计数保存在 JSON。SQL 计数读取服务端
+预处理语句的 `COUNT_EXECUTE`，按测试用户和数据库过滤；语句句柄变化或权限/观测条件不足时，
+对应 workload 的计数字段留空：
 
 ```bash
 python3 scripts/compare_product_cache.py \
@@ -142,8 +145,12 @@ python3 scripts/compare_product_cache.py \
   --output-dir build/product-cache-results
 ```
 
-脚本只比较 Sphinx 与 Redis，不提供纯 MySQL 后端。内存预算相同不代表两种缓存的可用容量相同；
-结果应连同 TTL、淘汰策略、数据分布、并发和重复样本一起解释。
+脚本只比较 Sphinx 与 Redis，不提供纯 MySQL 后端。每个组合还单独启动一个 8 MiB 缓存实例，写入
+64 个 256 KiB 的合成值，记录写拒绝、Redis `evicted_keys` 和探测后保留的 key 数。这个隔离
+场景用于观察 Redis `noeviction` / `allkeys-lru` 与 Sphinx segment 回收，不用于推算真实商品的
+缓存容量；Sphinx 当前没有精确的回收字节计数。可用 `--pressure-cache-memory-mb`、
+`--pressure-entries` 和 `--pressure-value-kib` 调整压力。内存预算相同不代表两种缓存的可用容量
+相同；结果应连同 TTL、淘汰策略、数据分布、并发和重复样本一起解释。
 
 ### 四组合严格验收记录（2026-10-01）
 
@@ -164,6 +171,7 @@ python3 scripts/compare_product_cache.py \
 - [架构与调用链](docs/ARCHITECTURE.md)
 - [Redis 开发计划（接口、数据结构、分阶段验收）](docs/REDIS_DEVELOPMENT_PLAN.md)
 - [Redis 学习路线](docs/REDIS_LEARNING_ROUTE.md)
+- [Redis 与 Sphinx 对照实验记录](docs/REDIS_CACHE_EXPERIMENTS.md)
 - [代码与命名规范](docs/CODING_STANDARDS.md)
 
 ## License

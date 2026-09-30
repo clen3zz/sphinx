@@ -102,7 +102,8 @@ PUT 的顺序是 MySQL 事务和版本检查成功提交，再删除对应缓存
 访问 `GET /metrics`。它只读取进程内原子计数和协调器/熔断器快照，不会创建 Worker、连接
 MySQL 或访问缓存。延迟使用固定桶，不能当作精确的 P50/P99；实验端应记录每个 HTTP 请求的
 耗时，再计算分位数。应用 `store_read_operations` 是调用次数，不保证每次都已执行 SQL；有权限
-时再用 Performance Schema 对照数据库语句数。
+时再用 `performance_schema.prepared_statements_instances.COUNT_EXECUTE` 对照实际预处理查询执行数，
+按测试用户和 schema 过滤，并排除 `SELECT ... FOR UPDATE`。
 
 练习：比较 `cache_lookup_keys`、`cache_misses` 和 `store_read_operations`。protected leader
 二次检查会增加一次缓存读取；重复输入只计一次唯一 ID；一次失败的批量缓存操作按一个操作
@@ -117,6 +118,9 @@ basic/protected 四种组合共用同一 HTTP 业务测试。再运行
 
 先比较一个 Sphinx 节点和一个 Redis 实例；多 Sphinx 节点作为单独实验。报告必须说明 Redis
 淘汰策略、Sphinx 内存段限制、机器与请求分布。只报告观察到的结果，不预设哪种后端更快。
+脚本还会启动独立的 8 MiB 缓存实例，以 64 个 256 KiB、60 秒 TTL 的合成值施加内存压力；查看
+JSON 中的 `write_rejected`、`redis_evicted_keys_delta`、`retained_entries_after_fill` 与两端缓存
+统计。该实验观察淘汰和 segment 循环回收，不代表真实商品可容纳数量；Sphinx 不提供精确回收字节指标。
 
 ## 本次代码没有覆盖的主题
 

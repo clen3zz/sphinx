@@ -1081,8 +1081,10 @@ Fake 的单线程已有字段不强制改成共享；并发测试把数据库状
 ### 14.3 严格集成验收
 
 现有 `scripts/verify_mysql_sphinx.sh` 保持原用法。新增 `verify_product_cache.sh [build-dir]`
-负责两种 backend、两种 policy 的完整矩阵，复用现有 MySQL 凭据约定和隔离数据库检查。
-测试 DB 名仍必须包含 `test`；缺凭据、缺 Redis 可执行文件、缺测试目标都失败退出。
+负责两种 backend、两种 policy 的完整矩阵，复用现有 MySQL 凭据约定和隔离数据库检查。脚本
+对名称包含 `test` 的目标库执行 `CREATE TABLE IF NOT EXISTS` 对应的 `schema.sql`，使空的隔离库
+也能直接验收；它不删除数据库或现有表数据。缺凭据、缺 Redis 可执行文件、缺测试目标都失败退出。
+严格运行仍要求用户提供独立临时测试库。
 
 Redis 集成测试启动自己拥有的实例：绑定 `127.0.0.1`，选独立端口和临时目录，
 `save ""`、`appendonly no`；使用短测试 TTL，结束时 finally 只清理自有进程和目录。
@@ -1180,7 +1182,7 @@ Worker 数，不能直接用多节点资源对单 Redis 实例宣布性能胜负
 | 热点过期 | basic 与 protected 的数据库读数、Follower 等待、ReadBusy 比例 |
 | 不存在热点 | 负缓存效果、NotFound 比例、负缓存到期后的再回源 |
 | 缓存断连/恢复 | 延迟恶化、Open/HalfOpen、受控数据库并发、恢复速度 |
-| 内存压力 | Redis noeviction / allkeys-lru 的写失败或淘汰，以及 Sphinx segment 回收 |
+| 内存压力 | 独立缓存实例默认限额 8 MiB，写入 64 个 256 KiB、60 秒 TTL 的合成值；观察 Redis noeviction 写拒绝、allkeys-lru 淘汰和 Sphinx segment 循环回收后的保留 key 数。合成值用于隔离观察缓存行为，不估算真实商品容量；Sphinx 当前不暴露精确回收字节数 |
 | 混合 GET/PUT | 更新冲突、删除失败、版本观测；保留旧读回填边界 |
 
 每组输出配置与版本、运行时间、总请求/成功/业务错误/系统错误、吞吐、P50/P95/P99、
@@ -1190,9 +1192,10 @@ Worker 数，不能直接用多节点资源对单 Redis 实例宣布性能胜负
 
 Redis INFO 中的内存、命中、过期、淘汰数据与商品层 metrics 一起观察；两者口径不同，
 商品层的二次检查、负缓存和批量重复项尤其需要按第 10 节解释。
-回源调用数包含连接阶段就失败的调用，不能无条件称为已执行 SELECT 的次数。需要 SQL
-执行量时，在隔离 MySQL 上读取 Performance Schema 的商品 SELECT 摘要前后增量，并记录
-权限和其他流量条件；不能观测时 SQL 次数字段留空并说明，不用应用调用数冒充数据库统计。
+回源调用数包含连接阶段就失败的调用，不能无条件称为已执行 SELECT 的次数。SQL 执行量从
+`performance_schema.prepared_statements_instances.COUNT_EXECUTE` 读取，按测试用户和 schema
+过滤，并排除更新事务的 `SELECT ... FOR UPDATE`；记录权限和其他流量条件。不能观测时 SQL
+次数字段留空并说明，不用应用调用数冒充数据库统计。
 Redis maxmemory 实验按 [官方淘汰说明](https://redis.io/docs/latest/develop/reference/eviction/)
 解释策略；缓存回填 OOM 时商品读取仍可成功，不能将它误算成商品不存在。
 
