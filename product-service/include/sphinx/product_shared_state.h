@@ -2,6 +2,7 @@
 #pragma once
 
 #include <sphinx/cache_circuit_breaker.h>
+#include <sphinx/product_metrics.h>
 #include <sphinx/product_read_coordinator.h>
 
 namespace sphinx {
@@ -13,6 +14,7 @@ struct ProductSharedState final {
   ProductSharedState(const ProductSharedState&) = delete;
   ProductSharedState& operator=(const ProductSharedState&) = delete;
 
+  ProductMetrics metrics;
   ProductReadCoordinator reads;
   CacheCircuitBreaker breaker;
 };

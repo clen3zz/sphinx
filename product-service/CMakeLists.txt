@@ -13,6 +13,7 @@ add_library(sphinx_product_core STATIC
         src/cache_circuit_breaker.cpp
         src/product_cache.cpp
         src/product_cache_options.cpp
+        src/product_metrics.cpp
         src/redis_product_cache.cpp
         src/product_rules.cpp
         src/product_codec.cpp
@@ -28,6 +29,7 @@ if (GTEST_FOUND)
     add_executable(sphinx_product_tests
             test/product_cache_test.cpp
             test/product_cache_options_test.cpp
+            test/product_metrics_test.cpp
             test/cache_circuit_breaker_test.cpp
             test/redis_product_cache_test.cpp
             test/sphinx_product_cache_test.cpp
