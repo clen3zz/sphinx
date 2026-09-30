@@ -88,6 +88,8 @@ class ProductHttpIntegrationTest(unittest.TestCase):
                 "SPHINX_MYSQL_DATABASE": cls.mysql_database,
                 "SPHINX_HTTP_BIND": "127.0.0.1",
                 "SPHINX_HTTP_WORKERS": "2",
+                "SPHINX_CACHE_BACKEND": "sphinx",
+                "SPHINX_CACHE_TIMEOUT_MS": "200",
                 "SPHINX_CACHE_TTL_SECONDS": "30",
             }
         )

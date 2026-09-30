@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cerrno>
 #include <charconv>
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
@@ -63,7 +64,26 @@ sphinx::ProductHttpConfig load_config() {
   config.mysql.host = optional_environment_value("SPHINX_MYSQL_HOST", "127.0.0.1");
   config.mysql.port =
       static_cast<std::uint16_t>(unsigned_environment_value("SPHINX_MYSQL_PORT", 3306, 1, 65535));
-  config.cache_nodes = optional_environment_value("SPHINX_CACHE_NODES", "127.0.0.1:11211");
+  config.cache.backend =
+      sphinx::parse_cache_backend(optional_environment_value("SPHINX_CACHE_BACKEND", "sphinx"));
+  const auto cache_timeout_ms =
+      unsigned_environment_value("SPHINX_CACHE_TIMEOUT_MS", 200, 1, 10000);
+  const auto cache_timeout =
+      std::chrono::milliseconds{static_cast<std::chrono::milliseconds::rep>(cache_timeout_ms)};
+  if (config.cache.backend == sphinx::CacheBackend::Sphinx) {
+    config.cache.sphinx.nodes = optional_environment_value("SPHINX_CACHE_NODES", "127.0.0.1:11211");
+    config.cache.sphinx.timeout = cache_timeout;
+  } else {
+    config.cache.redis.host = optional_environment_value("SPHINX_REDIS_HOST", "127.0.0.1");
+    config.cache.redis.port =
+        static_cast<std::uint16_t>(unsigned_environment_value("SPHINX_REDIS_PORT", 6379, 1, 65535));
+    config.cache.redis.database =
+        static_cast<std::uint32_t>(unsigned_environment_value("SPHINX_REDIS_DATABASE", 0, 0, 15));
+    config.cache.redis.username = optional_environment_value("SPHINX_REDIS_USERNAME", "");
+    config.cache.redis.password = optional_environment_value("SPHINX_REDIS_PASSWORD", "");
+    config.cache.redis.connect_timeout = cache_timeout;
+    config.cache.redis.io_timeout = cache_timeout;
+  }
   config.bind_address = optional_environment_value("SPHINX_HTTP_BIND", "127.0.0.1");
   config.port =
       static_cast<std::uint16_t>(unsigned_environment_value("SPHINX_HTTP_PORT", 8080, 1, 65535));
@@ -97,11 +117,11 @@ bool wake_control_thread(std::thread& control_thread) noexcept {
 }
 
 bool serve_until_shutdown(sphinx::ProductHttpServer& server, const sigset_t& shutdown_signals) {
-  std::atomic<bool> control_failed{false};
+  std::atomic<bool> runtime_failed{false};
   std::thread control_thread{[&] {
     int received_signal = 0;
     if (sigwait(&shutdown_signals, &received_signal) != 0) {
-      control_failed.store(true, std::memory_order_release);
+      runtime_failed.store(true, std::memory_order_release);
       server.stop();
     } else if (received_signal != SIGUSR1) {
       server.stop();
@@ -112,12 +132,12 @@ bool serve_until_shutdown(sphinx::ProductHttpServer& server, const sigset_t& shu
   try {
     serve_result = server.serve();
   } catch (...) {
-    // 先唤醒并回收控制线程，再向 main() 报告运行失败。
+    runtime_failed.store(true, std::memory_order_release);
   }
 
   const bool control_woken = wake_control_thread(control_thread);
   control_thread.join();
-  return serve_result && !control_failed.load(std::memory_order_acquire) && control_woken;
+  return serve_result && !runtime_failed.load(std::memory_order_acquire) && control_woken;
 }
 
 }  // namespace

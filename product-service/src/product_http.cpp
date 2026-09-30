@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <sphinx/product_http.h>
-#include <sphinx/sphinx_product_cache.h>
 
 #include <mutex>
 #include <stdexcept>
@@ -13,28 +12,27 @@ namespace {
 
 ProductHttpConfig checked_config(ProductHttpConfig config) {
   if (config.bind_address.empty() || config.port == 0 || config.worker_count == 0 ||
-      config.worker_count > 64 || config.cache_nodes.empty() || config.cache_timeout.count() <= 0 ||
-      !valid_product_cache_ttl(config.cache_policy.ttl_seconds) || config.mysql.host.empty() ||
-      config.mysql.port == 0 || config.mysql.user.empty() || config.mysql.database.empty() ||
-      config.mysql.connect_timeout_seconds == 0 || config.mysql.read_timeout_seconds == 0 ||
-      config.mysql.write_timeout_seconds == 0) {
+      config.worker_count > 64 || !valid_product_cache_ttl(config.cache_policy.ttl_seconds) ||
+      config.mysql.host.empty() || config.mysql.port == 0 || config.mysql.user.empty() ||
+      config.mysql.database.empty() || config.mysql.connect_timeout_seconds == 0 ||
+      config.mysql.read_timeout_seconds == 0 || config.mysql.write_timeout_seconds == 0) {
     throw std::invalid_argument{"invalid product HTTP configuration"};
   }
-  (void)parse_nodes(config.cache_nodes);
+  validate_product_cache_options(config.cache);
   return config;
 }
 
 struct WorkerContext final {
   explicit WorkerContext(const ProductHttpConfig& config)
       : store{config.mysql},
-        cache{config.cache_nodes, config.cache_timeout},
-        service{store, cache, config.cache_policy} {}
+        cache{make_product_cache(config.cache)},
+        service{store, *cache, config.cache_policy} {}
 
   // 先初始化本线程的 MySQL 环境，再创建 store；C++ 会按成员声明的逆序析构。
   // 因此 guard 最后销毁，不会让仍在使用 MySQL 的对象失去线程环境。
   [[maybe_unused]] MySqlThreadGuard thread_guard;
   MySqlProductStore store;
-  SphinxProductCache cache;
+  std::unique_ptr<ProductCache> cache;
   ProductService service;
 };
 

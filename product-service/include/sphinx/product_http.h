@@ -2,6 +2,7 @@
 #pragma once
 
 #include <sphinx/mysql_product_store.h>
+#include <sphinx/product_cache_options.h>
 #include <sphinx/product_service.h>
 
 #include <chrono>
@@ -15,8 +16,7 @@ struct ProductHttpConfig {
   std::string bind_address = "127.0.0.1";
   std::uint16_t port = 8080;
   std::uint32_t worker_count = 4;
-  std::string cache_nodes = "127.0.0.1:11211";
-  std::chrono::milliseconds cache_timeout{200};
+  ProductCacheOptions cache;
   ProductCachePolicy cache_policy{};
   MySqlOptions mysql{};
 };
@@ -40,4 +40,4 @@ class ProductHttpServer final {
   std::unique_ptr<Impl> _impl;
 };
 
-}  // 命名空间 sphinx
+}  // namespace sphinx

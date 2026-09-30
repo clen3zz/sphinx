@@ -14,7 +14,7 @@ HTTP 客户端 → sphinx-product-service ──→ MySQL（权威数据）
 
 ## 构建
 
-项目运行于 Linux。`scripts/install_dependencies.sh` 支持 Ubuntu、Debian 和 Fedora；默认构建包含 MySQL 商品服务，构建时需要 `libmysqlclient` 开发包。CMake 会获取 `cpp-httplib` 和 `nlohmann/json` 的头文件。
+项目运行于 Linux。`scripts/install_dependencies.sh` 支持 Ubuntu、Debian 和 Fedora；默认构建包含 MySQL 商品服务，构建时需要 `libmysqlclient` 和 hiredis 开发包。CMake 会获取 `cpp-httplib` 和 `nlohmann/json` 的头文件。
 
 ```bash
 ./scripts/install_dependencies.sh
@@ -82,6 +82,22 @@ curl -i http://127.0.0.1:8080/products/42
 ```
 
 节点列表是静态配置；本项目没有副本、自动故障转移或数据迁移。MySQL 是权威数据，缓存节点不可用时商品查询会尝试回源。
+
+### 选择 Redis
+
+Sphinx 仍是默认后端。把下面变量加入已配置 MySQL 的服务终端，即可切换同一商品服务到 Redis：
+
+```bash
+export SPHINX_CACHE_BACKEND=redis
+export SPHINX_REDIS_HOST=127.0.0.1
+export SPHINX_REDIS_PORT=6379
+export SPHINX_REDIS_DATABASE=0
+./build/product-service/sphinx-product-service
+```
+
+先用 `redis-server --bind 127.0.0.1 --port 6379` 启动本地 Redis。需要认证时设置
+`SPHINX_REDIS_USERNAME`、`SPHINX_REDIS_PASSWORD`；Redis 连接在对应 HTTP Worker 第一次
+收到请求时建立，MySQL 仍是商品权威数据。
 
 ## 严格集成验收
 
