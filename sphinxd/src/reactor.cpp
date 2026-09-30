@@ -351,6 +351,8 @@ struct ReactorGroup::Channel {
         overflow.emplace_back(message);
         return true;
       } catch (const std::bad_alloc&) {
+        release_bytes(bytes, group_bytes);
+        return false;
       }
     }
     release_bytes(bytes, group_bytes);
