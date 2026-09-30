@@ -315,7 +315,7 @@ class UpdateFailureConstraint final {
   bool _installed = false;
 };
 
-}  // 匿名命名空间
+}  // namespace
 
 using CommitReturn = decltype(mysql_commit(static_cast<MYSQL*>(nullptr)));
 // GNU ld 的 --wrap 选项要求这些 C 符号名称保持原样。
@@ -349,7 +349,13 @@ TEST(MySqlRuntimeTest, StoreRequiresWorkerGuardAndValidOptions) {
   const sphinx::MySqlOptions options{"127.0.0.1", 3306, "test", "", "sphinx_test"};
   EXPECT_THROW(sphinx::MySqlProductStore store{options}, sphinx::StoreError);
   sphinx::MySqlThreadGuard worker;
-  EXPECT_NO_THROW(sphinx::MySqlProductStore store{options});
+  {
+    sphinx::MySqlProductStore store{options};
+    EXPECT_TRUE(store.find_many({}).empty());
+    EXPECT_THROW(store.find_many({1, 0}), std::invalid_argument);
+    const std::vector<std::uint64_t> oversized(sphinx::max_product_batch_size + 1, 1);
+    EXPECT_THROW(store.find_many(oversized), std::invalid_argument);
+  }
   auto invalid_options = options;
   invalid_options.host.clear();
   EXPECT_THROW(sphinx::MySqlProductStore store{invalid_options}, std::invalid_argument);
@@ -380,6 +386,16 @@ TEST(MySqlProductStoreIntegrationTest, ReadsExistingMissingAndInvalidProducts) {
 
   {
     sphinx::MySqlProductStore store{*options};
+    const auto batch = store.find_many({max_id, max_id - 1, max_id});
+    EXPECT_EQ(batch.size(), 3U);
+    if (batch.size() == 3) {
+      EXPECT_TRUE(batch[0]);
+      EXPECT_EQ(batch[0].value_or(sphinx::Product{}).id, expected.id);
+      EXPECT_FALSE(batch[1]);
+      EXPECT_TRUE(batch[2]);
+      EXPECT_EQ(batch[2].value_or(sphinx::Product{}).id, expected.id);
+    }
+
     const auto actual = store.find(max_id);
     if (!actual) {
       ADD_FAILURE() << "existing product was not found";
@@ -401,7 +417,16 @@ TEST(MySqlProductStoreIntegrationTest, ReadsExistingMissingAndInvalidProducts) {
         EXPECT_EQ(error.code(), sphinx::StoreErrorCode::InvalidData);
       }
     }
+    try {
+      (void)store.find_many({max_id, first_invalid_id});
+      FAIL() << "invalid row in batch was accepted";
+    } catch (const sphinx::StoreError& error) {
+      EXPECT_EQ(error.code(), sphinx::StoreErrorCode::InvalidData);
+    }
+    EXPECT_EQ(store.find_many({max_id}).size(), 1U);
+    EXPECT_EQ(store.find_many({max_id, max_id - 1}).size(), 2U);
     EXPECT_THROW(store.find(0), std::invalid_argument);
+    EXPECT_THROW(store.find_many({max_id, 0}), std::invalid_argument);
   }
 
   rows.erase_all();

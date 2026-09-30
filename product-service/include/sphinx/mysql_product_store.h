@@ -3,8 +3,11 @@
 
 #include <sphinx/product_store.h>
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace sphinx {
 
@@ -48,6 +51,7 @@ class MySqlProductStore final : public ProductStore {
   MySqlProductStore& operator=(const MySqlProductStore&) = delete;
 
   std::optional<Product> find(std::uint64_t id) override;
+  std::vector<std::optional<Product>> find_many(const std::vector<std::uint64_t>& ids) override;
   StoreUpdateResult update(const UpdateProductRequest& request) override;
 
  private:
@@ -55,4 +59,4 @@ class MySqlProductStore final : public ProductStore {
   std::unique_ptr<Impl> _impl;
 };
 
-}  // 命名空间 sphinx
+}  // namespace sphinx
