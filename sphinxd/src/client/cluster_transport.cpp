@@ -48,7 +48,6 @@ struct TcpTransport::Impl {
 
   // 阻塞且带超时地发送全部消息字节
   void write_all(std::string_view message) {
-    check_deadline();
     ensure_connected();
     size_t offset = 0;
 

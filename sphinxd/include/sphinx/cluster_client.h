@@ -71,7 +71,7 @@ class ClusterClient final {
   std::vector<NodeGetBatch> group_get_keys(const std::vector<std::string>& keys) const;
 
   template <typename Operation>
-  auto execute(std::string_view key, Operation&& operation)
+  auto execute(const Node& node, Operation&& operation)
       -> decltype(operation(std::declval<MemcachedConnection&>()));
 
   ConsistentHashRing _ring;

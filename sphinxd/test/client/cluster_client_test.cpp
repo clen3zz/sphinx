@@ -526,6 +526,18 @@ TEST(ClusterClientTest, ReconnectsOnTheNextOperationAfterFailure) {
   EXPECT_FALSE(client.get("key").has_value());
 }
 
+TEST(ClusterClientTest, MultiGetReconnectsOnTheNextOperationAfterFailure) {
+  TwoConnectionServer server;
+  server.start();
+
+  sphinx::ClusterClient client{node_spec(server.port()), std::chrono::milliseconds{200}};
+  EXPECT_THROW((void)client.get_many({"first", "second"}), sphinx::ClientError);
+  const auto values = client.get_many({"first", "second"});
+  ASSERT_EQ(values.size(), 2U);
+  EXPECT_FALSE(values[0]);
+  EXPECT_FALSE(values[1]);
+}
+
 TEST(ClusterClientTest, DefaultTimeoutIsTwoSeconds) {
   EXPECT_EQ(sphinx::ClusterClient::kDefaultTimeout, std::chrono::milliseconds{2000});
 }

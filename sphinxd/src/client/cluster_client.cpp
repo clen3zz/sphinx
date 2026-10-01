@@ -227,12 +227,10 @@ ClusterClient::MemcachedConnection& ClusterClient::connection_for(const Node& no
   return *connection;
 }
 
-// 统一模板执行入口：完成 key 路由、连接复用以及异常时连接重置
+// 统一模板执行入口：复用目标节点的连接，并在异常时丢弃连接。
 template <typename Operation>
-auto ClusterClient::execute(std::string_view key, Operation&& operation)
+auto ClusterClient::execute(const Node& node, Operation&& operation)
     -> decltype(operation(std::declval<MemcachedConnection&>())) {
-  const auto node = route(key);
-
   try {
     return std::forward<Operation>(operation)(connection_for(node));
   } catch (...) {
@@ -250,14 +248,14 @@ bool ClusterClient::set(std::string_view key, std::string_view value, std::uint3
   if (ttl_seconds > max_relative_ttl) {
     throw std::invalid_argument{"relative TTL must not exceed 30 days"};
   }
-  return execute(key, [&](MemcachedConnection& connection) {
+  return execute(route(key), [&](MemcachedConnection& connection) {
     return connection.set(key, value, ttl_seconds);
   });
 }
 
 // 集群客户端对外 get API
 std::optional<std::string> ClusterClient::get(std::string_view key) {
-  return execute(key, [&](MemcachedConnection& connection) { return connection.get(key); });
+  return execute(route(key), [&](MemcachedConnection& connection) { return connection.get(key); });
 }
 
 std::vector<ClusterClient::NodeGetBatch> ClusterClient::group_get_keys(
@@ -293,16 +291,13 @@ std::vector<std::optional<std::string>> ClusterClient::get_many(
     const std::vector<std::string>& keys) {
   std::vector<std::optional<std::string>> values(keys.size());
   for (const auto& batch : group_get_keys(keys)) {
-    try {
-      const auto node_values = connection_for(batch.node).get_many(batch.keys);
-      for (std::size_t key_index = 0; key_index < batch.input_positions.size(); ++key_index) {
-        for (const auto input_position : batch.input_positions[key_index]) {
-          values[input_position] = node_values[key_index];
-        }
+    const auto node_values = execute(batch.node, [&](MemcachedConnection& connection) {
+      return connection.get_many(batch.keys);
+    });
+    for (std::size_t key_index = 0; key_index < batch.input_positions.size(); ++key_index) {
+      for (const auto input_position : batch.input_positions[key_index]) {
+        values[input_position] = node_values[key_index];
       }
-    } catch (...) {
-      _connections.erase(batch.node.id());
-      throw;
     }
   }
   return values;
@@ -315,7 +310,8 @@ bool ClusterClient::remove(std::string_view key) {
 
 // 集群客户端对外 remove_status API（返回具体 DeleteStatus 枚举）
 DeleteStatus ClusterClient::remove_status(std::string_view key) {
-  return execute(key, [&](MemcachedConnection& connection) { return connection.remove(key); });
+  return execute(route(key),
+                 [&](MemcachedConnection& connection) { return connection.remove(key); });
 }
 
 }  // namespace sphinx
