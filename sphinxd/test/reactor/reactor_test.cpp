@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <stdexcept>
 #include <string>
 namespace {
 
@@ -32,6 +33,26 @@ class TestReactor final : public sphinx::EpollReactor {
 };
 
 }  // namespace
+
+TEST(ReactorTest, RejectsInvalidInputsBeforeChannelAccess) {
+  EXPECT_THROW(sphinx::ReactorGroup{0}, std::invalid_argument);
+  EXPECT_THROW(sphinx::ReactorGroup{sphinx::max_nr_threads + 1}, std::invalid_argument);
+  auto group = std::make_shared<sphinx::ReactorGroup>(2);
+  const auto ignore_message = [](const sphinx::MessagePtr&) {};
+  EXPECT_THROW((TestReactor{0, nullptr, ignore_message}), std::invalid_argument);
+  EXPECT_THROW((TestReactor{2, group, ignore_message}), std::invalid_argument);
+  TestReactor source{0, group, ignore_message};
+  auto message = std::make_shared<IntMessage>(1);
+  for (const size_t target : {size_t{0}, size_t{2}}) {
+    EXPECT_THROW(source.send_msg(target, message), std::invalid_argument);
+    EXPECT_THROW(source.send_msg_deferred(target, message), std::invalid_argument);
+    EXPECT_THROW(source.notify_overload(target, 42), std::invalid_argument);
+  }
+  EXPECT_THROW(source.send_msg(1, nullptr), std::invalid_argument);
+  EXPECT_THROW(source.send_msg_deferred(1, nullptr), std::invalid_argument);
+  EXPECT_THROW(source.notify_overload(1, 0), std::invalid_argument);
+  EXPECT_TRUE(source.send_msg(1, message));
+}
 
 TEST(ReactorTest, messageCanBeQueuedBeforeRemoteReactorStarts) {
   size_t received = 0;

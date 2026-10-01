@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include <array>
+#include <cassert>
 #include <deque>
 #include <mutex>
 #include <new>
@@ -428,24 +429,16 @@ size_t ReactorGroup::nr_threads() const noexcept { return _nr_threads; }
 
 // 获取从源线程到目标线程的单向通信通道
 ReactorGroup::Channel& ReactorGroup::channel(size_t destination, size_t source) const {
-  if (destination >= _nr_threads || source >= _nr_threads) {
-    throw std::invalid_argument("invalid reactor message target");
-  }
-
+  // 私有通道只由已初始化的 Reactor 使用；线程编号在构造和发送入口校验。
+  assert(destination < _nr_threads && source < _nr_threads && destination != source);
   auto& slot = _channels[destination * _nr_threads + source];
-  if (!slot) {
-    throw std::logic_error("reactor channel is not initialized");
-  }
-
+  assert(slot);
   return *slot;
 }
 
 // 为指定线程初始化其与其他所有对等线程间的双向通信通道
 void ReactorGroup::initialize_thread(size_t thread_id) {
-  if (thread_id >= _nr_threads) {
-    throw std::invalid_argument("invalid reactor thread id");
-  }
-
+  assert(thread_id < _nr_threads);
   // 1. 加互斥锁保护通信通道矩阵的线程安全初始化
   std::scoped_lock const lock{_channels_mutex};
   for (size_t peer = 0; peer < _nr_threads; peer++) {
@@ -469,25 +462,19 @@ void ReactorGroup::initialize_thread(size_t thread_id) {
 
 // 获取指定线程关联的 eventfd 描述符
 int ReactorGroup::eventfd(size_t thread_id) const {
-  if (thread_id >= _nr_threads || _eventfds[thread_id] < 0) {
-    throw std::invalid_argument("invalid reactor wakeup target");
-  }
+  assert(thread_id < _nr_threads);
   return _eventfds[thread_id];
 }
 
 // 查询指定线程当前是否处于睡眠等待状态
 bool ReactorGroup::is_thread_sleeping(size_t thread_id) const {
-  if (thread_id >= _nr_threads) {
-    throw std::invalid_argument("invalid reactor wakeup target");
-  }
+  assert(thread_id < _nr_threads);
   return _thread_is_sleeping[thread_id].load(std::memory_order_seq_cst);
 }
 
 // 设置指定线程的睡眠状态标记
 void ReactorGroup::set_thread_sleeping(size_t thread_id, bool sleeping) {
-  if (thread_id >= _nr_threads) {
-    throw std::invalid_argument("invalid reactor wakeup target");
-  }
+  assert(thread_id < _nr_threads);
   _thread_is_sleeping[thread_id].store(sleeping, std::memory_order_seq_cst);
 }
 
@@ -547,10 +534,7 @@ void Reactor::notify_overload(size_t remote_id, uint64_t connection_id) {
 // 跨线程消息发送具体实现
 bool Reactor::send_msg_impl(size_t remote_id, const MessagePtr& message, bool defer_if_full) {
   // 1. 基础入参合法性校验（禁止向自身发消息，校验目标线程有效性及消息指针非空）
-  if (remote_id == _thread_id) {
-    throw std::invalid_argument("Attempting to send message to self");
-  }
-  if (remote_id >= _nr_threads || !message) {
+  if (remote_id == _thread_id || remote_id >= _nr_threads || !message) {
     throw std::invalid_argument("invalid reactor message target");
   }
 
