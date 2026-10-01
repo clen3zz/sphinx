@@ -36,69 +36,6 @@ void set_internal_error(httplib::Response& response) {
   set_error_response(response, 500, "internal_error");
 }
 
-void set_product_status_error(httplib::Response& response, ProductStatus status) {
-  switch (status) {
-    case ProductStatus::InvalidArgument:
-      set_error_response(response, 400, "invalid_argument");
-      return;
-    case ProductStatus::NotFound:
-      set_error_response(response, 404, "not_found");
-      return;
-    case ProductStatus::Conflict:
-      set_error_response(response, 409, "conflict");
-      return;
-    case ProductStatus::StoreUnavailable:
-      set_error_response(response, 503, "store_unavailable");
-      return;
-    case ProductStatus::ReadBusy:
-      set_error_response(response, 503, "read_busy");
-      response.set_header("Retry-After", "1");
-      return;
-    case ProductStatus::CommitUnknown:
-      set_error_response(response, 503, "commit_unknown");
-      return;
-    case ProductStatus::Ok:
-    case ProductStatus::InternalError:
-      set_internal_error(response);
-      return;
-  }
-  set_internal_error(response);
-}
-
-void set_exception_response(httplib::Response& response, const std::exception_ptr& exception) {
-  try {
-    if (exception) {
-      std::rethrow_exception(exception);
-    }
-  } catch (const StoreError& error) {
-    switch (error.code()) {
-      case StoreErrorCode::Unavailable:
-        set_error_response(response, 503, "store_unavailable");
-        return;
-      case StoreErrorCode::CommitUnknown:
-        set_error_response(response, 503, "commit_unknown");
-        return;
-      case StoreErrorCode::InvalidData:
-      case StoreErrorCode::Unexpected:
-        set_internal_error(response);
-        return;
-    }
-  } catch (...) {
-    set_internal_error(response);
-    return;
-  }
-  set_internal_error(response);
-}
-
-void set_product_response(httplib::Response& response, const Product& product) {
-  Json body;
-  body["id"] = product.id;
-  body["name"] = product.name;
-  body["price_cents"] = product.price_cents;
-  body["version"] = product.version;
-  set_json_response(response, 200, body.dump());
-}
-
 Json product_json(const Product& product) {
   return Json{{"id", product.id},
               {"name", product.name},
@@ -122,32 +59,41 @@ const char* cache_source_name(CacheSource source) noexcept {
   return "NOT_CHECKED";
 }
 
-const char* product_status_error_name(ProductStatus status) noexcept {
+struct ProductHttpError {
+  int status;
+  const char* name;
+};
+
+ProductHttpError product_http_error(ProductStatus status) noexcept {
   switch (status) {
     case ProductStatus::InvalidArgument:
-      return "invalid_argument";
+      return {400, "invalid_argument"};
     case ProductStatus::NotFound:
-      return "not_found";
+      return {404, "not_found"};
     case ProductStatus::Conflict:
-      return "conflict";
+      return {409, "conflict"};
     case ProductStatus::StoreUnavailable:
-      return "store_unavailable";
+      return {503, "store_unavailable"};
     case ProductStatus::ReadBusy:
-      return "read_busy";
+      return {503, "read_busy"};
     case ProductStatus::CommitUnknown:
-      return "commit_unknown";
+      return {503, "commit_unknown"};
     case ProductStatus::Ok:
     case ProductStatus::InternalError:
-      return "internal_error";
+      return {500, "internal_error"};
   }
-  return "internal_error";
+  return {500, "internal_error"};
 }
 
-std::optional<std::uint64_t> parse_product_id(const httplib::Request& request) {
-  if (request.matches.size() < 2) {
-    return std::nullopt;
+void set_product_status_error(httplib::Response& response, ProductStatus status) {
+  const auto error = product_http_error(status);
+  set_error_response(response, error.status, error.name);
+  if (status == ProductStatus::ReadBusy) {
+    response.set_header("Retry-After", "1");
   }
-  const std::string text = request.matches[1].str();
+}
+
+std::optional<std::uint64_t> parse_positive_id(std::string_view text) {
   if (text.empty()) {
     return std::nullopt;
   }
@@ -157,6 +103,10 @@ std::optional<std::uint64_t> parse_product_id(const httplib::Request& request) {
     return std::nullopt;
   }
   return id;
+}
+
+std::optional<std::uint64_t> parse_product_id(const httplib::Request& request) {
+  return request.matches.size() < 2 ? std::nullopt : parse_positive_id(request.matches[1].str());
 }
 
 /// 只接受无查询参数或原样的 "fresh=1"；其他查询形式返回 nullopt。
@@ -186,8 +136,6 @@ std::optional<ProductBatchQuery> parse_product_batch_query(const httplib::Reques
   }
 
   ProductBatchQuery query;
-  bool ids_seen = false;
-  bool fresh_seen = false;
   const std::string_view raw_query = target.substr(query_start + 1);
   std::size_t token_start = 0;
   while (token_start <= raw_query.size()) {
@@ -205,10 +153,9 @@ std::optional<ProductBatchQuery> parse_product_batch_query(const httplib::Reques
     const auto value = parameter.substr(equals + 1);
 
     if (name == "ids") {
-      if (ids_seen || value.empty()) {
+      if (!query.ids.empty() || value.empty()) {
         return std::nullopt;
       }
-      ids_seen = true;
       std::size_t id_start = 0;
       while (id_start <= value.size()) {
         const auto comma = value.find(',', id_start);
@@ -217,22 +164,20 @@ std::optional<ProductBatchQuery> parse_product_batch_query(const httplib::Reques
         if (text.empty() || query.ids.size() >= max_product_batch_size) {
           return std::nullopt;
         }
-        std::uint64_t id = 0;
-        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), id, 10);
-        if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || id == 0) {
+        const auto id = parse_positive_id(text);
+        if (!id) {
           return std::nullopt;
         }
-        query.ids.push_back(id);
+        query.ids.push_back(*id);
         if (comma == std::string_view::npos) {
           break;
         }
         id_start = comma + 1;
       }
     } else if (name == "fresh") {
-      if (fresh_seen || value != "1") {
+      if (query.bypass_cache || value != "1") {
         return std::nullopt;
       }
-      fresh_seen = true;
       query.bypass_cache = true;
     } else {
       return std::nullopt;
@@ -243,7 +188,7 @@ std::optional<ProductBatchQuery> parse_product_batch_query(const httplib::Reques
     }
     token_start = separator + 1;
   }
-  if (!ids_seen || query.ids.empty()) {
+  if (query.ids.empty()) {
     return std::nullopt;
   }
   return query;
@@ -309,7 +254,7 @@ void handle_get_result(httplib::Response& response, const GetProductResult& resu
     set_internal_error(response);
     return;
   }
-  set_product_response(response, *result.product);
+  set_json_response(response, 200, product_json(*result.product).dump());
 }
 
 void handle_get_products_result(httplib::Response& response, const GetProductsResult& result) {
@@ -336,7 +281,7 @@ void handle_get_products_result(httplib::Response& response, const GetProductsRe
         valid_product(*item.result.product) && item.result.product->id == item.id) {
       value["product"] = product_json(*item.result.product);
     } else {
-      value["error"] = product_status_error_name(item.result.status);
+      value["error"] = product_http_error(item.result.status).name;
     }
     body["items"].push_back(std::move(value));
   }
@@ -361,7 +306,7 @@ void handle_update_result(httplib::Response& response, const UpdateProductResult
     set_internal_error(response);
     return;
   }
-  set_product_response(response, *result.product);
+  set_json_response(response, 200, product_json(*result.product).dump());
 }
 
 bool is_product_path(std::string_view path) noexcept {
@@ -400,40 +345,23 @@ Json make_metrics_response(const ProductSharedState& shared, CacheBackend backen
       "read_rejected",          "read_wait_timeouts",    "read_admission_rejected",
       "cache_circuit_bypasses",
   };
-  constexpr std::array<std::string_view, product_latency_count> latency_names{
-      "cache_read", "store_read",  "cache_fill",    "cache_erase",
-      "read_wait",  "get_request", "batch_request", "update_request",
-  };
-
   const auto metrics = shared.metrics.snapshot();
   Json counters = Json::object();
   for (std::size_t index = 0; index < metric_names.size(); ++index) {
     counters[std::string{metric_names[index]}] = metrics.counters[index];
   }
 
-  Json latencies = Json::object();
-  for (std::size_t index = 0; index < latency_names.size(); ++index) {
-    const auto& latency = metrics.latencies[index];
-    latencies[std::string{latency_names[index]}] =
-        Json{{"buckets", latency.buckets},
-             {"count", latency.count},
-             {"total_microseconds", latency.total_microseconds}};
-  }
-
   const auto reads_active_keys = shared.reads.active_key_count();
   const auto reads_active_loads = shared.reads.active_load_count();
   const auto breaker = shared.breaker.snapshot();
-  return Json{
-      {"backend", cache_backend_name(backend)},
-      {"policy", cache_policy_name(policy_mode)},
-      {"counters", std::move(counters)},
-      {"latency_bucket_upper_bounds_microseconds", latency_bucket_upper_bounds_microseconds},
-      {"latencies", std::move(latencies)},
-      {"read_coordinator",
-       Json{{"active_keys", reads_active_keys}, {"active_loads", reads_active_loads}}},
-      {"cache_breaker", Json{{"state", cache_breaker_state_name(breaker.state)},
-                             {"consecutive_failures", breaker.consecutive_failures},
-                             {"retry_after_milliseconds", breaker.retry_after.count()}}}};
+  return Json{{"backend", cache_backend_name(backend)},
+              {"policy", cache_policy_name(policy_mode)},
+              {"counters", std::move(counters)},
+              {"read_coordinator",
+               Json{{"active_keys", reads_active_keys}, {"active_loads", reads_active_loads}}},
+              {"cache_breaker", Json{{"state", cache_breaker_state_name(breaker.state)},
+                                     {"consecutive_failures", breaker.consecutive_failures},
+                                     {"retry_after_milliseconds", breaker.retry_after.count()}}}};
 }
 
 }  // namespace
@@ -474,7 +402,7 @@ void install_product_routes(httplib::Server& server,
                      response, current_service().get_many(query->ids, query->bypass_cache));
                } catch (...) {
                  response.set_header("X-Cache", "NOT_CHECKED");
-                 set_exception_response(response, std::current_exception());
+                 set_internal_error(response);
                }
              });
 
@@ -497,7 +425,7 @@ void install_product_routes(httplib::Server& server,
                  handle_get_result(response, current_service().get(*id, *fresh));
                } catch (...) {
                  response.set_header("X-Cache", "NOT_CHECKED");
-                 set_exception_response(response, std::current_exception());
+                 set_internal_error(response);
                }
              });
 
@@ -525,7 +453,7 @@ void install_product_routes(httplib::Server& server,
                  }
                  handle_update_result(response, current_service().update(*update), *id);
                } catch (...) {
-                 set_exception_response(response, std::current_exception());
+                 set_internal_error(response);
                }
              });
 }

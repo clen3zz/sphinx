@@ -3,9 +3,9 @@
 #include <sphinx/product_service.h>
 
 #include <cstdint>
+#include <numeric>
 #include <stdexcept>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 namespace sphinx {
@@ -27,6 +27,33 @@ ProductStatus status_from_store_error(StoreErrorCode code) noexcept {
   return ProductStatus::InternalError;
 }
 
+// 各种缓存操作共用熔断许可和失败计数；业务层仍决定失败后的回源或回填策略。
+template <typename Operation>
+bool run_cache_operation(ProductSharedState& shared, CachePolicyMode mode,
+                         ProductMetric failure_metric, Operation operation) {
+  std::optional<CacheOperationPermit> permit;
+  if (mode == CachePolicyMode::Protected) {
+    permit = shared.breaker.try_acquire();
+    if (!permit) {
+      shared.metrics.increment(ProductMetric::CacheCircuitBypasses);
+      return false;
+    }
+  }
+  try {
+    operation();
+    if (permit) {
+      permit->succeed();
+    }
+    return true;
+  } catch (const CacheError&) {
+    if (permit) {
+      permit->fail();
+    }
+    shared.metrics.increment(failure_metric);
+    return false;
+  }
+}
+
 }  // namespace
 
 void validate_product_cache_policy(const ProductCachePolicy& policy) {
@@ -45,6 +72,7 @@ struct ProductService::ReadWorkItem {
   std::string key;
   CacheSource source = CacheSource::NotChecked;
   std::optional<GetProductResult> result;
+  ProductReadTicket ticket;
 };
 
 struct ProductService::ReadBatch {
@@ -62,11 +90,10 @@ ProductService::ProductService(ProductStore& store, ProductCache& cache, Product
 
 GetProductResult ProductService::get(std::uint64_t id, bool bypass_cache) {
   _shared.metrics.increment(ProductMetric::GetRequests);
-  ScopedProductTimer request_timer{_shared.metrics, ProductLatency::GetRequest};
+
   if (id == 0) {
     return {ProductStatus::InvalidArgument, std::nullopt, CacheSource::NotChecked};
   }
-  _shared.metrics.increment(ProductMetric::RequestUniqueIds);
   auto results = read_products({id}, bypass_cache);
   return std::move(results.front());
 }
@@ -74,7 +101,7 @@ GetProductResult ProductService::get(std::uint64_t id, bool bypass_cache) {
 GetProductsResult ProductService::get_many(const std::vector<std::uint64_t>& ids,
                                            bool bypass_cache) {
   _shared.metrics.increment(ProductMetric::BatchRequests);
-  ScopedProductTimer request_timer{_shared.metrics, ProductLatency::BatchRequest};
+
   if (ids.size() > max_product_batch_size) {
     return {ProductStatus::InvalidArgument, {}};
   }
@@ -83,10 +110,6 @@ GetProductsResult ProductService::get_many(const std::vector<std::uint64_t>& ids
       return {ProductStatus::InvalidArgument, {}};
     }
   }
-  std::unordered_set<std::uint64_t> unique_ids;
-  unique_ids.reserve(ids.size());
-  unique_ids.insert(ids.begin(), ids.end());
-  _shared.metrics.increment(ProductMetric::RequestUniqueIds, unique_ids.size());
   auto results = read_products(ids, bypass_cache);
   GetProductsResult batch;
   batch.status = ProductStatus::Ok;
@@ -100,10 +123,9 @@ GetProductsResult ProductService::get_many(const std::vector<std::uint64_t>& ids
 std::vector<GetProductResult> ProductService::read_products(const std::vector<std::uint64_t>& ids,
                                                             bool bypass_cache) {
   ReadBatch batch = make_read_batch(ids, bypass_cache);
+  _shared.metrics.increment(ProductMetric::RequestUniqueIds, batch.work_items.size());
   std::vector<std::size_t> positions(batch.work_items.size());
-  for (std::size_t index = 0; index < positions.size(); ++index) {
-    positions[index] = index;
-  }
+  std::iota(positions.begin(), positions.end(), std::size_t{0});
 
   if (!bypass_cache) {
     read_cache(batch, positions);
@@ -118,7 +140,7 @@ std::vector<GetProductResult> ProductService::read_products(const std::vector<st
   if (_policy.mode == CachePolicyMode::Protected) {
     load_protected(batch, unresolved);
   } else {
-    load_basic(batch, unresolved);
+    load_batch(batch, unresolved);
   }
   return restore_results(batch);
 }
@@ -135,9 +157,11 @@ ProductService::ReadBatch ProductService::make_read_batch(const std::vector<std:
   for (const auto id : ids) {
     const auto [position, inserted] = unique_positions.emplace(id, batch.work_items.size());
     if (inserted) {
-      batch.work_items.push_back({id, make_product_cache_key(id),
+      batch.work_items.push_back({id,
+                                  make_product_cache_key(id),
                                   bypass_cache ? CacheSource::Bypass : CacheSource::Miss,
-                                  std::nullopt});
+                                  std::nullopt,
+                                  {}});
     }
     batch.input_positions.push_back(position->second);
   }
@@ -155,62 +179,36 @@ void ProductService::read_cache(ReadBatch& batch, const std::vector<std::size_t>
     keys.push_back(batch.work_items[position].key);
   }
 
-  std::optional<CacheOperationPermit> breaker_permit;
-  if (_policy.mode == CachePolicyMode::Protected) {
-    breaker_permit = _shared.breaker.try_acquire();
-    if (!breaker_permit) {
-      _shared.metrics.increment(ProductMetric::CacheCircuitBypasses);
-      batch.cache_failed = true;
-      for (const auto position : positions) {
-        if (!batch.work_items[position].result) {
-          batch.work_items[position].source = CacheSource::Bypass;
-        }
-      }
-      return;
-    }
-  }
-  _shared.metrics.increment(ProductMetric::CacheLookupKeys,
-                            static_cast<std::uint64_t>(positions.size()));
-
   std::vector<std::optional<std::string>> values;
-  try {
-    {
-      ScopedProductTimer cache_timer{_shared.metrics, ProductLatency::CacheRead};
-      if (batch.work_items.size() == 1) {
-        values.push_back(_cache.get(keys.front()));
-      } else {
-        values = _cache.get_many(keys);
-      }
-    }
-    if (values.size() != positions.size()) {
-      throw CacheError{"cache batch returned an unexpected result count"};
-    }
-    if (breaker_permit) {
-      breaker_permit->succeed();
-    }
-  } catch (const CacheError&) {
-    if (breaker_permit) {
-      breaker_permit->fail();
-    }
-    _shared.metrics.increment(ProductMetric::CacheReadFailures);
+  const bool succeeded =
+      run_cache_operation(_shared, _policy.mode, ProductMetric::CacheReadFailures, [&] {
+        _shared.metrics.increment(ProductMetric::CacheLookupKeys, positions.size());
+        if (batch.work_items.size() == 1) {
+          values.push_back(_cache.get(keys.front()));
+        } else {
+          values = _cache.get_many(keys);
+        }
+        if (values.size() != positions.size()) {
+          throw CacheError{"cache batch returned an unexpected result count"};
+        }
+      });
+  if (!succeeded) {
     batch.cache_failed = true;
     for (const auto position : positions) {
-      if (!batch.work_items[position].result) {
-        batch.work_items[position].source = CacheSource::Bypass;
-      }
+      batch.work_items[position].source = CacheSource::Bypass;
     }
     return;
   }
 
   for (std::size_t index = 0; index < positions.size(); ++index) {
     auto& item = batch.work_items[positions[index]];
-    if (!values[index]) {
+    const auto& value = values[index];
+    if (!value) {
       _shared.metrics.increment(ProductMetric::CacheMisses);
       item.source = CacheSource::Miss;
       continue;
     }
-    const auto cached_value = values[index].value_or("");
-    auto entry = decode_product_cache_entry(cached_value, item.id);
+    auto entry = decode_product_cache_entry(*value, item.id);
     if (entry.kind == CacheEntryKind::Product && entry.product) {
       _shared.metrics.increment(ProductMetric::CacheHits);
       item.source = CacheSource::Hit;
@@ -236,64 +234,26 @@ void ProductService::read_cache(ReadBatch& batch, const std::vector<std::size_t>
 void ProductService::erase_corrupt(ReadBatch& batch, std::size_t position) {
   auto& item = batch.work_items[position];
   item.source = CacheSource::Corrupt;
-  std::optional<CacheOperationPermit> breaker_permit;
-  if (_policy.mode == CachePolicyMode::Protected) {
-    if (batch.cache_failed) {
-      return;
-    }
-    breaker_permit = _shared.breaker.try_acquire();
-    if (!breaker_permit) {
-      _shared.metrics.increment(ProductMetric::CacheCircuitBypasses);
-      batch.cache_failed = true;
-      return;
-    }
+  if (_policy.mode == CachePolicyMode::Protected && batch.cache_failed) {
+    return;
   }
-  try {
-    ScopedProductTimer erase_timer{_shared.metrics, ProductLatency::CacheErase};
-    _cache.erase(item.key);
-    if (breaker_permit) {
-      breaker_permit->succeed();
-    }
-  } catch (const CacheError&) {
-    if (breaker_permit) {
-      breaker_permit->fail();
-    }
-    _shared.metrics.increment(ProductMetric::CacheCleanupFailures);
+  const bool succeeded = run_cache_operation(
+      _shared, _policy.mode, ProductMetric::CacheCleanupFailures, [&] { _cache.erase(item.key); });
+  if (!succeeded && _policy.mode == CachePolicyMode::Protected) {
+    batch.cache_failed = true;
+  }
+}
+
+void ProductService::load_batch(ReadBatch& batch, const std::vector<std::size_t>& positions) {
+  if (positions.empty()) {
+    return;
+  }
+  {
+    std::optional<ProductLoadPermit> permit;
     if (_policy.mode == CachePolicyMode::Protected) {
-      batch.cache_failed = true;
+      permit = _shared.reads.try_acquire_load();
     }
-    // 清理损坏值失败时仍继续由权威数据库决定本次响应。
-    return;
-  }
-}
-
-void ProductService::load_basic(ReadBatch& batch, const std::vector<std::size_t>& positions) {
-  if (positions.empty()) {
-    return;
-  }
-
-  std::vector<std::uint64_t> ids;
-  ids.reserve(positions.size());
-  for (const auto position : positions) {
-    ids.push_back(batch.work_items[position].id);
-  }
-  const auto loaded = load_from_store(ids, batch.work_items.size() > 1);
-  for (std::size_t index = 0; index < positions.size(); ++index) {
-    auto& item = batch.work_items[positions[index]];
-    const auto& load = loaded[index];
-    item.result = GetProductResult{load.status, load.product, item.source};
-  }
-  fill_cache(batch, positions);
-}
-
-void ProductService::load_protected(ReadBatch& batch, const std::vector<std::size_t>& positions) {
-  if (positions.empty()) {
-    return;
-  }
-
-  if (batch.bypass_cache) {
-    auto permit = _shared.reads.try_acquire_load();
-    if (!permit) {
+    if (_policy.mode == CachePolicyMode::Protected && !permit) {
       _shared.metrics.increment(ProductMetric::ReadAdmissionRejected);
       for (const auto position : positions) {
         auto& item = batch.work_items[position];
@@ -302,19 +262,18 @@ void ProductService::load_protected(ReadBatch& batch, const std::vector<std::siz
       return;
     }
 
-    std::vector<std::uint64_t> ids;
-    ids.reserve(positions.size());
-    for (const auto position : positions) {
-      ids.push_back(batch.work_items[position].id);
-    }
-    const auto loaded = load_from_store(ids, batch.work_items.size() > 1);
-    permit.reset();
-    for (std::size_t index = 0; index < positions.size(); ++index) {
-      auto& item = batch.work_items[positions[index]];
-      const auto& load = loaded[index];
-      item.result = GetProductResult{load.status, load.product, item.source};
-    }
-    fill_cache(batch, positions);
+    load_from_store(batch, positions);
+  }
+  // 数据库名额只覆盖回源；缓存 I/O 不占用名额。
+  fill_cache(batch, positions);
+}
+
+void ProductService::load_protected(ReadBatch& batch, const std::vector<std::size_t>& positions) {
+  if (positions.empty()) {
+    return;
+  }
+  if (batch.bypass_cache) {
+    load_batch(batch, positions);
     return;
   }
 
@@ -324,94 +283,58 @@ void ProductService::load_protected(ReadBatch& batch, const std::vector<std::siz
     ids.push_back(batch.work_items[position].id);
   }
   auto tickets = _shared.reads.acquire_many(ids);
-  std::vector<std::size_t> leader_indexes;
-  std::vector<std::size_t> follower_indexes;
-  leader_indexes.reserve(positions.size());
-  follower_indexes.reserve(positions.size());
+  std::vector<std::size_t> leaders;
+  std::vector<std::size_t> followers;
+  leaders.reserve(positions.size());
+  followers.reserve(positions.size());
 
   for (std::size_t index = 0; index < tickets.size(); ++index) {
     const auto position = positions[index];
-    switch (tickets[index].role()) {
+    auto& item = batch.work_items[position];
+    item.ticket = std::move(tickets[index]);
+    switch (item.ticket.role()) {
       case ReadRole::Leader:
         _shared.metrics.increment(ProductMetric::ReadLeaders);
-        leader_indexes.push_back(index);
+        leaders.push_back(position);
         break;
       case ReadRole::Follower:
         _shared.metrics.increment(ProductMetric::ReadFollowers);
-        follower_indexes.push_back(index);
+        followers.push_back(position);
         break;
       case ReadRole::Rejected: {
         _shared.metrics.increment(ProductMetric::ReadRejected);
-        auto& item = batch.work_items[position];
         item.result = GetProductResult{ProductStatus::ReadBusy, std::nullopt, item.source};
         break;
       }
     }
   }
 
-  std::vector<std::size_t> second_check_positions;
-  second_check_positions.reserve(leader_indexes.size());
   if (!batch.cache_failed) {
-    for (const auto index : leader_indexes) {
-      const auto position = positions[index];
-      if (!batch.work_items[position].result) {
-        second_check_positions.push_back(position);
-      }
-    }
-    read_cache(batch, second_check_positions);
+    read_cache(batch, leaders);
   }
 
-  std::vector<std::size_t> load_indexes;
-  load_indexes.reserve(leader_indexes.size());
-  for (const auto index : leader_indexes) {
-    if (!batch.work_items[positions[index]].result) {
-      load_indexes.push_back(index);
+  std::vector<std::size_t> load_positions;
+  load_positions.reserve(leaders.size());
+  for (const auto position : leaders) {
+    if (!batch.work_items[position].result) {
+      load_positions.push_back(position);
     }
   }
+  load_batch(batch, load_positions);
 
-  if (!load_indexes.empty()) {
-    auto permit = _shared.reads.try_acquire_load();
-    if (!permit) {
-      _shared.metrics.increment(ProductMetric::ReadAdmissionRejected);
-      for (const auto index : load_indexes) {
-        auto& item = batch.work_items[positions[index]];
-        item.result = GetProductResult{ProductStatus::ReadBusy, std::nullopt, item.source};
-      }
-    } else {
-      std::vector<std::uint64_t> load_ids;
-      load_ids.reserve(load_indexes.size());
-      std::vector<std::size_t> load_positions;
-      load_positions.reserve(load_indexes.size());
-      for (const auto index : load_indexes) {
-        const auto position = positions[index];
-        load_ids.push_back(batch.work_items[position].id);
-        load_positions.push_back(position);
-      }
-      const auto loaded = load_from_store(load_ids, batch.work_items.size() > 1);
-      permit.reset();
-      for (std::size_t index = 0; index < load_positions.size(); ++index) {
-        auto& item = batch.work_items[load_positions[index]];
-        const auto& load = loaded[index];
-        item.result = GetProductResult{load.status, load.product, item.source};
-      }
-      fill_cache(batch, load_positions);
-    }
-  }
-
-  for (const auto index : leader_indexes) {
-    const auto& item = batch.work_items[positions[index]];
+  for (const auto position : leaders) {
+    auto& item = batch.work_items[position];
     const auto result = item.result.value_or(
         GetProductResult{ProductStatus::InternalError, std::nullopt, item.source});
-    tickets[index].complete({result.status, result.product});
+    item.ticket.complete({result.status, result.product});
   }
 
   const auto deadline = std::chrono::steady_clock::now() + _shared.reads.wait_timeout();
-  if (!follower_indexes.empty()) {
-    ScopedProductTimer wait_timer{_shared.metrics, ProductLatency::ReadWait};
-    for (const auto index : follower_indexes) {
-      auto& item = batch.work_items[positions[index]];
-      const auto result = tickets[index].wait_until(deadline);
-      if (tickets[index].wait_timed_out()) {
+  if (!followers.empty()) {
+    for (const auto position : followers) {
+      auto& item = batch.work_items[position];
+      const auto result = item.ticket.wait_until(deadline);
+      if (item.ticket.wait_timed_out()) {
         _shared.metrics.increment(ProductMetric::ReadWaitTimeouts);
       }
       item.result = GetProductResult{result.status, result.product, item.source};
@@ -419,57 +342,56 @@ void ProductService::load_protected(ReadBatch& batch, const std::vector<std::siz
   }
 }
 
-std::vector<ProductLoadResult> ProductService::load_from_store(
-    const std::vector<std::uint64_t>& ids, bool batch_request) {
-  if (ids.empty()) {
-    return {};
+void ProductService::load_from_store(ReadBatch& batch, const std::vector<std::size_t>& positions) {
+  std::vector<std::uint64_t> ids;
+  ids.reserve(positions.size());
+  for (const auto position : positions) {
+    ids.push_back(batch.work_items[position].id);
   }
 
   std::vector<std::optional<Product>> products;
+  std::optional<ProductStatus> failure;
   _shared.metrics.increment(ProductMetric::StoreReadOperations);
   _shared.metrics.increment(ProductMetric::StoreReadIds, static_cast<std::uint64_t>(ids.size()));
   try {
-    ScopedProductTimer store_timer{_shared.metrics, ProductLatency::StoreRead};
-    if (!batch_request) {
+    if (batch.work_items.size() == 1) {
       products.push_back(_store.find(ids.front()));
     } else {
       products = _store.find_many(ids);
     }
   } catch (const StoreError& error) {
-    _shared.metrics.increment(ProductMetric::StoreReadFailures);
-    return std::vector<ProductLoadResult>(
-        ids.size(), ProductLoadResult{status_from_store_error(error.code()), std::nullopt});
+    failure = status_from_store_error(error.code());
   } catch (...) {
     _shared.metrics.increment(ProductMetric::StoreReadFailures);
     throw;
   }
 
-  if (products.size() != ids.size()) {
+  if (failure || products.size() != ids.size()) {
     _shared.metrics.increment(ProductMetric::StoreReadFailures);
-    return std::vector<ProductLoadResult>(
-        ids.size(), ProductLoadResult{ProductStatus::InternalError, std::nullopt});
+    for (const auto position : positions) {
+      auto& item = batch.work_items[position];
+      item.result = GetProductResult{failure.value_or(ProductStatus::InternalError), std::nullopt,
+                                     item.source};
+    }
+    return;
   }
 
-  std::vector<ProductLoadResult> results;
-  results.reserve(ids.size());
   bool invalid_row = false;
   for (std::size_t index = 0; index < ids.size(); ++index) {
-    if (!products[index]) {
-      results.push_back({ProductStatus::NotFound, std::nullopt});
-      continue;
-    }
-    Product product = products[index].value_or(Product{});
-    if (!valid_product(product) || product.id != ids[index]) {
+    auto& item = batch.work_items[positions[index]];
+    auto& product = products[index];
+    if (!product) {
+      item.result = GetProductResult{ProductStatus::NotFound, std::nullopt, item.source};
+    } else if (!valid_product(*product) || product->id != item.id) {
       invalid_row = true;
-      results.push_back({ProductStatus::InternalError, std::nullopt});
-      continue;
+      item.result = GetProductResult{ProductStatus::InternalError, std::nullopt, item.source};
+    } else {
+      item.result = GetProductResult{ProductStatus::Ok, std::move(product), item.source};
     }
-    results.push_back({ProductStatus::Ok, std::move(product)});
   }
   if (invalid_row) {
     _shared.metrics.increment(ProductMetric::StoreReadFailures);
   }
-  return results;
 }
 
 void ProductService::fill_cache(ReadBatch& batch, const std::vector<std::size_t>& positions) {
@@ -494,37 +416,15 @@ void ProductService::fill_cache(ReadBatch& batch, const std::vector<std::size_t>
     return;
   }
 
-  std::optional<CacheOperationPermit> breaker_permit;
-  if (_policy.mode == CachePolicyMode::Protected) {
-    if (batch.cache_failed) {
-      return;
-    }
-    breaker_permit = _shared.breaker.try_acquire();
-    if (!breaker_permit) {
-      _shared.metrics.increment(ProductMetric::CacheCircuitBypasses);
-      return;
-    }
-  }
-
-  try {
-    ScopedProductTimer fill_timer{_shared.metrics, ProductLatency::CacheFill};
+  // 回填失败只影响后续查询，不改变本次商品结果。
+  (void)run_cache_operation(_shared, _policy.mode, ProductMetric::CacheFillFailures, [&] {
     if (batch.work_items.size() == 1) {
       const auto& entry = entries.front();
       _cache.put(entry.key, entry.value, entry.ttl_seconds);
     } else {
       _cache.put_many(entries);
     }
-    if (breaker_permit) {
-      breaker_permit->succeed();
-    }
-  } catch (const CacheError&) {
-    if (breaker_permit) {
-      breaker_permit->fail();
-    }
-    _shared.metrics.increment(ProductMetric::CacheFillFailures);
-    // 回填只是加速后续查询，不改变本次商品结果。
-    return;
-  }
+  });
 }
 
 std::vector<GetProductResult> ProductService::restore_results(const ReadBatch& batch) const {
@@ -543,7 +443,7 @@ std::vector<GetProductResult> ProductService::restore_results(const ReadBatch& b
 
 UpdateProductResult ProductService::update(const UpdateProductRequest& request) {
   _shared.metrics.increment(ProductMetric::UpdateRequests);
-  ScopedProductTimer request_timer{_shared.metrics, ProductLatency::UpdateRequest};
+
   if (!valid_update_request(request)) {
     return {ProductStatus::InvalidArgument, std::nullopt, false};
   }
@@ -566,7 +466,6 @@ UpdateProductResult ProductService::update(const UpdateProductRequest& request) 
   // 提交后删除缓存。删除失败只影响读到旧值的风险，不撤销已提交的数据库更新。
   bool invalidation_failed = false;
   try {
-    ScopedProductTimer erase_timer{_shared.metrics, ProductLatency::CacheErase};
     _cache.erase(make_product_cache_key(request.id));
   } catch (const CacheError&) {
     invalidation_failed = true;

@@ -21,15 +21,16 @@ struct ProductCachePolicy {
 /// Validates policy bounds before starting workers or constructing a service.
 void validate_product_cache_policy(const ProductCachePolicy& policy);
 
-/// 旁路缓存业务层：只借用 store 和 cache，二者的生命周期必须长于本对象。
-/// 三个对象都由同一个工作线程使用，因此这一层不加锁。
+/// 旁路缓存业务层：借用的 store、cache 和 shared 的生命周期必须长于本对象。
+/// service、store 和 cache 由同一 Worker 使用；shared 内部同步跨 Worker 的保护状态。
 class ProductService final {
  public:
   ProductService(ProductStore& store, ProductCache& cache, ProductSharedState& shared,
                  ProductCachePolicy policy = {});
 
   /// 查询：先读缓存并解码、校验 id；未命中或缓存出错时查数据库，再尽力回填。
-  /// bypass_cache=true 时直接查权威数据库，用于核实提交结果；不存在的商品不缓存。
+  /// bypass_cache=true 时直接查权威数据库，用于核实提交结果，之后仍尽力回填。
+  /// protected 模式使用短期负缓存回答不存在的商品；basic 模式不使用负缓存。
   /// 命中的缓存值仍可能是旧版本，直至其 TTL 到期。
   GetProductResult get(std::uint64_t id, bool bypass_cache = false);
 
@@ -49,10 +50,9 @@ class ProductService final {
   ReadBatch make_read_batch(const std::vector<std::uint64_t>& ids, bool bypass_cache) const;
   void read_cache(ReadBatch& batch, const std::vector<std::size_t>& positions);
   void erase_corrupt(ReadBatch& batch, std::size_t position);
-  void load_basic(ReadBatch& batch, const std::vector<std::size_t>& positions);
   void load_protected(ReadBatch& batch, const std::vector<std::size_t>& positions);
-  std::vector<ProductLoadResult> load_from_store(const std::vector<std::uint64_t>& ids,
-                                                 bool batch_request);
+  void load_batch(ReadBatch& batch, const std::vector<std::size_t>& positions);
+  void load_from_store(ReadBatch& batch, const std::vector<std::size_t>& positions);
   void fill_cache(ReadBatch& batch, const std::vector<std::size_t>& positions);
   std::vector<GetProductResult> restore_results(const ReadBatch& batch) const;
 
