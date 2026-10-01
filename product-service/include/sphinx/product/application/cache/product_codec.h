@@ -3,6 +3,8 @@
 
 #include <sphinx/product/domain/product.h>
 
+#include <optional>
+
 namespace sphinx {
 
 struct ProductCachePolicy;

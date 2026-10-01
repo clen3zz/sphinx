@@ -313,14 +313,6 @@ bool is_product_path(std::string_view path) noexcept {
   return path == "/products" || path.substr(0, sizeof("/products/") - 1) == "/products/";
 }
 
-const char* cache_backend_name(CacheBackend backend) noexcept {
-  return backend == CacheBackend::Redis ? "redis" : "sphinx";
-}
-
-const char* cache_policy_name(CachePolicyMode policy) noexcept {
-  return policy == CachePolicyMode::Protected ? "protected" : "basic";
-}
-
 const char* cache_breaker_state_name(CacheBreakerState state) noexcept {
   switch (state) {
     case CacheBreakerState::Closed:
@@ -333,8 +325,8 @@ const char* cache_breaker_state_name(CacheBreakerState state) noexcept {
   return "closed";
 }
 
-Json make_metrics_response(const ProductSharedState& shared, CacheBackend backend,
-                           CachePolicyMode policy_mode) {
+Json make_metrics_response(const ProductSharedState& shared, const std::string& backend,
+                           const std::string& policy) {
   constexpr std::array<std::string_view, product_metric_count> metric_names{
       "get_requests",           "batch_requests",        "update_requests",
       "request_unique_ids",     "cache_lookup_keys",     "cache_hits",
@@ -354,8 +346,8 @@ Json make_metrics_response(const ProductSharedState& shared, CacheBackend backen
   const auto reads_active_keys = shared.reads.active_key_count();
   const auto reads_active_loads = shared.reads.active_load_count();
   const auto breaker = shared.breaker.snapshot();
-  return Json{{"backend", cache_backend_name(backend)},
-              {"policy", cache_policy_name(policy_mode)},
+  return Json{{"backend", backend},
+              {"policy", policy},
               {"counters", std::move(counters)},
               {"read_coordinator",
                Json{{"active_keys", reads_active_keys}, {"active_loads", reads_active_loads}}},
@@ -368,8 +360,8 @@ Json make_metrics_response(const ProductSharedState& shared, CacheBackend backen
 
 void install_product_routes(httplib::Server& server,
                             const std::function<ProductService&()>& current_service,
-                            const ProductSharedState& shared, CacheBackend backend,
-                            CachePolicyMode policy_mode) {
+                            const ProductSharedState& shared, const std::string& backend,
+                            const std::string& policy) {
   server.set_post_routing_handler([](const httplib::Request&, httplib::Response& response) {
     response.set_header("Cache-Control", "no-store");
   });
@@ -384,10 +376,10 @@ void install_product_routes(httplib::Server& server,
     return httplib::Server::HandlerResponse::Unhandled;
   });
 
-  server.Get("/metrics", [&shared, backend, policy_mode](const httplib::Request&,
-                                                         httplib::Response& response) {
-    set_json_response(response, 200, make_metrics_response(shared, backend, policy_mode).dump());
-  });
+  server.Get(
+      "/metrics", [&shared, backend, policy](const httplib::Request&, httplib::Response& response) {
+        set_json_response(response, 200, make_metrics_response(shared, backend, policy).dump());
+      });
 
   server.Get("/products",
              [current_service](const httplib::Request& request, httplib::Response& response) {

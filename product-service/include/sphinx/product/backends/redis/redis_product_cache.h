@@ -2,7 +2,7 @@
 #pragma once
 
 #include <sphinx/product/application/ports/product_cache.h>
-#include <sphinx/product/bootstrap/product_cache_factory.h>
+#include <sphinx/product/backends/redis/redis_options.h>
 
 #include <memory>
 #include <optional>

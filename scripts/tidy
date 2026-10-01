@@ -58,6 +58,10 @@ required = {
         "http/product_http.cpp",
         "http/product_http_routes.cpp",
         "bootstrap/product_main.cpp",
+        "bootstrap/product_config.cpp",
+        "bootstrap/product_worker.cpp",
+        "backends/mysql/mysql_runtime.cpp",
+        "application/cache/product_cache_policy.cpp",
     )
 }
 required.add(os.path.join(server_test, "client", "cluster_client_test.cpp"))

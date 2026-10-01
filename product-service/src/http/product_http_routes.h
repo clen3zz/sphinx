@@ -6,6 +6,7 @@
 #include <sphinx/product/application/protection/product_shared_state.h>
 
 #include <functional>
+#include <string>
 
 namespace sphinx {
 
@@ -14,7 +15,7 @@ namespace sphinx {
 /// 其他初始化错误返回不泄露内部细节的 500 响应。
 void install_product_routes(httplib::Server& server,
                             const std::function<ProductService&()>& current_service,
-                            const ProductSharedState& shared, CacheBackend backend,
-                            CachePolicyMode policy_mode);
+                            const ProductSharedState& shared, const std::string& backend,
+                            const std::string& policy);
 
 }  // namespace sphinx

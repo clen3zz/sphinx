@@ -2,13 +2,10 @@
 #pragma once
 
 #include <sphinx/product/application/product_service.h>
-#include <sphinx/product/application/protection/product_read_coordinator.h>
 #include <sphinx/product/application/protection/product_shared_state.h>
-#include <sphinx/product/backends/mysql/mysql_product_store.h>
-#include <sphinx/product/bootstrap/product_cache_factory.h>
 
-#include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -18,18 +15,18 @@ struct ProductHttpConfig {
   std::string bind_address = "127.0.0.1";
   std::uint16_t port = 8080;
   std::uint32_t worker_count = 4;
-  ProductCacheOptions cache;
-  ProductCachePolicy cache_policy{};
-  ProductReadOptions read_options{};
-  CacheBreakerOptions breaker_options{};
-  MySqlOptions mysql{};
+  // 只作为指标标签，不参与后端选择或连接配置。
+  std::string cache_backend = "sphinx";
+  std::string cache_policy = "basic";
 };
 
-/// 持有固定大小的 HTTP 工作线程池。每个线程创建自己的 MySqlThreadGuard、
-/// MySqlProductStore、ProductCache 和 ProductService，并共用进程级协调状态。
+using ProductServiceFactory = std::function<ProductService&()>;
+
+/// 回调须返回当前 Worker 的业务服务，并保持服务及共享状态存活至 HTTP Worker 退出。
 class ProductHttpServer final {
  public:
-  explicit ProductHttpServer(ProductHttpConfig config);
+  ProductHttpServer(ProductHttpConfig config, ProductServiceFactory current_service,
+                    const ProductSharedState& shared);
   ~ProductHttpServer();
   ProductHttpServer(const ProductHttpServer&) = delete;
   ProductHttpServer& operator=(const ProductHttpServer&) = delete;

@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <sphinx/product/backends/sphinx/sphinx_cache_options.h>
 #include <sphinx/product/backends/sphinx/sphinx_product_cache.h>
 
 #include <stdexcept>
 
 namespace sphinx {
+
+void validate_sphinx_options(const SphinxCacheOptions& options) {
+  if (options.timeout.count() <= 0 || options.timeout > std::chrono::milliseconds{10000}) {
+    throw std::invalid_argument{"invalid Sphinx cache timeout"};
+  }
+  (void)parse_nodes(options.nodes);
+}
 
 SphinxProductCache::SphinxProductCache(std::string_view nodes, std::chrono::milliseconds timeout)
     : _client{nodes, timeout} {}

@@ -11,9 +11,6 @@
 namespace sphinx {
 namespace {
 
-constexpr std::uint32_t max_negative_cache_ttl_seconds = 30;
-constexpr std::uint32_t max_product_cache_ttl_jitter_seconds = 30;
-
 ProductStatus status_from_store_error(StoreErrorCode code) noexcept {
   switch (code) {
     case StoreErrorCode::Unavailable:
@@ -55,17 +52,6 @@ bool run_cache_operation(ProductSharedState& shared, CachePolicyMode mode,
 }
 
 }  // namespace
-
-void validate_product_cache_policy(const ProductCachePolicy& policy) {
-  const bool valid_mode =
-      policy.mode == CachePolicyMode::Basic || policy.mode == CachePolicyMode::Protected;
-  if (!valid_mode || !valid_product_cache_ttl(policy.ttl_seconds) ||
-      policy.negative_ttl_seconds < 1 ||
-      policy.negative_ttl_seconds > max_negative_cache_ttl_seconds ||
-      policy.ttl_jitter_seconds > max_product_cache_ttl_jitter_seconds) {
-    throw std::invalid_argument{"invalid product cache policy"};
-  }
-}
 
 struct ProductService::ReadWorkItem {
   std::uint64_t id = 0;

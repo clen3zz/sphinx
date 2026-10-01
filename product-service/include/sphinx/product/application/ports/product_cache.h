@@ -1,14 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <sphinx/product/application/product_limits.h>
 #include <sphinx/product/domain/product.h>
 
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace sphinx {
+
+class CacheError final : public std::runtime_error {
+ public:
+  explicit CacheError(const std::string& message) : std::runtime_error{message} {}
+};
 
 /// 商品缓存 key 的共同字节限制：非空、不超过 250 字节、不含空白或控制字符。
 bool valid_product_cache_key(std::string_view key) noexcept;

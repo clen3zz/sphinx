@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-#include <sphinx/product/domain/product.h>
+#include <sphinx/product/application/product_result.h>
 
 #include <chrono>
 #include <condition_variable>

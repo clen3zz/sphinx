@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <sphinx/product/application/cache/product_cache_policy.h>
 #include <sphinx/product/application/cache/product_codec.h>
-#include <sphinx/product/application/product_service.h>
 
 #include <algorithm>
 #include <cstdint>

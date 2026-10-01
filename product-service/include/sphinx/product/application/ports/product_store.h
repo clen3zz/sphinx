@@ -1,11 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <sphinx/product/application/product_limits.h>
 #include <sphinx/product/domain/product.h>
 
+#include <optional>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace sphinx {
+
+enum class StoreErrorCode : std::uint8_t { Unavailable, InvalidData, CommitUnknown, Unexpected };
+
+/// 存储层出错时抛出此异常，不能把 SQL 失败伪装成 NotFound。
+class StoreError final : public std::runtime_error {
+ public:
+  StoreError(StoreErrorCode code, const std::string& message)
+      : std::runtime_error{message}, _code{code} {}
+  StoreErrorCode code() const noexcept { return _code; }
+
+ private:
+  StoreErrorCode _code;
+};
 
 enum class StoreUpdateStatus : std::uint8_t { Updated, NotFound, Conflict };
 
@@ -15,7 +32,7 @@ struct StoreUpdateResult {
   std::optional<Product> product;
 };
 
-/// 权威数据库接口：一个实例只属于一个工作线程，不能跨线程共享 MYSQL 连接句柄。
+/// 权威存储接口：一个实例只属于一个工作线程，不能跨线程共享存储连接。
 /// 提交结果不确定时，任何方法都不能悄悄重试。
 class ProductStore {
  public:

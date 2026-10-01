@@ -1,25 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <sphinx/product/application/cache/product_cache_policy.h>
 #include <sphinx/product/application/ports/product_cache.h>
 #include <sphinx/product/application/ports/product_store.h>
+#include <sphinx/product/application/product_result.h>
 #include <sphinx/product/application/protection/product_shared_state.h>
-#include <sphinx/product/bootstrap/product_cache_factory.h>
 
 #include <vector>
 
 namespace sphinx {
-
-struct ProductCachePolicy {
-  CachePolicyMode mode = CachePolicyMode::Basic;
-  /// 必须在 1..2,592,000 秒内；更大的过期值会被 Sphinx 解释为 UNIX 时间戳。
-  std::uint32_t ttl_seconds = 30;
-  std::uint32_t negative_ttl_seconds = 5;
-  std::uint32_t ttl_jitter_seconds = 3;
-};
-
-/// Validates policy bounds before starting workers or constructing a service.
-void validate_product_cache_policy(const ProductCachePolicy& policy);
 
 /// 旁路缓存业务层：借用的 store、cache 和 shared 的生命周期必须长于本对象。
 /// service、store 和 cache 由同一 Worker 使用；shared 内部同步跨 Worker 的保护状态。

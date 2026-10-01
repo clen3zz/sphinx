@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <mysql.h>
 #include <sphinx/product/backends/mysql/mysql_product_store.h>
+#include <sphinx/product/backends/mysql/mysql_runtime.h>
 
 #include <array>
 #include <atomic>
