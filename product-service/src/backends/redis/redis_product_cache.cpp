@@ -3,7 +3,7 @@
 #include <sphinx/product/backends/redis/redis_product_cache.h>
 #include <sys/time.h>
 
-#include <limits>
+#include <cassert>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -33,10 +33,8 @@ timeval to_timeval(std::chrono::milliseconds timeout) noexcept {
 
 struct RedisArgv {
   explicit RedisArgv(const std::vector<std::string_view>& arguments) {
-    if (arguments.empty() ||
-        arguments.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-      throw std::invalid_argument{"invalid Redis command argument count"};
-    }
+    // 只接收本文件构造的命令；批量入口已限制为最多 32 个 key。
+    assert(!arguments.empty() && arguments.size() <= max_product_batch_size + 1);
     // hiredis 在 command/append 调用内复制字节；此处只借用参数，无需复制 payload。
     pointers.reserve(arguments.size());
     lengths.reserve(arguments.size());
