@@ -40,6 +40,7 @@ product_src = os.path.join(project_dir, "product-service", "src")
 product_test = os.path.join(project_dir, "product-service", "test")
 server_src = os.path.join(project_dir, "sphinxd", "src")
 server_test = os.path.join(project_dir, "sphinxd", "test")
+benchmark_src = os.path.join(project_dir, "benchmarks")
 required = {
     os.path.join(product_src, name)
     for name in (
@@ -65,7 +66,7 @@ required = {
     )
 }
 required.add(os.path.join(server_test, "client", "cluster_client_test.cpp"))
-directories = (server_src, server_test, product_src, product_test)
+directories = (server_src, server_test, product_src, product_test, benchmark_src)
 
 selected = set()
 for command in commands:

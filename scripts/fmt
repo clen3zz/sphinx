@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
 
-find sphinxd product-service -type f \( -name "*.h" -o -name "*.cpp" \) \
+find sphinxd product-service benchmarks -type f \( -name "*.h" -o -name "*.cpp" \) \
   ! -path "*/third_party/*" -print0 |
   xargs -0 -r clang-format -i --style=file

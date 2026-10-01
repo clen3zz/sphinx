@@ -42,3 +42,8 @@ execute_process(
 
 add_subdirectory(sphinxd)
 add_subdirectory(product-service)
+
+option(BUILD_BENCHMARKS "Build reproducible cache-path benchmarks" OFF)
+if (BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
+endif ()
