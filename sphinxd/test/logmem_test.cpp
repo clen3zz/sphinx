@@ -33,7 +33,7 @@ static std::string make_random(size_t len) {
   return str;
 }
 
-TEST(LogTest, append) {
+TEST(LogTest, Append) {
   std::array<char, 128> memory;
   LogConfig cfg;
   cfg.segment_size = 64;
@@ -44,7 +44,10 @@ TEST(LogTest, append) {
   auto blob = make_random(16);
   log.append(key, blob);
   auto blob_opt = log.find_value(key);
-  ASSERT_TRUE(blob_opt.has_value());
+  if (!blob_opt) {
+    FAIL() << "appended value was not found";
+    return;
+  }
   ASSERT_EQ(blob_opt->blob, blob);
 }
 
@@ -64,7 +67,7 @@ TEST(LogTest, append_expires) {
   }
 }
 
-TEST(LogTest, overwrite_rebinds_index_before_segment_reclamation) {
+TEST(LogTest, OverwriteRebindsIndexBeforeSegmentReclamation) {
   alignas(std::max_align_t) std::array<char, size_t{4} * 64> memory;
   LogConfig const cfg{memory.data(), memory.size(), 64};
   Log log{cfg};
@@ -74,12 +77,15 @@ TEST(LogTest, overwrite_rebinds_index_before_segment_reclamation) {
     auto value = std::string{"value-"} + std::to_string(i);
     ASSERT_TRUE(log.append("same-key", value));
     auto found = log.find_value("same-key");
-    ASSERT_TRUE(found.has_value());
+    if (!found) {
+      FAIL() << "overwritten value was not found";
+      return;
+    }
     ASSERT_EQ(found->blob, value);
   }
 }
 
-TEST(LogTest, stores_flags_and_expiration) {
+TEST(LogTest, StoresFlagsAndExpiration) {
   alignas(std::max_align_t) std::array<char, 128> memory;
   LogConfig const cfg{memory.data(), memory.size(), 64};
   Log log{cfg};
@@ -89,7 +95,10 @@ TEST(LogTest, stores_flags_and_expiration) {
 
   ASSERT_TRUE(log.append("metadata", "payload", 123, now + 3600));
   auto value = log.find_value("metadata");
-  ASSERT_TRUE(value.has_value());
+  if (!value) {
+    FAIL() << "value with metadata was not found";
+    return;
+  }
   ASSERT_EQ(value->flags, 123U);
   ASSERT_EQ(value->blob, "payload");
   ASSERT_EQ(value->expiration, now + 3600);
@@ -98,7 +107,7 @@ TEST(LogTest, stores_flags_and_expiration) {
   ASSERT_FALSE(log.find_value("expired").has_value());
 }
 
-TEST(LogTest, remove_handles_missing_expired_and_overwritten_values) {
+TEST(LogTest, RemoveHandlesMissingExpiredAndOverwrittenValues) {
   alignas(std::max_align_t) std::array<char, 2048> memory;
   Log log{LogConfig{memory.data(), memory.size(), 128}};
 
@@ -109,7 +118,12 @@ TEST(LogTest, remove_handles_missing_expired_and_overwritten_values) {
   ASSERT_FALSE(log.find_value("key").has_value());
   ASSERT_FALSE(log.remove("key"));
   ASSERT_TRUE(log.append("key", "replacement"));
-  ASSERT_EQ(log.find_value("key")->blob, "replacement");
+  const auto replacement = log.find_value("key");
+  if (!replacement) {
+    FAIL() << "replacement value was not found";
+    return;
+  }
+  ASSERT_EQ(replacement->blob, "replacement");
 
   ASSERT_TRUE(log.append("expired", "value", 0, 1));
   ASSERT_FALSE(log.remove("expired"));

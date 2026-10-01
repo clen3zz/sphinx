@@ -39,6 +39,7 @@ project_dir = os.path.realpath(os.getcwd())
 product_src = os.path.join(project_dir, "product-service", "src")
 product_test = os.path.join(project_dir, "product-service", "test")
 server_src = os.path.join(project_dir, "sphinxd", "src")
+server_test = os.path.join(project_dir, "sphinxd", "test")
 required = {
     os.path.join(product_src, name)
     for name in (
@@ -59,7 +60,8 @@ required = {
         "product_main.cpp",
     )
 }
-directories = (server_src, product_src, product_test)
+required.add(os.path.join(server_test, "cluster_client_test.cpp"))
+directories = (server_src, server_test, product_src, product_test)
 
 selected = set()
 for command in commands:
@@ -72,7 +74,7 @@ for command in commands:
 
 missing = sorted(required - selected)
 if missing:
-    print("compilation database is stale or missing product targets; reconfigure CMake",
+    print("compilation database is stale or missing required targets; reconfigure CMake",
           file=sys.stderr)
     for path in missing:
         print(f"  missing: {os.path.relpath(path, project_dir)}", file=sys.stderr)
