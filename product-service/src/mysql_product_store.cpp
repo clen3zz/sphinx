@@ -328,72 +328,10 @@ struct MySqlProductStore::Impl {
     throw_mysql_error(error, message);
   }
 
-  std::optional<Product> fetch_product_row(MYSQL_STMT* statement, std::uint64_t id) {
-    if (mysql_stmt_field_count(statement) != 4) {
-      throw StoreError{StoreErrorCode::Unexpected, "MySQL product query returned an invalid shape"};
-    }
-
-    ProductRowBuffer row;
-    if (mysql_stmt_bind_result(statement, row.bindings.data()) != 0) {
-      throw_statement_error(statement, "MySQL product query result binding failed");
-    }
-    if (mysql_stmt_store_result(statement) != 0) {
-      throw_statement_error(statement, "MySQL product query result buffering failed");
-    }
-
-    const int fetch_result = mysql_stmt_fetch(statement);
-    // 只有确实没有结果行才返回 nullopt；截断或字段非法都不能冒充 NotFound。
-    if (fetch_result == MYSQL_NO_DATA) {
-      return std::nullopt;
-    }
-    if (fetch_result == MYSQL_DATA_TRUNCATED) {
-      throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
-    }
-    if (fetch_result != 0) {
-      throw_statement_error(statement, "MySQL product row fetch failed");
-    }
-    Product product = row.to_product();
-    if (product.id != id) {
-      throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
-    }
-
-    const int next_fetch_result = mysql_stmt_fetch(statement);
-    if (next_fetch_result != MYSQL_NO_DATA) {
-      if (next_fetch_result != 0 && next_fetch_result != MYSQL_DATA_TRUNCATED) {
-        throw_statement_error(statement, "MySQL product result drain failed");
-      }
-      throw StoreError{StoreErrorCode::Unexpected, "MySQL product query returned multiple rows"};
-    }
-    return product;
-  }
-
   std::optional<Product> select_product(MYSQL_STMT*& slot, MYSQL_STMT* statement,
                                         std::uint64_t id) {
-    std::uint64_t requested_id = id;
-    MYSQL_BIND parameter{};
-    bind_unsigned_parameter(&parameter, &requested_id);
-    if (mysql_stmt_bind_param(statement, &parameter) != 0) {
-      throw_statement_error(statement, "MySQL product query parameter binding failed");
-    }
-    if (mysql_stmt_execute(statement) != 0) {
-      throw_statement_error(statement, "MySQL product query failed");
-    }
-
-    std::optional<Product> result;
-    try {
-      result = fetch_product_row(statement, id);
-    } catch (...) {
-      if (slot == statement) {
-        (void)clear_statement_result(slot, statement);
-      }
-      throw;
-    }
-
-    const auto cleanup_error = clear_statement_result(slot, statement);
-    if (cleanup_error != 0) {
-      throw_mysql_error(cleanup_error, "MySQL product query cleanup failed");
-    }
-    return result;
+    auto products = read_products(slot, statement, {id});
+    return std::move(products.front());
   }
 
   std::vector<std::optional<Product>> select_products(const std::vector<std::uint64_t>& ids) {
@@ -413,13 +351,24 @@ struct MySqlProductStore::Impl {
 
     ensure_connection();
     MYSQL_STMT* statement = prepare_find_many_statement(unique_ids.size());
-    std::vector<MYSQL_BIND> parameters(unique_ids.size());
-    for (std::size_t index = 0; index < unique_ids.size(); ++index) {
-      bind_unsigned_parameter(&parameters[index], &unique_ids[index]);
-    }
+    return read_products(find_many_statement, statement, ids, std::move(unique_ids));
+  }
 
+  // 单条查询、FOR UPDATE 和 IN 查询共用绑定、校验、清理及顺序恢复。
+  // parameter_ids 可以去重；ids 保留调用方的原始顺序和重复项。
+  std::vector<std::optional<Product>> read_products(MYSQL_STMT*& slot, MYSQL_STMT* statement,
+                                                    const std::vector<std::uint64_t>& ids,
+                                                    std::vector<std::uint64_t> parameter_ids = {}) {
+    if (parameter_ids.empty()) {
+      parameter_ids = ids;
+    }
+    std::vector<MYSQL_BIND> parameters(parameter_ids.size());
+    for (std::size_t index = 0; index < parameter_ids.size(); ++index) {
+      bind_unsigned_parameter(&parameters[index], &parameter_ids[index]);
+    }
+    const std::unordered_set<std::uint64_t> requested_ids{ids.begin(), ids.end()};
     std::unordered_map<std::uint64_t, Product> products_by_id;
-    products_by_id.reserve(unique_ids.size());
+    products_by_id.reserve(parameter_ids.size());
     try {
       if (mysql_stmt_bind_param(statement, parameters.data()) != 0) {
         throw_statement_error(statement, "MySQL product batch parameter binding failed");
@@ -464,13 +413,13 @@ struct MySqlProductStore::Impl {
         }
       }
     } catch (...) {
-      if (find_many_statement == statement) {
-        (void)clear_statement_result(find_many_statement, statement);
+      if (slot == statement) {
+        (void)clear_statement_result(slot, statement);
       }
       throw;
     }
 
-    const auto cleanup_error = clear_statement_result(find_many_statement, statement);
+    const auto cleanup_error = clear_statement_result(slot, statement);
     if (cleanup_error != 0) {
       throw_mysql_error(cleanup_error, "MySQL product batch query cleanup failed");
     }
