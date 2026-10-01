@@ -12,14 +12,22 @@ include_directories(
         SYSTEM third_party/murmurhash3
 )
 
-add_library(sphinx_core STATIC
-        third_party/murmurhash3/MurmurHash3.cpp
-        src/common/buffer.cpp
-        src/common/stats.cpp
+# 客户端与服务端仅共享哈希实现；商品服务不链接节点存储或 Reactor。
+add_library(sphinx_hash STATIC third_party/murmurhash3/MurmurHash3.cpp)
+target_include_directories(sphinx_hash SYSTEM PUBLIC third_party/murmurhash3)
+
+add_library(sphinx_client STATIC
         src/client/cluster.cpp
         src/client/cluster_client.cpp
         src/client/cluster_resolver.cpp
         src/client/cluster_transport.cpp
+)
+target_include_directories(sphinx_client PUBLIC include)
+target_link_libraries(sphinx_client PUBLIC sphinx_hash pthread)
+
+add_library(sphinx_core STATIC
+        src/common/buffer.cpp
+        src/common/stats.cpp
         src/storage/logmem.cpp
         src/storage/memory.cpp
         src/reactor/reactor.cpp
@@ -27,7 +35,7 @@ add_library(sphinx_core STATIC
 )
 target_include_directories(sphinx_core PUBLIC include)
 target_include_directories(sphinx_core SYSTEM PUBLIC third_party/murmurhash3)
-target_link_libraries(sphinx_core PUBLIC pthread)
+target_link_libraries(sphinx_core PUBLIC sphinx_hash pthread)
 
 target_precompile_headers(sphinx_core PUBLIC
         <algorithm>
@@ -54,12 +62,12 @@ target_link_libraries(sphinxd PRIVATE sphinx_core pthread)
 add_executable(sphinx-cluster
         src/sphinx-cluster.cpp
 )
-target_link_libraries(sphinx-cluster PRIVATE sphinx_core pthread)
+target_link_libraries(sphinx-cluster PRIVATE sphinx_client)
 
 add_executable(sphinx_cluster_client_integration_driver
         test/client/cluster_client_integration_driver.cpp
 )
-target_link_libraries(sphinx_cluster_client_integration_driver PRIVATE sphinx_core pthread)
+target_link_libraries(sphinx_cluster_client_integration_driver PRIVATE sphinx_client)
 
 if (GTEST_FOUND)
     add_executable(sphinxd_tests
@@ -77,7 +85,7 @@ if (GTEST_FOUND)
             test/common/stats_test.cpp
             test/common/string_test.cpp
     )
-    target_link_libraries(sphinxd_tests PRIVATE sphinx_core ${GTEST_BOTH_LIBRARIES} pthread)
+    target_link_libraries(sphinxd_tests PRIVATE sphinx_core sphinx_client ${GTEST_BOTH_LIBRARIES} pthread)
     target_include_directories(sphinxd_tests PRIVATE src/server)
     add_test(sphinxd_tests sphinxd_tests)
 endif ()
