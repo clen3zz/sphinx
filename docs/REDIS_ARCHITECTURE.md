@@ -23,14 +23,14 @@ PUT：MySQL 锁行、检查版本、更新并提交 → 尽力删除缓存
 
 | 组件 | 接口与职责 | 主要数据 |
 | --- | --- | --- |
-| [ProductHttpServer](../product-service/src/product_http.cpp) | 创建 Worker 上下文；[路由](../product-service/src/product_http_routes.cpp)解析请求、映射状态和响应头 | 运行配置、每个 Worker 的 store/cache/service、进程共享状态 |
-| [ProductService](../product-service/include/sphinx/product_service.h) | get、get_many、update；统一缓存旁路和保护流程 | 借用 store/cache/shared，持有 ProductCachePolicy |
-| [ProductCache](../product-service/include/sphinx/product_cache.h) | `get`、`put`、`erase`、`get_many`、`put_many` | 读返回 `optional<string>`；写用 `CacheWriteEntry{key, value, ttl_seconds}` |
-| [RedisProductCache](../product-service/src/redis_product_cache.cpp) | 实现缓存接口，管理命令、回复和重连 | Pimpl 持有配置、所属线程 ID、RAII 管理的 hiredis context；回复也由 RAII 释放 |
-| [MySqlProductStore](../product-service/src/mysql_product_store.cpp) | find、find_many、update；预处理查询、事务和错误分类 | Worker 独占 MYSQL 连接及语句句柄；批量查询复用对应参数数量的语句 |
-| [ProductReadCoordinator](../product-service/include/sphinx/product_read_coordinator.h) | acquire_many、try_acquire_load、活动数量查询 | 按商品 ID 索引的 flight 表、活动回源数、互斥锁；flight 含条件变量与结果 |
-| [CacheCircuitBreaker](../product-service/include/sphinx/cache_circuit_breaker.h) | try_acquire、snapshot；操作许可报告成功或失败 | Closed/Open/HalfOpen 状态、失败数、重试时间、generation、互斥锁 |
-| [ProductMetrics](../product-service/include/sphinx/product_metrics.h) | increment、snapshot | 原子事件计数数组；指标不参与业务同步 |
+| [ProductHttpServer](../product-service/src/http/product_http.cpp) | 创建 Worker 上下文；[路由](../product-service/src/http/product_http_routes.cpp)解析请求、映射状态和响应头 | 运行配置、每个 Worker 的 store/cache/service、进程共享状态 |
+| [ProductService](../product-service/include/sphinx/product/application/product_service.h) | get、get_many、update；统一缓存旁路和保护流程 | 借用 store/cache/shared，持有 ProductCachePolicy |
+| [ProductCache](../product-service/include/sphinx/product/application/ports/product_cache.h) | `get`、`put`、`erase`、`get_many`、`put_many` | 读返回 `optional<string>`；写用 `CacheWriteEntry{key, value, ttl_seconds}` |
+| [RedisProductCache](../product-service/src/backends/redis/redis_product_cache.cpp) | 实现缓存接口，管理命令、回复和重连 | Pimpl 持有配置、所属线程 ID、RAII 管理的 hiredis context；回复也由 RAII 释放 |
+| [MySqlProductStore](../product-service/src/backends/mysql/mysql_product_store.cpp) | find、find_many、update；预处理查询、事务和错误分类 | Worker 独占 MYSQL 连接及语句句柄；批量查询复用对应参数数量的语句 |
+| [ProductReadCoordinator](../product-service/include/sphinx/product/application/protection/product_read_coordinator.h) | acquire_many、try_acquire_load、活动数量查询 | 按商品 ID 索引的 flight 表、活动回源数、互斥锁；flight 含条件变量与结果 |
+| [CacheCircuitBreaker](../product-service/include/sphinx/product/application/protection/cache_circuit_breaker.h) | try_acquire、snapshot；操作许可报告成功或失败 | Closed/Open/HalfOpen 状态、失败数、重试时间、generation、互斥锁 |
+| [ProductMetrics](../product-service/include/sphinx/product/application/product_metrics.h) | increment、snapshot | 原子事件计数数组；指标不参与业务同步 |
 
 ProductService 内部用 ReadBatch 串起读流程：work_items 存去重后的商品，input_positions
 恢复原始顺序与重复项，两个标志记录主动旁路和缓存失败。每个 ReadWorkItem 含 id、key、
@@ -42,7 +42,7 @@ CacheOperationPermit 携带 generation，旧操作的结果不能修改新一轮
 
 ## 商品与缓存格式
 
-[Product](../product-service/include/sphinx/product.h) 包含 id、name、price_cents、version。
+[Product](../product-service/include/sphinx/product/domain/product.h) 包含 id、name、price_cents、version。
 ID 和版本为正数，名称是 1～128 字节的有效 UTF-8，价格使用整数分。更新请求另带
 expected_version，成功后版本加一。
 
@@ -51,7 +51,7 @@ expected_version，成功后版本加一。
 | 缓存 key | `product:v3:<id>`；接口统一要求非空、最多 250 字节、无空白和控制字符 |
 | 正缓存 | JSON：`{"id":42,"name":"tea","price_cents":199,"version":1}` |
 | 负缓存 | JSON：`{"id":42,"not_found":true}`；仅 protected 使用 |
-| 解码 | [codec](../product-service/src/product_codec.cpp)限制 payload 为 512 字节，严格检查字段、类型、领域约束及请求 ID；非法值按损坏缓存处理 |
+| 解码 | [codec](../product-service/src/application/cache/product_codec.cpp)限制 payload 为 512 字节，严格检查字段、类型、领域约束及请求 ID；非法值按损坏缓存处理 |
 | TTL | 正缓存默认 30 秒；protected 按 ID 确定性抖动，默认 27～33 秒；负缓存默认 5 秒 |
 
 写缓存时把值和 TTL 放进同一条 SET ... EX 命令，避免先写值再设置过期的中间状态。
@@ -144,17 +144,17 @@ GET 遇到缓存故障尝试回源；回源失败按数据库错误返回，而�
 
 ## 与 Sphinx 路径的对照
 
-通过 SPHINX_CACHE_BACKEND=redis|sphinx 选择 [适配器](../product-service/src/product_cache_options.cpp)，
+通过 SPHINX_CACHE_BACKEND=redis|sphinx 选择 [适配器](../product-service/src/bootstrap/product_cache_factory.cpp)，
 程序默认仍为 Sphinx。业务层不依赖缓存协议，两条路径都连接 MySQL，没有纯 MySQL 运行模式。
 
 | 维度 | Redis | Sphinx |
 | --- | --- | --- |
-| 客户端与协议 | 同步 hiredis、RESP | [ClusterClient](../sphinxd/src/cluster_client.cpp)、Memcached 文本协议 |
+| 客户端与协议 | 同步 hiredis、RESP | [ClusterClient](../sphinxd/src/client/cluster_client.cpp)、Memcached 文本协议 |
 | 路由 | 一个 Redis 实例 | 客户端一致性哈希选节点；节点内按 key 选独占存储的 Worker |
 | 连接 | 每个 HTTP Worker 一个惰性连接 | 每个 HTTP Worker 独占客户端，按节点复用连接 |
 | 批量读取 | 原生 MGET | 按节点分组执行原生 multi-get，再恢复结果顺序 |
 | 批量回填 | pipeline SET ... EX | 默认逐条 set |
-| 过期与容量 | Redis TTL；对照工具配置 maxmemory 和淘汰策略 | TTL 检查与索引清理；[Log segment 回收](../sphinxd/src/logmem.cpp)，不等于 LRU |
+| 过期与容量 | Redis TTL；对照工具配置 maxmemory 和淘汰策略 | TTL 检查与索引清理；[Log segment 回收](../sphinxd/src/storage/logmem.cpp)，不等于 LRU |
 | 业务规则 | 共用编码、basic/protected、回源、版本更新及提交后删除 | 同左 |
 
 Sphinx 节点列表是静态配置，改变节点列表或 Worker 数量后不迁移旧缓存，可通过 MySQL
@@ -169,8 +169,8 @@ HTTP P50/P95/P99 由 [对照客户端](../scripts/compare_product_cache.py)采�
 阶段指标、进程 CPU/RSS、缓存统计及可用的真实 SQL 计数。观测条件不足的 SQL 计数留空，
 RSS 是快照而非峰值。对照需同时说明并发、Worker 数、TTL、内存预算、淘汰策略与重复样本。
 
-按请求链阅读：先看 [HTTP 路由](../product-service/src/product_http_routes.cpp)和
-[ProductService](../product-service/src/product_service.cpp)，再看 Redis 适配器、codec 与
+按请求链阅读：先看 [HTTP 路由](../product-service/src/http/product_http_routes.cpp)和
+[ProductService](../product-service/src/application/product_service.cpp)，再看 Redis 适配器、codec 与
 MySQL 存储，最后看读协调器和熔断状态机。运行与严格验证入口见 [README](../README.md)。
 
 这条路径覆盖 Redis String、RESP/二进制安全、连接与认证、TTL、MGET、pipeline、淘汰与

@@ -632,7 +632,7 @@ def main():
 
     binaries = {"sphinx": str(sphinx_binary), "redis": redis_binary, "service": str(service_binary)}
     database = MySqlDatabase(values)
-    schema_path = Path(__file__).resolve().parent.parent / "product-service" / "schema.sql"
+    schema_path = Path(__file__).resolve().parent.parent / "product-service" / "schema" / "mysql" / "schema.sql"
     database.run(input_file=schema_path)
     output_dir = Path(args.output_dir or (build_dir / "product-cache-results"))
     output_dir.mkdir(parents=True, exist_ok=True)

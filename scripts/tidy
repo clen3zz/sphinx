@@ -43,24 +43,24 @@ server_test = os.path.join(project_dir, "sphinxd", "test")
 required = {
     os.path.join(product_src, name)
     for name in (
-        "cache_circuit_breaker.cpp",
-        "product_cache.cpp",
-        "product_cache_options.cpp",
-        "product_metrics.cpp",
-        "redis_product_cache.cpp",
-        "product_rules.cpp",
-        "product_codec.cpp",
-        "product_store.cpp",
-        "product_service.cpp",
-        "product_read_coordinator.cpp",
-        "sphinx_product_cache.cpp",
-        "mysql_product_store.cpp",
-        "product_http.cpp",
-        "product_http_routes.cpp",
-        "product_main.cpp",
+        "application/protection/cache_circuit_breaker.cpp",
+        "application/ports/product_cache.cpp",
+        "bootstrap/product_cache_factory.cpp",
+        "application/product_metrics.cpp",
+        "backends/redis/redis_product_cache.cpp",
+        "domain/product_rules.cpp",
+        "application/cache/product_codec.cpp",
+        "application/ports/product_store.cpp",
+        "application/product_service.cpp",
+        "application/protection/product_read_coordinator.cpp",
+        "backends/sphinx/sphinx_product_cache.cpp",
+        "backends/mysql/mysql_product_store.cpp",
+        "http/product_http.cpp",
+        "http/product_http_routes.cpp",
+        "bootstrap/product_main.cpp",
     )
 }
-required.add(os.path.join(server_test, "cluster_client_test.cpp"))
+required.add(os.path.join(server_test, "client", "cluster_client_test.cpp"))
 directories = (server_src, server_test, product_src, product_test)
 
 selected = set()

@@ -21,7 +21,7 @@ build_dir=${1:-build}
 mysql_test="$build_dir/product-service/sphinx_mysql_product_integration_tests"
 http_service="$build_dir/product-service/sphinx-product-service"
 sphinx_server="$build_dir/sphinxd/sphinxd"
-http_test="product-service/test/product_http_integration_test.py"
+http_test="product-service/test/http/product_http_integration_test.py"
 for executable in "$mysql_test" "$http_service" "$sphinx_server"; do
     if [[ ! -x $executable ]]; then
         echo "Missing $executable; build the default product-service targets first." >&2
@@ -56,7 +56,7 @@ mysql_args=(
     --batch
 )
 MYSQL_PWD="$SPHINX_TEST_MYSQL_PASSWORD" mysql "${mysql_args[@]}" \
-    < "$repo_root/product-service/schema.sql"
+    < "$repo_root/product-service/schema/mysql/schema.sql"
 
 "$mysql_test" --gtest_filter=MySqlProductStoreIntegrationTest.*
 

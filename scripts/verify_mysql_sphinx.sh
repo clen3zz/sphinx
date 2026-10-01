@@ -29,4 +29,4 @@ for executable in "$mysql_test" "$http_service" "$sphinx_server"; do
 done
 
 "$mysql_test" --gtest_filter=MySqlProductStoreIntegrationTest.*
-python3 product-service/test/product_http_integration_test.py "$sphinx_server" "$http_service"
+python3 product-service/test/http/product_http_integration_test.py "$sphinx_server" "$http_service"

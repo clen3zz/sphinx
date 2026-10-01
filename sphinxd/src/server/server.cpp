@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "server.h"
 
+#include <sphinx/reactor-epoll.h>
 #include <unistd.h>
 
 #include <chrono>
@@ -10,7 +11,6 @@
 #include <utility>
 
 #include "command_executor.h"
-#include <sphinx/reactor-epoll.h>
 namespace sphinx {
 namespace {
 
@@ -23,9 +23,9 @@ bool is_server_info_command(Opcode op) { return op == Opcode::Version || op == O
 Server::Server(const LogConfig& log_config, size_t thread_id,
                std::shared_ptr<ReactorGroup> reactor_group, std::shared_ptr<ServerStats> stats,
                std::shared_ptr<std::atomic_bool> mget_queue_failure_used)
-    : _reactor{std::make_unique<EpollReactor>(
-          thread_id, std::move(reactor_group),
-          [this](const MessagePtr& data) { on_message(data); })},
+    : _reactor{
+          std::make_unique<EpollReactor>(thread_id, std::move(reactor_group),
+                                         [this](const MessagePtr& data) { on_message(data); })},
       _log{log_config},
       _stats{std::move(stats)},
       _mget_queue_failure_used{std::move(mget_queue_failure_used)} {}

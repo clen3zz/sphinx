@@ -10,33 +10,33 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(HIREDIS REQUIRED IMPORTED_TARGET hiredis>=1.0.0)
 
 add_library(sphinx_product_core STATIC
-        src/cache_circuit_breaker.cpp
-        src/product_cache.cpp
-        src/product_cache_options.cpp
-        src/product_metrics.cpp
-        src/redis_product_cache.cpp
-        src/product_rules.cpp
-        src/product_codec.cpp
-        src/product_store.cpp
-        src/product_service.cpp
-        src/product_read_coordinator.cpp
-        src/sphinx_product_cache.cpp
+        src/application/protection/cache_circuit_breaker.cpp
+        src/application/ports/product_cache.cpp
+        src/bootstrap/product_cache_factory.cpp
+        src/application/product_metrics.cpp
+        src/backends/redis/redis_product_cache.cpp
+        src/domain/product_rules.cpp
+        src/application/cache/product_codec.cpp
+        src/application/ports/product_store.cpp
+        src/application/product_service.cpp
+        src/application/protection/product_read_coordinator.cpp
+        src/backends/sphinx/sphinx_product_cache.cpp
 )
 target_include_directories(sphinx_product_core PUBLIC include)
 target_link_libraries(sphinx_product_core PUBLIC sphinx_core sphinx_json PkgConfig::HIREDIS)
 
 if (GTEST_FOUND)
     add_executable(sphinx_product_tests
-            test/product_cache_test.cpp
-            test/product_cache_options_test.cpp
-            test/product_metrics_test.cpp
-            test/cache_circuit_breaker_test.cpp
-            test/redis_product_cache_test.cpp
-            test/sphinx_product_cache_test.cpp
-            test/product_store_test.cpp
-            test/product_codec_test.cpp
-            test/product_service_test.cpp
-            test/product_read_coordinator_test.cpp
+            test/application/ports/product_cache_test.cpp
+            test/bootstrap/product_cache_factory_test.cpp
+            test/application/product_metrics_test.cpp
+            test/application/protection/cache_circuit_breaker_test.cpp
+            test/backends/redis/redis_product_cache_test.cpp
+            test/backends/sphinx/sphinx_product_cache_test.cpp
+            test/application/ports/product_store_test.cpp
+            test/application/cache/product_codec_test.cpp
+            test/application/product_service_test.cpp
+            test/application/protection/product_read_coordinator_test.cpp
     )
     target_link_libraries(sphinx_product_tests PRIVATE sphinx_product_core ${GTEST_BOTH_LIBRARIES} pthread)
     add_test(NAME sphinx_product_tests COMMAND sphinx_product_tests)
@@ -54,18 +54,18 @@ add_library(sphinx_httplib INTERFACE)
 target_include_directories(sphinx_httplib INTERFACE ${cpp_httplib_SOURCE_DIR})
 
 add_executable(sphinx-product-service
-        src/mysql_product_store.cpp
-        src/product_http.cpp
-        src/product_http_routes.cpp
-        src/product_main.cpp
+        src/backends/mysql/mysql_product_store.cpp
+        src/http/product_http.cpp
+        src/http/product_http_routes.cpp
+        src/bootstrap/product_main.cpp
 )
 target_link_libraries(sphinx-product-service PRIVATE sphinx_product_core PkgConfig::MYSQLCLIENT
         sphinx_httplib sphinx_json pthread)
 
 if (GTEST_FOUND)
     add_executable(sphinx_mysql_product_integration_tests
-            test/mysql_product_store_integration_test.cpp
-            src/mysql_product_store.cpp)
+            test/backends/mysql/mysql_product_store_integration_test.cpp
+            src/backends/mysql/mysql_product_store.cpp)
     target_link_libraries(sphinx_mysql_product_integration_tests PRIVATE sphinx_product_core
             PkgConfig::MYSQLCLIENT ${GTEST_BOTH_LIBRARIES} pthread)
     target_link_options(sphinx_mysql_product_integration_tests PRIVATE
@@ -78,9 +78,9 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 if (Python3_Interpreter_FOUND)
     add_test(NAME sphinx_product_cache_comparison_tests
             COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/test/compare_product_cache_test.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/tools/compare_product_cache_test.py)
     add_test(NAME sphinx_product_http_integration_test
             COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/test/product_http_integration_test.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/http/product_http_integration_test.py
             $<TARGET_FILE:sphinxd> $<TARGET_FILE:sphinx-product-service>)
 endif ()

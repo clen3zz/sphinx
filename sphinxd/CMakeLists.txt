@@ -2,7 +2,7 @@
 set_source_files_properties(third_party/murmurhash3/MurmurHash3.cpp PROPERTIES COMPILE_FLAGS "-Wno-implicit-fallthrough")
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-    set(SYSTEM_SOURCES src/reactor-epoll.cpp)
+    set(SYSTEM_SOURCES src/reactor/reactor-epoll.cpp)
 else ()
     message(FATAL_ERROR "Unsupported system: ${CMAKE_SYSTEM_NAME}")
 endif (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
@@ -14,15 +14,15 @@ include_directories(
 
 add_library(sphinx_core STATIC
         third_party/murmurhash3/MurmurHash3.cpp
-        src/buffer.cpp
-        src/stats.cpp
-        src/cluster.cpp
-        src/cluster_client.cpp
-        src/cluster_resolver.cpp
-        src/cluster_transport.cpp
-        src/logmem.cpp
-        src/memory.cpp
-        src/reactor.cpp
+        src/common/buffer.cpp
+        src/common/stats.cpp
+        src/client/cluster.cpp
+        src/client/cluster_client.cpp
+        src/client/cluster_resolver.cpp
+        src/client/cluster_transport.cpp
+        src/storage/logmem.cpp
+        src/storage/memory.cpp
+        src/reactor/reactor.cpp
         ${SYSTEM_SOURCES}
 )
 target_include_directories(sphinx_core PUBLIC include)
@@ -57,25 +57,25 @@ add_executable(sphinx-cluster
 target_link_libraries(sphinx-cluster PRIVATE sphinx_core pthread)
 
 add_executable(sphinx_cluster_client_integration_driver
-        test/cluster_client_integration_driver.cpp
+        test/client/cluster_client_integration_driver.cpp
 )
 target_link_libraries(sphinx_cluster_client_integration_driver PRIVATE sphinx_core pthread)
 
 if (GTEST_FOUND)
     add_executable(sphinxd_tests
             src/server/connection.cpp
-            test/buffer_test.cpp
-            test/index_test.cpp
-            test/cluster_test.cpp
-            test/cluster_client_test.cpp
-            test/connection_test.cpp
-            test/logmem_test.cpp
+            test/common/buffer_test.cpp
+            test/storage/index_test.cpp
+            test/client/cluster_test.cpp
+            test/client/cluster_client_test.cpp
+            test/server/connection_test.cpp
+            test/storage/logmem_test.cpp
             test/main.cpp
-            test/protocol_test.cpp
-            test/reactor_test.cpp
-            test/spsc_queue_test.cpp
-            test/stats_test.cpp
-            test/string_test.cpp
+            test/server/protocol_test.cpp
+            test/reactor/reactor_test.cpp
+            test/reactor/spsc_queue_test.cpp
+            test/common/stats_test.cpp
+            test/common/string_test.cpp
     )
     target_link_libraries(sphinxd_tests PRIVATE sphinx_core ${GTEST_BOTH_LIBRARIES} pthread)
     target_include_directories(sphinxd_tests PRIVATE src/server)
@@ -85,12 +85,12 @@ endif ()
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if (Python3_Interpreter_FOUND)
     add_test(NAME sphinxd_network_test
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/network_test.py
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/server/network_test.py
             $<TARGET_FILE:sphinxd>)
     set_tests_properties(sphinxd_network_test PROPERTIES TIMEOUT 180)
 
     add_test(NAME sphinxd_cluster_integration_test
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/cluster_network_test.py
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/client/cluster_network_test.py
             $<TARGET_FILE:sphinxd> $<TARGET_FILE:sphinx-cluster>
             $<TARGET_FILE:sphinx_cluster_client_integration_driver>)
     set_tests_properties(sphinxd_cluster_integration_test PROPERTIES TIMEOUT 120)

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <getopt.h>
+#include <sphinx/reactor.h>
 
 #include <cstdint>
 #include <cstdlib>
@@ -8,7 +9,6 @@
 #include <utility>
 
 #include "config.h"
-#include <sphinx/reactor.h>
 
 namespace sphinx {
 namespace {
@@ -27,8 +27,7 @@ void print_usage(const std::string& program) {
       << ")\n  -s, --segment-size number   Segment size in MB (default: " << default_segment_size
       << ")\n  -b, --listen-backlog number Listen backlog size (default: " << default_listen_backlog
       << ")\n  -t, --threads number        number of threads to use (default: "
-      << default_nr_threads
-      << ")\n"
+      << default_nr_threads << ")\n"
       << "      --help                  print this help text and exit\n"
       << "      --version               print Sphinx version and exit\n\n";
 }

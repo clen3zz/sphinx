@@ -35,8 +35,7 @@ void run_server_thread(size_t thread_id, const sphinx::Config& config,
     log_config.memory_size = memory.size();
 
     // 初始化 Server 实例并启动事件循环（监听端口并处理请求）
-    sphinx::Server server{log_config, thread_id, reactor_group, stats,
-                          mget_queue_failure_used};
+    sphinx::Server server{log_config, thread_id, reactor_group, stats, mget_queue_failure_used};
     server.serve(config);
   } catch (const std::exception& error) {
     std::cerr << "error: " << error.what() << '\n' << std::flush;
@@ -66,9 +65,8 @@ int main(int argc, char* argv[]) {
     std::vector<std::thread> workers;
     workers.reserve(static_cast<size_t>(config.nr_threads));
     for (int thread_id = 0; thread_id < config.nr_threads; ++thread_id) {
-      workers.emplace_back(run_server_thread, static_cast<size_t>(thread_id),
-                           std::cref(config), stats, reactor_group,
-                           mget_queue_failure_used);
+      workers.emplace_back(run_server_thread, static_cast<size_t>(thread_id), std::cref(config),
+                           stats, reactor_group, mget_queue_failure_used);
     }
 
     // 6. 等待所有工作线程执行结束

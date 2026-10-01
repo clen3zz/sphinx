@@ -33,8 +33,8 @@ class Server final {
   std::shared_ptr<std::atomic_bool> _mget_queue_failure_used;              // 故障模拟/测试标记
 
  public:
-  Server(const LogConfig& log_config, size_t thread_id,
-         std::shared_ptr<ReactorGroup> reactor_group, std::shared_ptr<ServerStats> stats,
+  Server(const LogConfig& log_config, size_t thread_id, std::shared_ptr<ReactorGroup> reactor_group,
+         std::shared_ptr<ServerStats> stats,
          std::shared_ptr<std::atomic_bool> mget_queue_failure_used);
 
   // 绑定监听套接字并启动 Reactor 事件驱动循环

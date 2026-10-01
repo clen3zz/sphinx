@@ -38,7 +38,7 @@ export SPHINX_MYSQL_DATABASE=your_database
 
 MYSQL_PWD="$SPHINX_MYSQL_PASSWORD" mysql --protocol=tcp \
   -h "$SPHINX_MYSQL_HOST" -P "$SPHINX_MYSQL_PORT" \
-  -u "$SPHINX_MYSQL_USER" "$SPHINX_MYSQL_DATABASE" < product-service/schema.sql
+  -u "$SPHINX_MYSQL_USER" "$SPHINX_MYSQL_DATABASE" < product-service/schema/mysql/schema.sql
 MYSQL_PWD="$SPHINX_MYSQL_PASSWORD" mysql --protocol=tcp \
   -h "$SPHINX_MYSQL_HOST" -P "$SPHINX_MYSQL_PORT" \
   -u "$SPHINX_MYSQL_USER" "$SPHINX_MYSQL_DATABASE" \
