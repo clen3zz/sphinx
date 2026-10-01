@@ -41,12 +41,11 @@ class CacheOperationPermit final {
   void fail() noexcept;
 
  private:
-  CacheOperationPermit(CacheCircuitBreaker* owner, std::uint64_t generation, bool probe) noexcept;
+  CacheOperationPermit(CacheCircuitBreaker* owner, std::uint64_t generation) noexcept;
   void finish(bool succeeded) noexcept;
 
   CacheCircuitBreaker* _owner = nullptr;
   std::uint64_t _generation = 0;
-  bool _probe = false;
 
   friend class CacheCircuitBreaker;
 };
@@ -64,7 +63,7 @@ class CacheCircuitBreaker final {
   CacheBreakerSnapshot snapshot() const;
 
  private:
-  void finish(std::uint64_t generation, bool succeeded, bool probe) noexcept;
+  void finish(std::uint64_t generation, bool succeeded) noexcept;
 
   CacheBreakerOptions _options;
   CacheNowFunction _now;

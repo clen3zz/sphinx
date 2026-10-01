@@ -17,7 +17,7 @@ ProductReadTicket::ProductReadTicket(ProductReadCoordinator* owner, std::uint64_
                                      std::shared_ptr<ProductReadFlight> flight) noexcept
     : _owner{owner}, _id{id}, _role{role}, _flight{std::move(flight)} {}
 
-ProductReadTicket::~ProductReadTicket() { abandon_if_needed(); }
+ProductReadTicket::~ProductReadTicket() { complete({ProductStatus::InternalError, std::nullopt}); }
 
 ProductReadTicket::ProductReadTicket(ProductReadTicket&& other) noexcept
     : _owner{std::exchange(other._owner, nullptr)},
@@ -28,7 +28,7 @@ ProductReadTicket::ProductReadTicket(ProductReadTicket&& other) noexcept
 
 ProductReadTicket& ProductReadTicket::operator=(ProductReadTicket&& other) noexcept {
   if (this != &other) {
-    abandon_if_needed();
+    complete({ProductStatus::InternalError, std::nullopt});
     _owner = std::exchange(other._owner, nullptr);
     _id = other._id;
     _role = other._role;
@@ -39,8 +39,6 @@ ProductReadTicket& ProductReadTicket::operator=(ProductReadTicket&& other) noexc
 }
 
 ReadRole ProductReadTicket::role() const noexcept { return _role; }
-
-std::uint64_t ProductReadTicket::id() const noexcept { return _id; }
 
 ProductLoadResult ProductReadTicket::wait_until(
     std::chrono::steady_clock::time_point deadline) const {
@@ -70,13 +68,6 @@ void ProductReadTicket::complete(ProductLoadResult result) noexcept {
   }
   ProductReadCoordinator* owner = std::exchange(_owner, nullptr);
   owner->complete(_id, _flight, std::move(result));
-}
-
-void ProductReadTicket::abandon_if_needed() noexcept {
-  if (_owner != nullptr && _role == ReadRole::Leader && _flight) {
-    ProductReadCoordinator* owner = std::exchange(_owner, nullptr);
-    owner->abandon(_id, _flight);
-  }
 }
 
 ProductLoadPermit::ProductLoadPermit(ProductReadCoordinator* owner) noexcept : _owner{owner} {}
@@ -181,11 +172,6 @@ void ProductReadCoordinator::complete(std::uint64_t id,
   if (position != _flights.end() && position->second == flight) {
     _flights.erase(position);
   }
-}
-
-void ProductReadCoordinator::abandon(std::uint64_t id,
-                                     const std::shared_ptr<ProductReadFlight>& flight) noexcept {
-  complete(id, flight, {ProductStatus::InternalError, std::nullopt});
 }
 
 void ProductReadCoordinator::release_load() noexcept {

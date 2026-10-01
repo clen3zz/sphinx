@@ -36,7 +36,6 @@ class ProductReadTicket final {
   ProductReadTicket& operator=(ProductReadTicket&& other) noexcept;
 
   ReadRole role() const noexcept;
-  std::uint64_t id() const noexcept;
   ProductLoadResult wait_until(std::chrono::steady_clock::time_point deadline) const;
   bool wait_timed_out() const noexcept;
   void complete(ProductLoadResult result) noexcept;
@@ -44,7 +43,6 @@ class ProductReadTicket final {
  private:
   ProductReadTicket(ProductReadCoordinator* owner, std::uint64_t id, ReadRole role,
                     std::shared_ptr<ProductReadFlight> flight) noexcept;
-  void abandon_if_needed() noexcept;
 
   ProductReadCoordinator* _owner = nullptr;
   std::uint64_t _id = 0;
@@ -92,7 +90,6 @@ class ProductReadCoordinator final {
  private:
   void complete(std::uint64_t id, const std::shared_ptr<ProductReadFlight>& flight,
                 ProductLoadResult result) noexcept;
-  void abandon(std::uint64_t id, const std::shared_ptr<ProductReadFlight>& flight) noexcept;
   void release_load() noexcept;
 
   ProductReadOptions _options;

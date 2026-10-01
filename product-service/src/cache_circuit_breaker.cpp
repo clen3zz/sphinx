@@ -17,23 +17,20 @@ std::chrono::steady_clock::time_point default_cache_now() noexcept {
   return std::chrono::steady_clock::now();
 }
 
-CacheOperationPermit::CacheOperationPermit(CacheCircuitBreaker* owner, std::uint64_t generation,
-                                           bool probe) noexcept
-    : _owner{owner}, _generation{generation}, _probe{probe} {}
+CacheOperationPermit::CacheOperationPermit(CacheCircuitBreaker* owner,
+                                           std::uint64_t generation) noexcept
+    : _owner{owner}, _generation{generation} {}
 
 CacheOperationPermit::~CacheOperationPermit() { fail(); }
 
 CacheOperationPermit::CacheOperationPermit(CacheOperationPermit&& other) noexcept
-    : _owner{std::exchange(other._owner, nullptr)},
-      _generation{other._generation},
-      _probe{other._probe} {}
+    : _owner{std::exchange(other._owner, nullptr)}, _generation{other._generation} {}
 
 CacheOperationPermit& CacheOperationPermit::operator=(CacheOperationPermit&& other) noexcept {
   if (this != &other) {
     fail();
     _owner = std::exchange(other._owner, nullptr);
     _generation = other._generation;
-    _probe = other._probe;
   }
   return *this;
 }
@@ -45,7 +42,7 @@ void CacheOperationPermit::fail() noexcept { finish(false); }
 void CacheOperationPermit::finish(bool succeeded) noexcept {
   if (_owner != nullptr) {
     CacheCircuitBreaker* owner = std::exchange(_owner, nullptr);
-    owner->finish(_generation, succeeded, _probe);
+    owner->finish(_generation, succeeded);
   }
 }
 
@@ -60,7 +57,7 @@ CacheCircuitBreaker::CacheCircuitBreaker(CacheBreakerOptions options, CacheNowFu
 std::optional<CacheOperationPermit> CacheCircuitBreaker::try_acquire() {
   std::lock_guard lock{_mutex};
   if (_state == CacheBreakerState::Closed) {
-    return CacheOperationPermit{this, _generation, false};
+    return CacheOperationPermit{this, _generation};
   }
   if (_state == CacheBreakerState::HalfOpen || _now() < _retry_at) {
     return std::nullopt;
@@ -68,7 +65,7 @@ std::optional<CacheOperationPermit> CacheCircuitBreaker::try_acquire() {
 
   _state = CacheBreakerState::HalfOpen;
   ++_generation;
-  return CacheOperationPermit{this, _generation, true};
+  return CacheOperationPermit{this, _generation};
 }
 
 CacheBreakerSnapshot CacheCircuitBreaker::snapshot() const {
@@ -84,16 +81,14 @@ CacheBreakerSnapshot CacheCircuitBreaker::snapshot() const {
   return result;
 }
 
-void CacheCircuitBreaker::finish(std::uint64_t generation, bool succeeded, bool probe) noexcept {
+void CacheCircuitBreaker::finish(std::uint64_t generation, bool succeeded) noexcept {
   std::lock_guard lock{_mutex};
   if (generation != _generation) {
     return;
   }
 
-  if (probe) {
-    if (_state != CacheBreakerState::HalfOpen) {
-      return;
-    }
+  // 进入 HalfOpen 会换代，因此当前代的许可只能是唯一的恢复探测。
+  if (_state == CacheBreakerState::HalfOpen) {
     if (succeeded) {
       _state = CacheBreakerState::Closed;
       _consecutive_failures = 0;
