@@ -23,7 +23,8 @@ PUT：MySQL 锁行、检查版本、更新并提交 → 尽力删除缓存
 
 | 组件 | 接口与职责 | 主要数据 |
 | --- | --- | --- |
-| [ProductHttpServer](../product-service/src/http/product_http.cpp) | 创建 Worker 上下文；[路由](../product-service/src/http/product_http_routes.cpp)解析请求、映射状态和响应头 | 运行配置、每个 Worker 的 store/cache/service、进程共享状态 |
+| [启动装配](../product-service/src/bootstrap/product_worker.cpp) | 读取[配置](../product-service/src/bootstrap/product_config.cpp)、选择后端、惰性创建 Worker 上下文 | 每个 Worker 的 MySQL 线程环境、store/cache/service；入口持有进程运行时与共享状态 |
+| [ProductHttpServer](../product-service/src/http/product_http.cpp) | 监听 HTTP；[路由](../product-service/src/http/product_http_routes.cpp)通过回调取得业务服务，解析请求、映射状态和响应头 | HTTP 配置、服务回调、共享状态引用；指标标签不参与后端选择 |
 | [ProductService](../product-service/include/sphinx/product/application/product_service.h) | get、get_many、update；统一缓存旁路和保护流程 | 借用 store/cache/shared，持有 ProductCachePolicy |
 | [ProductCache](../product-service/include/sphinx/product/application/ports/product_cache.h) | `get`、`put`、`erase`、`get_many`、`put_many` | 读返回 `optional<string>`；写用 `CacheWriteEntry{key, value, ttl_seconds}` |
 | [RedisProductCache](../product-service/src/backends/redis/redis_product_cache.cpp) | 实现缓存接口，管理命令、回复和重连 | Pimpl 持有配置、所属线程 ID、RAII 管理的 hiredis context；回复也由 RAII 释放 |
@@ -39,6 +40,12 @@ ProductService 内部用 ReadBatch 串起读流程：work_items 存去重后的�
 ProductReadTicket 标识 Leader、Follower 或 Rejected，负责发布或等待结果；Leader 未完成
 就析构时发布错误，避免留下悬空 flight。ProductLoadPermit 用 RAII 归还数据库读名额。
 CacheOperationPermit 携带 generation，旧操作的结果不能修改新一轮熔断状态。
+
+目录按 domain、application、backends、http、bootstrap 分层，头文件和测试对应存放；
+完整目录见 [Sphinx 架构](ARCHITECTURE.md#建议阅读顺序)。MySQL、Redis、Sphinx 的配置与
+实现各放在 `backends/mysql`、`backends/redis`、`backends/sphinx`，三个后端互不依赖。
+业务层只依赖 ProductStore、ProductCache 接口和统一缓存策略；启动层负责组合具体实现。
+HTTP 层不创建数据库或缓存客户端，进程退出时先结束 Worker，再销毁共享状态和 MySQL 运行时。
 
 ## 商品与缓存格式
 

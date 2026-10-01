@@ -34,7 +34,7 @@ flowchart LR
 
 ### 一次未命中如何进入缓存节点
 
-1. HTTP Worker 第一次处理请求时创建自己的 `MySqlProductStore`、`SphinxProductCache` 和 `ProductService`；MySQL 与缓存连接不跨 HTTP 工作线程共享。[对象构造](../product-service/src/http/product_http.cpp)按 MySQL 线程环境、存储、缓存、业务服务的生命周期顺序安排。
+1. HTTP Worker 第一次处理商品请求时，通过启动层提供的回调创建自己的 `MySqlProductStore`、`SphinxProductCache` 和 `ProductService`；MySQL 与缓存连接不跨 HTTP 工作线程共享。[Worker 装配](../product-service/src/bootstrap/product_worker.cpp)按 MySQL 线程环境、存储、缓存、业务服务的生命周期顺序安排。HTTP 层只调用业务服务；进程级 MySQL 运行时由启动入口持有，在线程退出后销毁。
 2. `ClusterClient` 用 key 在一致性哈希环上选择一个 Sphinx 节点，复用到该节点的 TCP 连接，发送 Memcached 文本协议 `get`。[节点路由](../sphinxd/src/client/cluster.cpp)和[客户端传输](../sphinxd/src/client/cluster_client.cpp)相互分开。
 3. 节点的接入 Worker 通过 `epoll` 收取字节，[Server](../sphinxd/src/server/server.cpp)保留未完整的 TCP 帧，解析命令，并按 key 找到拥有存储分片的 Worker。若目标不是接入 Worker，请求通过有界跨线程通道传递；响应回到原 Worker 后按请求顺序写回。[Connection](../sphinxd/src/server/connection.cpp)管理回包顺序。
 4. 目标 Worker 在自己的 [Log 和 Index](../sphinxd/src/storage/logmem.cpp) 中查找未过期的值。未找到时返回 `END`；商品服务再读 MySQL，并尽力发 `set` 回填。每个 Worker 独占自己的存储分片，因此普通存储操作不需要跨 Worker 共用一把锁。
@@ -52,6 +52,34 @@ flowchart LR
 - protected 的回源合并、读准入和缓存熔断只在单个商品服务进程内生效；读熔断不阻止更新提交后的缓存删除。
 
 ## 建议阅读顺序
+
+源码按职责存放，公开头文件和测试沿用相同目录结构：
+
+```text
+product-service/src/
+  domain/                商品模型与约束
+  application/           业务流程、结果和指标
+    ports/               ProductStore、ProductCache 接口
+    cache/               编码与缓存策略
+    protection/          回源协调与熔断
+  backends/
+    mysql/               配置、运行时与权威存储
+    redis/               配置与 Redis 缓存适配器
+    sphinx/              配置与 Sphinx 缓存适配器
+  http/                  请求解析、响应和监听
+  bootstrap/             环境配置、后端选择与 Worker 装配
+sphinxd/src/
+  client/                集群路由和传输
+  server/                协议执行、连接和跨 Worker 路由
+  reactor/               事件循环
+  storage/               Log、Index 和内存管理
+  common/                缓冲区与统计
+```
+
+`sphinx_product_core` 不依赖后端客户端；三个适配器各自实现业务接口。`sphinx_product_http`
+只依赖业务层，`sphinx_product_bootstrap` 负责连接 HTTP 与适配器。Sphinx 适配器仅链接
+`sphinx_client`，不链接节点的 `sphinx_core`。MySQL 表结构存放在
+[schema/mysql/schema.sql](../product-service/schema/mysql/schema.sql)。
 
 1. [README 的商品演示](../README.md#跑通一个商品)：先看到 MySQL、HTTP 与两个缓存节点怎样协作。
 2. [ProductService](../product-service/src/application/product_service.cpp)与[MySQL 存储](../product-service/src/backends/mysql/mysql_product_store.cpp)：理解读回填、版本更新与提交后失效。
