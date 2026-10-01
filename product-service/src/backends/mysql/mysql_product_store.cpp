@@ -393,9 +393,7 @@ struct MySqlProductStore::Impl {
         }
       }
     } catch (...) {
-      if (slot == statement) {
-        (void)clear_statement_result(slot, statement);
-      }
+      (void)clear_statement_result(slot, statement);
       throw;
     }
 
