@@ -29,29 +29,6 @@ bool has_embedded_nul(const std::string& value) noexcept {
   return value.find('\0') != std::string::npos;
 }
 
-bool is_unavailable_error(unsigned int error) noexcept {
-  // 连接中断、锁等待超时和死锁都属于本次数据库操作不可用，不能当作“查无此行”。
-  switch (error) {
-    case CR_CONNECTION_ERROR:
-    case CR_CONN_HOST_ERROR:
-    case CR_IPSOCK_ERROR:
-    case CR_UNKNOWN_HOST:
-    case CR_SERVER_GONE_ERROR:
-    case CR_TCP_CONNECTION:
-    case CR_SERVER_LOST:
-    case CR_SSL_CONNECTION_ERROR:
-    case CR_SERVER_LOST_EXTENDED:
-    case ER_SERVER_SHUTDOWN:
-    case ER_TOO_MANY_USER_CONNECTIONS:
-    case ER_LOCK_WAIT_TIMEOUT:
-    case ER_LOCK_DEADLOCK:
-    case ER_QUERY_TIMEOUT:
-      return true;
-    default:
-      return false;
-  }
-}
-
 bool is_connection_failure(unsigned int error) noexcept {
   switch (error) {
     case CR_CONNECTION_ERROR:
@@ -67,6 +44,26 @@ bool is_connection_failure(unsigned int error) noexcept {
       return true;
     default:
       return false;
+  }
+}
+
+bool is_unavailable_error(unsigned int error) noexcept {
+  // 锁等待超时和死锁与连接故障都属于不可用；只有连接故障需要丢弃连接。
+  switch (error) {
+    case ER_TOO_MANY_USER_CONNECTIONS:
+    case ER_LOCK_WAIT_TIMEOUT:
+    case ER_LOCK_DEADLOCK:
+    case ER_QUERY_TIMEOUT:
+      return true;
+    default:
+      return is_connection_failure(error);
+  }
+}
+
+void close_statement(MYSQL_STMT*& statement) noexcept {
+  if (statement != nullptr) {
+    mysql_stmt_close(statement);
+    statement = nullptr;
   }
 }
 
@@ -211,14 +208,14 @@ struct MySqlProductStore::Impl {
 
   MYSQL_STMT* prepare_statement(MYSQL_STMT*& slot, const char* query, unsigned long query_length,
                                 unsigned int expected_parameters, unsigned int expected_fields,
-                                const char* allocation_error, const char* preparation_error,
-                                const char* shape_error) {
+                                const char* operation) {
     if (slot != nullptr) {
       return slot;
     }
     MYSQL_STMT* statement = mysql_stmt_init(connection);
     if (statement == nullptr) {
-      throw StoreError{StoreErrorCode::Unexpected, allocation_error};
+      throw StoreError{StoreErrorCode::Unexpected,
+                       std::string{"MySQL "} + operation + " allocation failed"};
     }
     if (mysql_stmt_prepare(statement, query, query_length) != 0) {
       const auto error = mysql_stmt_errno(statement);
@@ -226,12 +223,14 @@ struct MySqlProductStore::Impl {
       if (is_connection_failure(error)) {
         reset_connection();
       }
-      throw_mysql_error(error, preparation_error);
+      throw StoreError{classify_mysql_error(error),
+                       std::string{"MySQL "} + operation + " preparation failed"};
     }
     if (mysql_stmt_param_count(statement) != expected_parameters ||
         mysql_stmt_field_count(statement) != expected_fields) {
       mysql_stmt_close(statement);
-      throw StoreError{StoreErrorCode::Unexpected, shape_error};
+      throw StoreError{StoreErrorCode::Unexpected,
+                       std::string{"MySQL "} + operation + " shape is invalid"};
     }
     slot = statement;
     return statement;
@@ -240,9 +239,7 @@ struct MySqlProductStore::Impl {
   MYSQL_STMT* prepare_find_statement() {
     // 数据参数通过占位符绑定，不把商品 ID 拼接进 SQL；语句句柄在本连接内复用。
     constexpr char query[] = "SELECT id, name, price_cents, version FROM products WHERE id = ?";
-    return prepare_statement(
-        find_statement, query, sizeof(query) - 1, 1, 4, "MySQL statement allocation failed",
-        "MySQL product query preparation failed", "MySQL product query shape is invalid");
+    return prepare_statement(find_statement, query, sizeof(query) - 1, 1, 4, "product query");
   }
 
   MYSQL_STMT* prepare_find_many_statement(std::size_t count) {
@@ -252,11 +249,8 @@ struct MySqlProductStore::Impl {
     if (find_many_statement != nullptr && find_many_parameter_count == count) {
       return find_many_statement;
     }
-    if (find_many_statement != nullptr) {
-      mysql_stmt_close(find_many_statement);
-      find_many_statement = nullptr;
-      find_many_parameter_count = 0;
-    }
+    close_statement(find_many_statement);
+    find_many_parameter_count = 0;
 
     std::string query{"SELECT id, name, price_cents, version FROM products WHERE id IN ("};
     for (std::size_t index = 0; index < count; ++index) {
@@ -266,11 +260,9 @@ struct MySqlProductStore::Impl {
       query += '?';
     }
     query += ')';
-    auto* statement = prepare_statement(
-        find_many_statement, query.c_str(), static_cast<unsigned long>(query.size()),
-        static_cast<unsigned int>(count), 4, "MySQL statement allocation failed",
-        "MySQL product batch query preparation failed",
-        "MySQL product batch query shape is invalid");
+    auto* statement = prepare_statement(find_many_statement, query.c_str(),
+                                        static_cast<unsigned long>(query.size()),
+                                        static_cast<unsigned int>(count), 4, "product batch query");
     find_many_parameter_count = count;
     return statement;
   }
@@ -279,9 +271,7 @@ struct MySqlProductStore::Impl {
     // FOR UPDATE 在事务中读取当前行并加锁，避免同一商品的并发写入交错执行。
     constexpr char query[] =
         "SELECT id, name, price_cents, version FROM products WHERE id = ? FOR UPDATE";
-    return prepare_statement(
-        lock_statement, query, sizeof(query) - 1, 1, 4, "MySQL statement allocation failed",
-        "MySQL product lock query preparation failed", "MySQL product lock query shape is invalid");
+    return prepare_statement(lock_statement, query, sizeof(query) - 1, 1, 4, "product lock query");
   }
 
   MYSQL_STMT* prepare_update_statement() {
@@ -289,10 +279,7 @@ struct MySqlProductStore::Impl {
     constexpr char query[] =
         "UPDATE products SET name = ?, price_cents = ?, version = version + 1 "
         "WHERE id = ? AND version = ?";
-    return prepare_statement(update_statement, query, sizeof(query) - 1, 4, 0,
-                             "MySQL statement allocation failed",
-                             "MySQL product update preparation failed",
-                             "MySQL product update statement shape is invalid");
+    return prepare_statement(update_statement, query, sizeof(query) - 1, 4, 0, "product update");
   }
 
   /// 清理结果并重置预处理语句以供复用；若清理失败，则关闭整个连接。
@@ -498,23 +485,11 @@ struct MySqlProductStore::Impl {
 
   void reset_connection() noexcept {
     // 先释放依附于连接的语句句柄，再关闭连接；后续独立请求会重新 prepare。
-    if (find_statement != nullptr) {
-      mysql_stmt_close(find_statement);
-      find_statement = nullptr;
-    }
-    if (find_many_statement != nullptr) {
-      mysql_stmt_close(find_many_statement);
-      find_many_statement = nullptr;
-    }
+    close_statement(find_statement);
+    close_statement(find_many_statement);
     find_many_parameter_count = 0;
-    if (lock_statement != nullptr) {
-      mysql_stmt_close(lock_statement);
-      lock_statement = nullptr;
-    }
-    if (update_statement != nullptr) {
-      mysql_stmt_close(update_statement);
-      update_statement = nullptr;
-    }
+    close_statement(lock_statement);
+    close_statement(update_statement);
     if (connection != nullptr) {
       mysql_close(connection);
       connection = nullptr;
