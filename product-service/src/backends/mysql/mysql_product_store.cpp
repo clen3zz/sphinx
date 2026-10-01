@@ -243,9 +243,7 @@ struct MySqlProductStore::Impl {
   }
 
   MYSQL_STMT* prepare_find_many_statement(std::size_t count) {
-    if (count == 0 || count > max_product_batch_size) {
-      throw std::invalid_argument{"MySQL product batch size must be in 1..32"};
-    }
+    assert(count > 0 && count <= max_product_batch_size);
     if (find_many_statement != nullptr && find_many_parameter_count == count) {
       return find_many_statement;
     }

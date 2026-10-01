@@ -53,10 +53,6 @@ ProductRuntimeConfig load_product_config() {
   config.mysql.user = required_environment_value("SPHINX_MYSQL_USER");
   config.mysql.password = required_environment_value("SPHINX_MYSQL_PASSWORD");
   config.mysql.database = required_environment_value("SPHINX_MYSQL_DATABASE");
-  if (config.mysql.user.empty() || config.mysql.database.empty()) {
-    throw std::invalid_argument{"required service configuration is empty"};
-  }
-
   config.mysql.host = optional_environment_value("SPHINX_MYSQL_HOST", "127.0.0.1");
   config.mysql.port =
       static_cast<std::uint16_t>(unsigned_environment_value("SPHINX_MYSQL_PORT", 3306, 1, 65535));
