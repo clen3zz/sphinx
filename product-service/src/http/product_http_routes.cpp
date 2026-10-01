@@ -36,6 +36,21 @@ void set_internal_error(httplib::Response& response) {
   set_error_response(response, 500, "internal_error");
 }
 
+template <typename Handler>
+auto product_handler(Handler handler) {
+  return
+      [handler = std::move(handler)](const httplib::Request& request, httplib::Response& response) {
+        try {
+          handler(request, response);
+        } catch (...) {
+          if (request.method == "GET") {
+            response.set_header("X-Cache", "NOT_CHECKED");
+          }
+          set_internal_error(response);
+        }
+      };
+}
+
 Json product_json(const Product& product) {
   return Json{{"id", product.id},
               {"name", product.name},
@@ -381,73 +396,56 @@ void install_product_routes(httplib::Server& server,
         set_json_response(response, 200, make_metrics_response(shared, backend, policy).dump());
       });
 
-  server.Get("/products",
-             [current_service](const httplib::Request& request, httplib::Response& response) {
-               try {
-                 const auto query = parse_product_batch_query(request);
-                 if (!query) {
-                   response.set_header("X-Cache", "NOT_CHECKED");
-                   set_error_response(response, 400, "invalid_argument");
-                   return;
-                 }
-                 handle_get_products_result(
-                     response, current_service().get_many(query->ids, query->bypass_cache));
-               } catch (...) {
+  server.Get("/products", product_handler([current_service](const httplib::Request& request,
+                                                            httplib::Response& response) {
+               const auto query = parse_product_batch_query(request);
+               if (!query) {
                  response.set_header("X-Cache", "NOT_CHECKED");
-                 set_internal_error(response);
+                 set_error_response(response, 400, "invalid_argument");
+                 return;
                }
-             });
+               handle_get_products_result(
+                   response, current_service().get_many(query->ids, query->bypass_cache));
+             }));
 
   server.Get(R"(/products/([^/]+))",
-             [current_service](const httplib::Request& request, httplib::Response& response) {
-               // HTTP 层只解析请求并映射响应；缓存命中、回源和结果分类由 ProductService 决定。
-               try {
-                 const auto id = parse_product_id(request);
-                 if (!id) {
-                   response.set_header("X-Cache", "NOT_CHECKED");
-                   set_error_response(response, 400, "invalid_argument");
-                   return;
-                 }
-                 const auto fresh = parse_fresh_query(request);
-                 if (!fresh) {
-                   response.set_header("X-Cache", "NOT_CHECKED");
-                   set_error_response(response, 400, "invalid_argument");
-                   return;
-                 }
-                 handle_get_result(response, current_service().get(*id, *fresh));
-               } catch (...) {
-                 response.set_header("X-Cache", "NOT_CHECKED");
-                 set_internal_error(response);
-               }
-             });
+             product_handler(
+                 [current_service](const httplib::Request& request, httplib::Response& response) {
+                   // HTTP 层只解析请求并映射响应；缓存命中、回源和结果分类由 ProductService 决定。
+                   const auto id = parse_product_id(request);
+                   const auto fresh = parse_fresh_query(request);
+                   if (!id || !fresh) {
+                     response.set_header("X-Cache", "NOT_CHECKED");
+                     set_error_response(response, 400, "invalid_argument");
+                     return;
+                   }
+                   handle_get_result(response, current_service().get(*id, *fresh));
+                 }));
 
   server.Put(R"(/products/([^/]+))",
-             [current_service](const httplib::Request& request, httplib::Response& response) {
-               // 更新请求携带 expected_version，交给业务层和 MySQL 事务完成并发检查。
-               try {
-                 const auto id = parse_product_id(request);
-                 if (!id) {
-                   set_error_response(response, 400, "invalid_argument");
-                   return;
-                 }
-                 if (!is_json_content_type(request)) {
-                   set_error_response(response, 415, "unsupported_media_type");
-                   return;
-                 }
-                 if (request.body.size() > 65536) {
-                   set_error_response(response, 413, "payload_too_large");
-                   return;
-                 }
-                 const auto update = parse_update_request(request, *id);
-                 if (!update) {
-                   set_error_response(response, 400, "invalid_argument");
-                   return;
-                 }
-                 handle_update_result(response, current_service().update(*update), *id);
-               } catch (...) {
-                 set_internal_error(response);
-               }
-             });
+             product_handler(
+                 [current_service](const httplib::Request& request, httplib::Response& response) {
+                   // 更新请求携带 expected_version，交给业务层和 MySQL 事务完成并发检查。
+                   const auto id = parse_product_id(request);
+                   if (!id) {
+                     set_error_response(response, 400, "invalid_argument");
+                     return;
+                   }
+                   if (!is_json_content_type(request)) {
+                     set_error_response(response, 415, "unsupported_media_type");
+                     return;
+                   }
+                   if (request.body.size() > 65536) {
+                     set_error_response(response, 413, "payload_too_large");
+                     return;
+                   }
+                   const auto update = parse_update_request(request, *id);
+                   if (!update) {
+                     set_error_response(response, 400, "invalid_argument");
+                     return;
+                   }
+                   handle_update_result(response, current_service().update(*update), *id);
+                 }));
 }
 
 }  // namespace sphinx
