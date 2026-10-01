@@ -17,33 +17,16 @@ import time
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from product_cache_tools import (
+    CacheServer, MySqlDatabase, read_line, redis_command, reserve_port, wait_for_port,
+)
+
 
 SPHINXD_BINARY = None
 PRODUCT_SERVICE_BINARY = None
 PRODUCT_ID_BASE = 8_000_000_000_000_000
 PRODUCT_IDS = itertools.count(PRODUCT_ID_BASE)
-
-
-def reserve_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        return listener.getsockname()[1]
-
-
-def wait_for_port(process, port, log_file, timeout=5.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            log_file.flush()
-            log_file.seek(0)
-            output = log_file.read().decode(errors="replace")
-            raise RuntimeError(f"service exited during startup: {output}")
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.1):
-                return
-        except OSError:
-            time.sleep(0.05)
-    raise RuntimeError("service did not bind its local test port")
 
 
 class ProductHttpIntegrationTest(unittest.TestCase):
@@ -83,6 +66,7 @@ class ProductHttpIntegrationTest(unittest.TestCase):
             raise RuntimeError("SPHINX_TEST_MYSQL_PORT is invalid") from error
         if not 1 <= cls.mysql_port <= 65535:
             raise RuntimeError("SPHINX_TEST_MYSQL_PORT is outside 1..65535")
+        cls.database = MySqlDatabase(mysql_values)
         cls.mysql_host = mysql_values["SPHINX_TEST_MYSQL_HOST"]
         cls.mysql_user = mysql_values["SPHINX_TEST_MYSQL_USER"]
         cls.mysql_password = mysql_values["SPHINX_TEST_MYSQL_PASSWORD"]
@@ -103,83 +87,23 @@ class ProductHttpIntegrationTest(unittest.TestCase):
                 "SPHINX_CACHE_TTL_SECONDS": "30",
             }
         )
-        cls.cache_port = reserve_port()
-        if cls.cache_backend == "sphinx":
-            cache_command = [
-                str(SPHINXD_BINARY),
-                "--listen",
-                "127.0.0.1",
-                "--port",
-                str(cls.cache_port),
-                "--threads",
-                "2",
-            ]
-        else:
-            redis_server = os.environ.get("SPHINX_TEST_REDIS_SERVER") or shutil.which(
-                "redis-server"
-            )
-            if redis_server is None:
-                raise RuntimeError("redis-server is required for the Redis backend")
-            cls.redis_directory = tempfile.TemporaryDirectory(prefix="sphinx-redis-test-")
-            cache_command = [
-                redis_server,
-                "--bind",
-                "127.0.0.1",
-                "--port",
-                str(cls.cache_port),
-                "--save",
-                "",
-                "--appendonly",
-                "no",
-                "--dir",
-                cls.redis_directory.name,
-            ]
-        cls.cache_command = cache_command
-        try:
-            cls.start_cache_server()
-        except Exception:
-            if hasattr(cls, "redis_directory"):
-                cls.redis_directory.cleanup()
-            raise
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.stop_cache_server()
-        redis_directory = getattr(cls, "redis_directory", None)
-        if redis_directory is not None:
-            redis_directory.cleanup()
+        cache_binary = str(SPHINXD_BINARY) if cls.cache_backend == "sphinx" else (
+            os.environ.get("SPHINX_TEST_REDIS_SERVER") or shutil.which("redis-server")
+        )
+        if cache_binary is None:
+            raise RuntimeError("redis-server is required for the Redis backend")
+        cls.cache_server = CacheServer(cls.cache_backend, cache_binary, 32, "noeviction")
+        cls.cache_port = cls.cache_server.port
+        cls.addClassCleanup(cls.cache_server.close)
+        cls.start_cache_server()
 
     @classmethod
     def start_cache_server(cls):
-        cls.cache_log = tempfile.TemporaryFile()
-        cls.cache_process = subprocess.Popen(
-            cls.cache_command,
-            stdout=cls.cache_log,
-            stderr=cls.cache_log,
-        )
-        try:
-            wait_for_port(cls.cache_process, cls.cache_port, cls.cache_log)
-        except Exception:
-            cls.stop_cache_server()
-            raise
+        cls.cache_server.start()
 
     @classmethod
     def stop_cache_server(cls):
-        process = getattr(cls, "cache_process", None)
-        log_file = getattr(cls, "cache_log", None)
-        cls.cache_process = None
-        cls.cache_log = None
-        if process is not None:
-            if cls.cache_backend == "redis" and process.poll() is None:
-                try:
-                    cls.redis_command("SHUTDOWN", "NOSAVE")
-                except (AssertionError, OSError):
-                    pass
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-            cls._stop_process(process, log_file, expected=None)
+        cls.cache_server.stop()
 
     @staticmethod
     def _stop_process(process, log_file, expected):
@@ -221,35 +145,10 @@ class ProductHttpIntegrationTest(unittest.TestCase):
             self.delete_cache(key)
 
     def mysql_environment(self):
-        environment = self.base_environment.copy()
-        environment["MYSQL_PWD"] = self.mysql_password
-        return environment
+        return self.database.environment.copy()
 
     def run_mysql(self, statement):
-        command = [
-            "mysql",
-            "--protocol=tcp",
-            f"--host={self.mysql_host}",
-            f"--port={self.mysql_port}",
-            f"--user={self.mysql_user}",
-            f"--database={self.mysql_database}",
-            "--batch",
-            "--skip-column-names",
-            "--raw",
-            "--execute",
-            statement,
-        ]
-        result = subprocess.run(
-            command,
-            env=self.mysql_environment(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise AssertionError(f"disposable MySQL fixture command failed: {result.stderr.strip()}")
-        return result.stdout.strip()
+        return self.database.run(statement)
 
     def new_product_id(self):
         product_id = next(PRODUCT_IDS)
@@ -322,20 +221,17 @@ class ProductHttpIntegrationTest(unittest.TestCase):
                 self.cache_port if redis_port is None else redis_port
             )
             environment["SPHINX_REDIS_DATABASE"] = "0"
-        environment.pop("SPHINX_NEGATIVE_TTL_SECONDS", None)
-        environment.pop("SPHINX_TTL_JITTER_SECONDS", None)
-        environment.pop("SPHINX_CACHE_FAILURE_THRESHOLD", None)
-        environment.pop("SPHINX_CACHE_OPEN_INTERVAL_MS", None)
-        if negative_ttl is not None:
-            environment["SPHINX_NEGATIVE_TTL_SECONDS"] = str(negative_ttl)
-        if ttl_jitter is not None:
-            environment["SPHINX_TTL_JITTER_SECONDS"] = str(ttl_jitter)
-        if ttl_seconds is not None:
-            environment["SPHINX_CACHE_TTL_SECONDS"] = str(ttl_seconds)
-        if breaker_threshold is not None:
-            environment["SPHINX_CACHE_FAILURE_THRESHOLD"] = str(breaker_threshold)
-        if breaker_open_interval is not None:
-            environment["SPHINX_CACHE_OPEN_INTERVAL_MS"] = str(breaker_open_interval)
+        for name, value in {
+            "SPHINX_NEGATIVE_TTL_SECONDS": negative_ttl,
+            "SPHINX_TTL_JITTER_SECONDS": ttl_jitter,
+            "SPHINX_CACHE_TTL_SECONDS": 30 if ttl_seconds is None else ttl_seconds,
+            "SPHINX_CACHE_FAILURE_THRESHOLD": breaker_threshold,
+            "SPHINX_CACHE_OPEN_INTERVAL_MS": breaker_open_interval,
+        }.items():
+            if value is None:
+                environment.pop(name, None)
+            else:
+                environment[name] = str(value)
         self.service_log = tempfile.TemporaryFile()
         self.service_process = subprocess.Popen(
             [str(PRODUCT_SERVICE_BINARY)],
@@ -407,78 +303,13 @@ class ProductHttpIntegrationTest(unittest.TestCase):
                 client.sendall(
                     f"set {key} 0 {ttl} {len(value)}\r\n".encode() + value + b"\r\n"
                 )
-                response = self.read_line(client)
-            self.assertEqual(response, b"STORED\r\n")
+                response = read_line(client)
+            self.assertEqual(response, b"STORED")
         self.cache_keys.add(key)
-
-    @staticmethod
-    def read_line(connection):
-        line = bytearray()
-        while not line.endswith(b"\r\n"):
-            chunk = connection.recv(1)
-            if not chunk:
-                break
-            line.extend(chunk)
-        return bytes(line)
-
-    @classmethod
-    def _read_redis_line(cls, connection):
-        line = cls.read_line(connection)
-        if not line.endswith(b"\r\n"):
-            raise AssertionError("Redis returned an incomplete response line")
-        return line[:-2]
-
-    @classmethod
-    def _read_redis_exactly(cls, connection, size):
-        data = bytearray()
-        while len(data) < size:
-            chunk = connection.recv(size - len(data))
-            if not chunk:
-                raise AssertionError("Redis closed a response before its payload ended")
-            data.extend(chunk)
-        return bytes(data)
-
-    @classmethod
-    def _read_redis_reply(cls, connection):
-        line = cls._read_redis_line(connection)
-        if not line:
-            raise AssertionError("Redis returned an empty response")
-        kind, payload = line[:1], line[1:]
-        if kind == b"+":
-            return payload
-        if kind == b"-":
-            raise AssertionError(f"Redis command failed: {payload.decode(errors='replace')}")
-        if kind == b":":
-            return int(payload)
-        if kind == b"$":
-            size = int(payload)
-            if size == -1:
-                return None
-            value = cls._read_redis_exactly(connection, size)
-            if cls._read_redis_exactly(connection, 2) != b"\r\n":
-                raise AssertionError("Redis bulk response has an invalid terminator")
-            return value
-        if kind == b"*":
-            size = int(payload)
-            if size == -1:
-                return None
-            return [cls._read_redis_reply(connection) for _ in range(size)]
-        raise AssertionError(f"Redis returned an unsupported response type: {kind!r}")
 
     @classmethod
     def redis_command(cls, *arguments):
-        encoded = [
-            argument if isinstance(argument, bytes) else str(argument).encode("utf-8")
-            for argument in arguments
-        ]
-        request = bytearray(f"*{len(encoded)}\r\n".encode("ascii"))
-        for argument in encoded:
-            request.extend(f"${len(argument)}\r\n".encode("ascii"))
-            request.extend(argument)
-            request.extend(b"\r\n")
-        with socket.create_connection(("127.0.0.1", cls.cache_port), timeout=2) as connection:
-            connection.sendall(request)
-            return cls._read_redis_reply(connection)
+        return redis_command(cls.cache_port, *arguments)
 
     def delete_cache(self, key):
         try:
@@ -487,7 +318,7 @@ class ProductHttpIntegrationTest(unittest.TestCase):
             else:
                 with socket.create_connection(("127.0.0.1", self.cache_port), timeout=1) as client:
                     client.sendall(f"delete {key}\r\n".encode())
-                    self.read_line(client)
+                    read_line(client)
         except OSError:
             pass
 

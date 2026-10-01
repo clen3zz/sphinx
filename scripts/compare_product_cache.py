@@ -11,7 +11,6 @@ import os
 import platform
 import random
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -20,285 +19,10 @@ import time
 from collections import Counter
 from pathlib import Path
 
-
-METRIC_NAMES = (
-    "cache_lookup_keys",
-    "cache_hits",
-    "negative_hits",
-    "cache_misses",
-    "cache_corrupt",
-    "cache_read_failures",
-    "cache_fill_failures",
-    "cache_invalidation_failures",
-    "cache_circuit_bypasses",
-    "store_read_operations",
-    "store_read_ids",
-    "store_read_failures",
-    "read_leaders",
-    "read_followers",
-    "read_rejected",
-    "read_wait_timeouts",
-    "read_admission_rejected",
+from product_cache_tools import (
+    CacheServer, MySqlDatabase, RedisCommandError, read_exactly, read_line,
+    redis_command, reserve_port, stop_process, wait_for_port,
 )
-
-
-class RedisCommandError(RuntimeError):
-    """A complete Redis error reply, distinct from a broken connection."""
-
-
-def reserve_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        return listener.getsockname()[1]
-
-
-def read_line(connection):
-    line = bytearray()
-    while not line.endswith(b"\r\n"):
-        chunk = connection.recv(1)
-        if not chunk:
-            break
-        line.extend(chunk)
-    if not line.endswith(b"\r\n"):
-        raise RuntimeError("incomplete cache protocol response")
-    return bytes(line[:-2])
-
-
-def read_exactly(connection, size):
-    value = bytearray()
-    while len(value) < size:
-        chunk = connection.recv(size - len(value))
-        if not chunk:
-            raise RuntimeError("cache closed before a response payload ended")
-        value.extend(chunk)
-    return bytes(value)
-
-
-def read_redis_reply(connection):
-    line = read_line(connection)
-    if not line:
-        raise RuntimeError("Redis returned an empty response")
-    kind, payload = line[:1], line[1:]
-    if kind == b"+":
-        return payload
-    if kind == b"-":
-        raise RedisCommandError(payload.decode(errors="replace"))
-    if kind == b":":
-        return int(payload)
-    if kind == b"$":
-        size = int(payload)
-        if size == -1:
-            return None
-        value = read_exactly(connection, size)
-        if read_exactly(connection, 2) != b"\r\n":
-            raise RuntimeError("Redis returned an invalid bulk terminator")
-        return value
-    if kind == b"*":
-        size = int(payload)
-        if size == -1:
-            return None
-        return [read_redis_reply(connection) for _ in range(size)]
-    raise RuntimeError(f"Redis returned an unsupported reply type: {kind!r}")
-
-
-def redis_command(port, *arguments):
-    encoded = [
-        argument if isinstance(argument, bytes) else str(argument).encode("utf-8")
-        for argument in arguments
-    ]
-    request = bytearray(f"*{len(encoded)}\r\n".encode("ascii"))
-    for argument in encoded:
-        request.extend(f"${len(argument)}\r\n".encode("ascii"))
-        request.extend(argument)
-        request.extend(b"\r\n")
-    with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
-        connection.sendall(request)
-        return read_redis_reply(connection)
-
-
-def wait_for_port(process, port, log_file, timeout=8):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            log_file.flush()
-            log_file.seek(0)
-            raise RuntimeError(log_file.read().decode(errors="replace"))
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                return
-        except OSError:
-            time.sleep(0.05)
-    raise RuntimeError("local cache or HTTP service did not start")
-
-
-def stop_process(process, log_file, backend=None, port=None):
-    if process is None:
-        return
-    if process.poll() is None and backend == "redis":
-        try:
-            redis_command(port, "SHUTDOWN", "NOSAVE")
-        except (OSError, RuntimeError):
-            pass
-    if process.poll() is None:
-        process.send_signal(signal.SIGTERM)
-    try:
-        process.wait(timeout=8)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=2)
-    log_file.close()
-
-
-class MySqlDatabase:
-    def __init__(self, values):
-        self.host = values["SPHINX_TEST_MYSQL_HOST"]
-        self.port = values["SPHINX_TEST_MYSQL_PORT"]
-        self.user = values["SPHINX_TEST_MYSQL_USER"]
-        self.password = values["SPHINX_TEST_MYSQL_PASSWORD"]
-        self.database = values["SPHINX_TEST_MYSQL_DATABASE"]
-        self.environment = os.environ.copy()
-        self.environment["MYSQL_PWD"] = self.password
-
-    def run(self, statement=None, input_file=None, check=True):
-        command = [
-            shutil.which("mysql") or "mysql",
-            "--protocol=tcp",
-            f"--host={self.host}",
-            f"--port={self.port}",
-            f"--user={self.user}",
-            f"--database={self.database}",
-            "--batch",
-            "--skip-column-names",
-            "--raw",
-        ]
-        if statement is not None:
-            command.extend(["--execute", statement])
-        source = open(input_file, "rb") if input_file is not None else subprocess.DEVNULL
-        try:
-            result = subprocess.run(
-                command,
-                env=self.environment,
-                stdin=source,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-            )
-        finally:
-            if input_file is not None:
-                source.close()
-        if check and result.returncode != 0:
-            raise RuntimeError("isolated MySQL benchmark operation failed")
-        return result.stdout.strip() if result.returncode == 0 else None
-
-    def seed(self, rows):
-        for offset in range(0, len(rows), 300):
-            group = rows[offset : offset + 300]
-            values = ",".join(
-                f"({product_id},CONVERT(0x{name.encode('utf-8').hex()} USING utf8mb4),"
-                "100,1)"
-                for product_id, name in group
-            )
-            self.run(
-                "INSERT INTO products (id,name,price_cents,version) VALUES " + values
-            )
-
-    def delete_ids(self, product_ids):
-        for offset in range(0, len(product_ids), 300):
-            group = product_ids[offset : offset + 300]
-            if group:
-                self.run("DELETE FROM products WHERE id IN (" + ",".join(map(str, group)) + ")")
-
-    def statement_count(self):
-        escaped_database = self.database.replace("'", "''")
-        escaped_user = self.user.replace("'", "''")
-        query = (
-            "SELECT COALESCE(SUM(statement.COUNT_EXECUTE),0) "
-            "FROM performance_schema.prepared_statements_instances AS statement "
-            "JOIN performance_schema.threads AS thread "
-            "ON thread.THREAD_ID=statement.OWNER_THREAD_ID "
-            f"WHERE thread.PROCESSLIST_USER='{escaped_user}' "
-            f"AND thread.PROCESSLIST_DB='{escaped_database}' "
-            "AND statement.SQL_TEXT LIKE 'SELECT%products%' "
-            "AND statement.SQL_TEXT NOT LIKE '%FOR UPDATE%'"
-        )
-        result = self.run(query, check=False)
-        try:
-            return int(result) if result else None
-        except ValueError:
-            return None
-
-    def version(self):
-        return self.run("SELECT VERSION()", check=False)
-
-
-class CacheServer:
-    def __init__(self, backend, binary, memory_mb, redis_policy):
-        self.backend = backend
-        self.binary = binary
-        self.memory_mb = memory_mb
-        self.redis_policy = redis_policy
-        self.port = reserve_port()
-        self.redis_directory = None
-        self.process = None
-        self.log_file = None
-        if backend == "sphinx":
-            self.command = [
-                binary,
-                "--listen",
-                "127.0.0.1",
-                "--port",
-                str(self.port),
-                "--threads",
-                "2",
-                "--memory-limit",
-                str(memory_mb),
-                "--segment-size",
-                "2",
-            ]
-        else:
-            self.redis_directory = tempfile.TemporaryDirectory(prefix="sphinx-compare-redis-")
-            self.command = [
-                binary,
-                "--bind",
-                "127.0.0.1",
-                "--port",
-                str(self.port),
-                "--save",
-                "",
-                "--appendonly",
-                "no",
-                "--dir",
-                self.redis_directory.name,
-                "--maxmemory",
-                f"{memory_mb}mb",
-                "--maxmemory-policy",
-                redis_policy,
-            ]
-
-    def start(self):
-        self.log_file = tempfile.TemporaryFile()
-        self.process = subprocess.Popen(
-            self.command,
-            stdout=self.log_file,
-            stderr=self.log_file,
-        )
-        try:
-            wait_for_port(self.process, self.port, self.log_file)
-        except Exception:
-            self.stop()
-            raise
-
-    def stop(self):
-        process, log_file = self.process, self.log_file
-        self.process = None
-        self.log_file = None
-        stop_process(process, log_file, self.backend, self.port)
-
-    def close(self):
-        self.stop()
-        if self.redis_directory is not None:
-            self.redis_directory.cleanup()
 
 
 class ProductService:
@@ -310,6 +34,7 @@ class ProductService:
         policy,
         cache_server,
         workers,
+        client_concurrency,
         ttl_seconds,
         ttl_jitter_seconds=3,
     ):
@@ -319,6 +44,7 @@ class ProductService:
         self.policy = policy
         self.cache_server = cache_server
         self.workers = workers
+        self.client_concurrency = client_concurrency
         self.ttl_seconds = ttl_seconds
         self.ttl_jitter_seconds = ttl_jitter_seconds
         self.port = reserve_port()
@@ -375,6 +101,13 @@ class ProductService:
         self.log_file = None
         stop_process(process, log_file)
 
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *_exception):
+        self.stop()
+
     def request(self, method, path, body=None):
         started_at = time.perf_counter_ns()
         status = 0
@@ -423,7 +156,7 @@ class ProductService:
 
 
 def process_snapshot(process):
-    if process is None:
+    if process is None or process.poll() is not None:
         return None
     try:
         stat = Path(f"/proc/{process.pid}/stat").read_text(encoding="utf-8")
@@ -433,9 +166,27 @@ def process_snapshot(process):
         status = Path(f"/proc/{process.pid}/status").read_text(encoding="utf-8")
         rss_line = next(line for line in status.splitlines() if line.startswith("VmRSS:"))
         rss_bytes = int(rss_line.split()[1]) * 1024
-        return {"cpu_seconds": cpu_seconds, "rss_bytes": rss_bytes}
+        return {
+            "pid": process.pid,
+            "start_time_ticks": int(fields[19]),
+            "cpu_seconds": cpu_seconds,
+            "rss_bytes": rss_bytes,
+        }
     except (OSError, ValueError, StopIteration, IndexError):
         return None
+
+
+def process_resource_interval(before, after):
+    cpu_delta = None
+    if before is not None and after is not None:
+        same_process = (
+            before["pid"] == after["pid"]
+            and before["start_time_ticks"] == after["start_time_ticks"]
+        )
+        difference = after["cpu_seconds"] - before["cpu_seconds"]
+        if same_process and difference >= 0:
+            cpu_delta = difference
+    return {"before": before, "after": after, "cpu_seconds_delta": cpu_delta}
 
 
 def redis_info(port):
@@ -608,13 +359,20 @@ def percentile(samples, percent):
     return samples[index]
 
 
-def run_workload(service, database, label, jobs, workers):
+def run_workload(service, label, jobs):
+    database = service.database
     before = service.metrics()["counters"]
     sql_before = database.statement_count()
+    cache_stats_before = cache_info(service.cache_server)
+    service_before = process_snapshot(service.process)
+    cache_before = process_snapshot(service.cache_server.process)
     started_at = time.perf_counter()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=service.client_concurrency) as executor:
         responses = list(executor.map(lambda job: service.request(*job), jobs))
     elapsed_seconds = time.perf_counter() - started_at
+    service_after = process_snapshot(service.process)
+    cache_after = process_snapshot(service.cache_server.process)
+    cache_stats_after = cache_info(service.cache_server)
     after = service.metrics()["counters"]
     sql_after = database.statement_count()
 
@@ -625,7 +383,7 @@ def run_workload(service, database, label, jobs, workers):
     for response in responses:
         product_errors.update(response[3])
     metric_deltas = {
-        name: after.get(name, 0) - before.get(name, 0) for name in METRIC_NAMES
+        name: after.get(name, 0) - before.get(name, 0) for name in before
     }
     mysql_select_delta = (
         sql_after - sql_before if sql_before is not None and sql_after is not None else None
@@ -641,6 +399,7 @@ def run_workload(service, database, label, jobs, workers):
     return {
         "scenario": label,
         "request_count": len(jobs),
+        "client_concurrency": service.client_concurrency,
         "elapsed_seconds": elapsed_seconds,
         "throughput_requests_per_second": len(jobs) / elapsed_seconds if elapsed_seconds else 0,
         "http_status_counts": dict(statuses),
@@ -648,6 +407,12 @@ def run_workload(service, database, label, jobs, workers):
         "product_error_counts": dict(product_errors),
         "metrics_delta": metric_deltas,
         "mysql_product_select_execute_delta": mysql_select_delta,
+        "cache_info_before": cache_stats_before,
+        "cache_info_after": cache_stats_after,
+        "process_resources": {
+            "service": process_resource_interval(service_before, service_after),
+            "cache": process_resource_interval(cache_before, cache_after),
+        },
         "latency_ms": {
             "p50": percentile(latencies, 50),
             "p95": percentile(latencies, 95),
@@ -664,46 +429,38 @@ def batch_path(product_ids):
 def warm_cache(service, product_ids):
     for offset in range(0, len(product_ids), 32):
         response = service.request("GET", batch_path(product_ids[offset : offset + 32]))
-        if response[1] != 200:
+        if response[1] != 200 or response[3]:
             raise RuntimeError("cache warm-up failed")
 
 
-def build_scenarios(service, cache_server, product_ids, requests, randomizer):
+def build_scenarios(service, product_ids, requests, randomizer):
     jobs = []
     for index in range(requests):
         product_id = randomizer.choice(product_ids)
         jobs.append(("GET", f"/products/{product_id}", None))
-    records = [run_workload(service, service.database, "single_hit", jobs, service.workers)]
+    records = [run_workload(service, "single_hit", jobs)]
 
     for size in (1, 8, 32):
         jobs = [
             ("GET", batch_path(randomizer.sample(product_ids, size)), None)
             for _ in range(requests)
         ]
-        records.append(
-            run_workload(service, service.database, f"batch_{size}_hit", jobs, service.workers)
-        )
+        records.append(run_workload(service, f"batch_{size}_hit", jobs))
 
     missing_id = max(product_ids) + 1
     partial_jobs = []
     for _ in range(requests):
         partial_ids = randomizer.sample(product_ids, 7) + [missing_id]
         partial_jobs.append(("GET", batch_path(partial_ids), None))
-    records.append(
-        run_workload(service, service.database, "partial_batch_8", partial_jobs, service.workers)
-    )
+    records.append(run_workload(service, "partial_batch_8", partial_jobs))
 
     missing_jobs = [("GET", f"/products/{missing_id}", None) for _ in range(requests)]
-    records.append(
-        run_workload(service, service.database, "hot_not_found", missing_jobs, service.workers)
-    )
+    records.append(run_workload(service, "hot_not_found", missing_jobs))
 
     cold_ids = product_ids[:requests]
-    delete_cache_keys(cache_server, cold_ids)
+    delete_cache_keys(service.cache_server, cold_ids)
     cold_jobs = [("GET", f"/products/{product_id}", None) for product_id in cold_ids]
-    records.append(
-        run_workload(service, service.database, "cold_miss", cold_jobs, service.workers)
-    )
+    records.append(run_workload(service, "cold_miss", cold_jobs))
 
     write_count = min(requests, max(1, requests // 10))
     write_ids = product_ids[-write_count:]
@@ -721,47 +478,39 @@ def build_scenarios(service, cache_server, product_ids, requests, randomizer):
         for _ in range(requests - write_count)
     )
     randomizer.shuffle(mixed_jobs)
-    records.append(
-        run_workload(service, service.database, "mixed_get_put", mixed_jobs, service.workers)
-    )
+    records.append(run_workload(service, "mixed_get_put", mixed_jobs))
     return records
 
 
-def run_hot_expiry(service, cache_server, database, product_ids, requests):
+def run_hot_expiry(service, product_ids, requests):
     service.stop()
     service.ttl_seconds = 1
     service.ttl_jitter_seconds = 0
     service.start()
     hot_id = product_ids[0]
-    delete_cache_keys(cache_server, [hot_id])
+    delete_cache_keys(service.cache_server, [hot_id])
     warm = service.request("GET", f"/products/{hot_id}")
     if warm[1] != 200:
         raise RuntimeError("hot-key expiration setup failed")
     time.sleep(1.05)
     jobs = [("GET", f"/products/{hot_id}", None) for _ in range(max(requests, service.workers))]
-    return run_workload(service, database, "hot_key_expiry", jobs, service.workers)
+    return run_workload(service, "hot_key_expiry", jobs)
 
 
-def run_cache_fault(service, cache_server, database, requests):
+def run_cache_fault(service, product_ids, requests):
+    cache_server = service.cache_server
     count = max(1, min(requests, service.workers * 2))
-    product_ids = getattr(service, "product_ids")
     jobs = [("GET", f"/products/{product_ids[index % len(product_ids)]}", None) for index in range(count)]
     cache_server.stop()
     try:
-        outage = run_workload(service, database, "cache_unavailable", jobs, service.workers)
+        outage = run_workload(service, "cache_unavailable", jobs)
     finally:
         cache_server.start()
 
     deadline = time.monotonic() + 4
     recovery = None
     while time.monotonic() < deadline:
-        recovery = run_workload(
-            service,
-            database,
-            "cache_recovery",
-            jobs[:1],
-            service.workers,
-        )
+        recovery = run_workload(service, "cache_recovery", jobs[:1])
         if recovery["cache_source_counts"].get("BYPASS", 0) == 0:
             break
         time.sleep(0.05)
@@ -776,6 +525,7 @@ def parse_args():
     parser.add_argument("--products", type=int, default=512)
     parser.add_argument("--requests", type=int, default=200)
     parser.add_argument("--concurrency", type=int, default=16)
+    parser.add_argument("--http-workers", type=int, default=None)
     parser.add_argument("--cache-memory-mb", type=int, default=64)
     parser.add_argument("--pressure-cache-memory-mb", type=int, default=8)
     parser.add_argument("--pressure-entries", type=int, default=64)
@@ -789,6 +539,10 @@ def parse_args():
     args = parser.parse_args()
     if args.products < 32 or args.requests < 1 or args.concurrency < 1 or args.repeat < 1:
         parser.error("products must be >= 32; requests, concurrency and repeat must be positive")
+    if args.http_workers is None:
+        args.http_workers = min(64, args.concurrency)
+    if not 1 <= args.http_workers <= 64:
+        parser.error("http-workers must be in 1..64")
     if args.cache_memory_mb < 4 or args.cache_memory_mb % 4 != 0:
         parser.error("cache-memory-mb must be a positive multiple of 4")
     if args.pressure_cache_memory_mb < 8 or args.pressure_cache_memory_mb % 4 != 0:
@@ -824,11 +578,44 @@ def required_database_environment():
     return values
 
 
-def metrics_metadata(database):
-    try:
-        return {"mysql_version": database.version()}
-    except RuntimeError:
-        return {"mysql_version": None}
+def run_combination(args, database, binaries, backend, policy, product_ids, randomizer):
+    cache_server = CacheServer(backend, binaries[backend], args.cache_memory_mb, args.redis_policy)
+    service = ProductService(
+        binaries["service"], database, backend, policy, cache_server,
+        args.http_workers, args.concurrency, args.ttl_seconds,
+    )
+    with cache_server, service:
+        warm_cache(service, product_ids)
+        workloads = build_scenarios(service, product_ids, args.requests, randomizer)
+        workloads.append(run_hot_expiry(service, product_ids, args.requests))
+        workloads.extend(run_cache_fault(service, product_ids, args.requests))
+
+    with CacheServer(
+        backend, binaries[backend], args.pressure_cache_memory_mb, args.redis_policy
+    ) as pressure_cache:
+        before = process_snapshot(pressure_cache.process)
+        memory_pressure = run_memory_pressure(
+            pressure_cache, args.pressure_entries, args.pressure_value_kib * 1024
+        )
+        memory_pressure["cache_process_resources"] = process_resource_interval(
+            before, process_snapshot(pressure_cache.process)
+        )
+
+    return {
+        "backend": backend,
+        "policy": policy,
+        "dataset_size": len(product_ids),
+        "client_concurrency": args.concurrency,
+        "http_workers": service.workers,
+        "requested_requests_per_scenario": args.requests,
+        "cache_memory_budget_mb": args.cache_memory_mb,
+        "redis_maxmemory_policy": args.redis_policy if backend == "redis" else None,
+        "ttl_seconds": args.ttl_seconds,
+        "ttl_jitter_seconds": 3,
+        "hot_expiry_ttl_seconds": 1,
+        "workloads": workloads,
+        "memory_pressure": memory_pressure,
+    }
 
 
 def main():
@@ -843,6 +630,7 @@ def main():
     if redis_binary is None or not Path(redis_binary).is_file():
         raise RuntimeError("redis-server is required for the Redis comparison")
 
+    binaries = {"sphinx": str(sphinx_binary), "redis": redis_binary, "service": str(service_binary)}
     database = MySqlDatabase(values)
     schema_path = Path(__file__).resolve().parent.parent / "product-service" / "schema.sql"
     database.run(input_file=schema_path)
@@ -876,106 +664,8 @@ def main():
                 all_product_ids.extend(product_ids)
                 database.seed(products)
 
-                cache_server = CacheServer(
-                    backend,
-                    str(sphinx_binary) if backend == "sphinx" else redis_binary,
-                    args.cache_memory_mb,
-                    args.redis_policy,
-                )
-                service = ProductService(
-                    str(service_binary),
-                    database,
-                    backend,
-                    policy,
-                    cache_server,
-                    max(2, min(64, args.concurrency)),
-                    args.ttl_seconds,
-                )
-                service.database = database
-                service.product_ids = product_ids
-                try:
-                    cache_server.start()
-                    service.start()
-                    warm_cache(service, product_ids)
-                    process_before = {
-                        "service": process_snapshot(service.process),
-                        "cache": process_snapshot(cache_server.process),
-                    }
-                    cache_before = cache_info(cache_server)
-                    workloads = build_scenarios(
-                        service,
-                        cache_server,
-                        product_ids,
-                        args.requests,
-                        rng,
-                    )
-                    hot_expiry = run_hot_expiry(
-                        service,
-                        cache_server,
-                        database,
-                        product_ids,
-                        args.requests,
-                    )
-                    workloads.append(hot_expiry)
-                    workloads.extend(
-                        run_cache_fault(service, cache_server, database, args.requests)
-                    )
-                    process_after = {
-                        "service": process_snapshot(service.process),
-                        "cache": process_snapshot(cache_server.process),
-                    }
-                    cache_after = cache_info(cache_server)
-                    service.stop()
-                    cache_server.close()
-
-                    pressure_cache = CacheServer(
-                        backend,
-                        str(sphinx_binary) if backend == "sphinx" else redis_binary,
-                        args.pressure_cache_memory_mb,
-                        args.redis_policy,
-                    )
-                    try:
-                        pressure_cache.start()
-                        pressure_process_before = process_snapshot(pressure_cache.process)
-                        memory_pressure = run_memory_pressure(
-                            pressure_cache,
-                            args.pressure_entries,
-                            args.pressure_value_kib * 1024,
-                        )
-                        memory_pressure["cache_process_before"] = pressure_process_before
-                        memory_pressure["cache_process_after"] = process_snapshot(
-                            pressure_cache.process
-                        )
-                    finally:
-                        pressure_cache.close()
-
-                    runs.append(
-                        {
-                            "repeat": repeat + 1,
-                            "backend": backend,
-                            "policy": policy,
-                            "dataset_size": len(product_ids),
-                            "client_concurrency": args.concurrency,
-                            "http_workers": service.workers,
-                            "requested_requests_per_scenario": args.requests,
-                            "cache_memory_budget_mb": args.cache_memory_mb,
-                            "redis_maxmemory_policy": (
-                                args.redis_policy if backend == "redis" else None
-                            ),
-                            "ttl_seconds": args.ttl_seconds,
-                            "ttl_jitter_seconds": 3,
-                            "hot_expiry_ttl_seconds": 1,
-                            "workloads": workloads,
-                            "process_before": process_before,
-                            "process_after": process_after,
-                            "cache_info_before": cache_before,
-                            "cache_info_after": cache_after,
-                            "memory_pressure": memory_pressure,
-                        }
-                    )
-                finally:
-                    service.stop()
-                    cache_server.close()
+                run = run_combination(args, database, binaries, backend, policy, product_ids, rng)
+                runs.append(dict(run, repeat=repeat + 1))
     finally:
         database.delete_ids(all_product_ids)
 
@@ -985,7 +675,7 @@ def main():
             "platform": platform.platform(),
             "machine": platform.machine(),
             "logical_cpus": os.cpu_count(),
-            "mysql_version": metrics_metadata(database)["mysql_version"],
+            "mysql_version": database.version(),
             "sphinx_version": subprocess.run(
                 [str(sphinx_binary), "--version"], capture_output=True, text=True, check=False
             ).stdout.strip(),
@@ -1000,7 +690,7 @@ def main():
             "products_per_combination": product_count,
             "requests_per_scenario": args.requests,
             "client_concurrency": args.concurrency,
-            "http_workers": max(2, min(64, args.concurrency)),
+            "http_workers": args.http_workers,
             "cache_memory_budget_mb": args.cache_memory_mb,
             "pressure_cache_memory_mb": args.pressure_cache_memory_mb,
             "pressure_entries": args.pressure_entries,

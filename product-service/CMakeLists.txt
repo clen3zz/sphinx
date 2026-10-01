@@ -76,6 +76,9 @@ endif ()
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if (Python3_Interpreter_FOUND)
+    add_test(NAME sphinx_product_cache_comparison_tests
+            COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/compare_product_cache_test.py)
     add_test(NAME sphinx_product_http_integration_test
             COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/product_http_integration_test.py
