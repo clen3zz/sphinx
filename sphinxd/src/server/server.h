@@ -54,8 +54,7 @@ class Server final {
   void accept(int sockfd);
 
   // 处理客户端套接字接收到的数据
-  void recv(const std::shared_ptr<Connection>& connection, const std::shared_ptr<TcpSocket>& socket,
-            std::string_view data);
+  void recv(const std::shared_ptr<Connection>& connection, std::string_view data);
 
   // 从连接接收缓冲区中解析并执行单个协议请求
   size_t process_one(const std::shared_ptr<Connection>& connection, std::string_view data);
@@ -93,8 +92,7 @@ class Server final {
                         std::string_view payload);
 
   // 关闭指定客户端套接字并释放资源
-  void close_connection(const std::shared_ptr<Connection>& connection,
-                        const std::shared_ptr<TcpSocket>& socket);
+  void close_connection(std::shared_ptr<Connection> connection);
 
   // 从本地连接表中移除已关闭的连接
   void remove_connection(const std::shared_ptr<Connection>& connection);

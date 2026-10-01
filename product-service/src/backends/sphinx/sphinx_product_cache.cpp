@@ -31,9 +31,7 @@ void SphinxProductCache::put(std::string_view key, std::string_view value,
     throw std::invalid_argument{"cache TTL must be in 1..30 days"};
   }
   try {
-    if (!_client.set(key, value, ttl_seconds)) {
-      throw CacheError{"cache rejected set"};
-    }
+    (void)_client.set(key, value, ttl_seconds);
   } catch (const ClientError& error) {
     throw CacheError{error.what()};
   }

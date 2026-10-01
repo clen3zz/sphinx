@@ -49,26 +49,13 @@ void Server::on_message(const MessagePtr& data) {
   }
 
   if (auto overload = std::dynamic_pointer_cast<ReactorOverload>(data)) {
-    const auto close_victim = [this](const std::shared_ptr<Connection>& connection) {
-      if (const auto socket = connection->socket()) {
-        if (connection->closed()) {
-          remove_connection(connection);
-          _reactor->close(socket);
-        } else {
-          close_connection(connection, socket);
-        }
-      } else {
-        connection->mark_closed();
-        remove_connection(connection);
-      }
-    };
     if (overload->close_all) {
       while (!_connections.empty()) {
-        close_victim(_connections.begin()->second);
+        close_connection(_connections.begin()->second);
       }
     } else if (const auto it = _connections.find(overload->connection_id);
                it != _connections.end()) {
-      close_victim(it->second);
+      close_connection(it->second);
     }
     return;
   }
@@ -110,8 +97,9 @@ void Server::accept(int sockfd) {
   auto connection = std::make_shared<Connection>(connection_id);
 
   // 2. 构造套接字对象并绑定数据接收回调
-  auto recv_fn = [this, connection](const std::shared_ptr<TcpSocket>& socket,
-                                    std::string_view data) { recv(connection, socket, data); };
+  auto recv_fn = [this, connection](const std::shared_ptr<TcpSocket>&, std::string_view data) {
+    recv(connection, data);
+  };
   auto socket = std::make_shared<TcpSocket>(sockfd, std::move(recv_fn));
 
   // 3. 关联 Socket、加入连接表并注册到 Reactor 读事件监听
@@ -122,18 +110,17 @@ void Server::accept(int sockfd) {
 }
 
 // 客户端套接字数据接收与协议拆包主逻辑
-void Server::recv(const std::shared_ptr<Connection>& connection,
-                  const std::shared_ptr<TcpSocket>& socket, std::string_view data) {
+void Server::recv(const std::shared_ptr<Connection>& connection, std::string_view data) {
   // 1. 收到空数据表明对端已关闭连接
   if (data.empty()) {
-    close_connection(connection, socket);
+    close_connection(connection);
     return;
   }
 
   // 2. 校验接收缓冲区上限（防范畸形请求恶意消耗过多内存）
   constexpr size_t max_request_buffer_size = size_t{8} * 1024 * 1024;
   if (data.size() > max_request_buffer_size - connection->receive_buffer().size()) {
-    close_connection(connection, socket);
+    close_connection(connection);
     return;
   }
 
@@ -143,7 +130,7 @@ void Server::recv(const std::shared_ptr<Connection>& connection,
   // 4. 循环解析并处理所有完整的命令帧
   while (true) {
     if (connection->too_many_in_flight()) {
-      close_connection(connection, socket);
+      close_connection(connection);
       return;
     }
     const auto view = connection->receive_buffer().string_view();
@@ -163,7 +150,7 @@ void Server::recv(const std::shared_ptr<Connection>& connection,
       return;
     }
     if (consumed == std::numeric_limits<size_t>::max()) {
-      close_connection(connection, socket);
+      close_connection(connection);
       return;
     }
 
@@ -391,35 +378,24 @@ void Server::enqueue_response(const std::shared_ptr<Connection>& connection, uin
                               std::string_view payload) {
   const auto status = connection->enqueue_response(sequence, payload, *_reactor);
 
-  if (status == Connection::WriteStatus::SocketClosed) {
-    const auto socket = connection->socket();
-    if (socket) {
-      close_connection(connection, socket);
-    } else {
-      remove_connection(connection);
-    }
+  if (status == Connection::WriteStatus::SocketClosed ||
+      status == Connection::WriteStatus::ResourceLimit) {
+    close_connection(connection);
   } else if (status == Connection::WriteStatus::SocketUnavailable) {
     remove_connection(connection);
-  } else if (status == Connection::WriteStatus::ResourceLimit) {
-    if (const auto socket = connection->socket()) {
-      close_connection(connection, socket);
-    } else {
-      connection->mark_closed();
-      remove_connection(connection);
-    }
   }
 }
 
 // 关闭客户端连接并从 Reactor 注销
-void Server::close_connection(const std::shared_ptr<Connection>& connection,
-                              const std::shared_ptr<TcpSocket>& socket) {
-  if (connection->closed()) {
-    return;
-  }
-
+// 按值持有连接：调用方可能引用连接表中的 shared_ptr，移除表项后仍需保证对象存活。
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
+void Server::close_connection(std::shared_ptr<Connection> connection) {
+  const auto socket = connection->socket();
   connection->mark_closed();
   remove_connection(connection);
-  _reactor->close(socket);
+  if (socket) {
+    _reactor->close(socket);
+  }
 }
 
 // 从当前线程的连接表中移除指定连接
