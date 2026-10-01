@@ -10,7 +10,7 @@ HTTP 客户端 → sphinx-product-service ──→ MySQL（权威数据）
                               └─ sphinxd :11212 ─ Worker 0..N
 ```
 
-`GET /products/{id}` 先查缓存，未命中或缓存故障时查询 MySQL，并尽力回填；`PUT /products/{id}` 在 MySQL 中按 `expected_version` 检查并提交更新，然后尽力删除缓存。缓存命中、未命中和旁路原因会写入 `X-Cache` 响应头。另有 Redis 缓存对照实现，见[架构说明](docs/ARCHITECTURE.md)。
+`GET /products/{id}` 先查缓存，未命中或缓存故障时查询 MySQL，并尽力回填；`PUT /products/{id}` 在 MySQL 中按 `expected_version` 检查并提交更新，然后尽力删除缓存。缓存命中、未命中和旁路原因会写入 `X-Cache` 响应头。完整设计与调用链见[架构文档](docs/ARCHITECTURE.md)。另有 Redis 缓存对照实现，见[Redis 架构](docs/REDIS_ARCHITECTURE.md)。
 
 ## 构建
 
@@ -95,7 +95,8 @@ curl -i http://127.0.0.1:8080/products/42
 
 ## 文档
 
-- [Redis 对照架构](docs/ARCHITECTURE.md)
+- [Sphinx 架构与调用链](docs/ARCHITECTURE.md)
+- [Redis 对照架构](docs/REDIS_ARCHITECTURE.md)
 - [代码与命名规范](docs/CODING_STANDARDS.md)
 
 ## License
