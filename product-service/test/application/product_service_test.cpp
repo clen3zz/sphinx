@@ -331,7 +331,7 @@ TEST_F(ProductServiceTest, MissReadsDatabaseAndFillsWithRelativeTtl) {
     ADD_FAILURE() << "database result was not cached";
     return;
   }
-  const auto decoded = decode_product_cache(*cache.value);
+  const auto decoded = decode_product_cache_entry(*cache.value, 1).product;
   if (!decoded) {
     ADD_FAILURE() << "cached product did not decode";
     return;
@@ -353,7 +353,7 @@ TEST_F(ProductServiceTest, BasicPolicyRechecksNegativeCacheEntriesAgainstTheStor
   EXPECT_EQ(store.finds, 1);
   EXPECT_EQ(cache.erases, 0);
   ASSERT_TRUE(cache.value.has_value());
-  const auto cached_product = decode_product_cache(cache.value.value_or(""));
+  const auto cached_product = decode_product_cache_entry(cache.value.value_or(""), 1).product;
   ASSERT_TRUE(cached_product.has_value());
   EXPECT_EQ(cached_product.value_or(Product{}).name, "tea");
 }

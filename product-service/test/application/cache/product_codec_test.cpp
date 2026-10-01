@@ -13,7 +13,9 @@ TEST(ProductCodecTest, EncodesReadableJson) {
   const sphinx::Product product{1, "tea", 199, 2};
   const std::string expected = R"({"id":1,"name":"tea","price_cents":199,"version":2})";
   EXPECT_EQ(sphinx::encode_product_cache(product), expected);
-  const auto decoded = sphinx::decode_product_cache(expected);
+  const auto entry = sphinx::decode_product_cache_entry(expected, product.id);
+  EXPECT_EQ(entry.kind, sphinx::CacheEntryKind::Product);
+  const auto& decoded = entry.product;
   if (!decoded) {
     ADD_FAILURE() << "valid cache JSON did not decode";
     return;
@@ -25,11 +27,14 @@ TEST(ProductCodecTest, EncodesReadableJson) {
 }
 
 TEST(ProductCodecTest, RejectsMalformedAndUnexpectedFields) {
-  EXPECT_FALSE(sphinx::decode_product_cache(R"({"id":7)"));
-  EXPECT_FALSE(
-      sphinx::decode_product_cache(R"({"id":7,"name":"x","price_cents":0,"version":1,"extra":0})"));
-  EXPECT_FALSE(sphinx::decode_product_cache(R"({"id":7,"name":"x","price_cents":-1,"version":1})"));
-  EXPECT_FALSE(sphinx::decode_product_cache(std::string(513, 'x')));
+  for (const auto& payload :
+       {std::string{R"({"id":7)"},
+        std::string{R"({"id":7,"name":"x","price_cents":0,"version":1,"extra":0})"},
+        std::string{R"({"id":7,"name":"x","price_cents":-1,"version":1})"},
+        std::string(513, 'x')}) {
+    SCOPED_TRACE(payload);
+    EXPECT_EQ(sphinx::decode_product_cache_entry(payload, 7).kind, sphinx::CacheEntryKind::Corrupt);
+  }
 }
 
 TEST(ProductCodecTest, RejectsInvalidDomainAndUtf8) {
@@ -45,10 +50,14 @@ TEST(ProductCodecTest, RejectsInvalidDomainAndUtf8) {
 
 TEST(ProductCodecTest, SupportsUtf8AndMaximumNameLength) {
   const sphinx::Product product{42, std::string(128, 'x'), 0, 1};
-  EXPECT_TRUE(sphinx::decode_product_cache(sphinx::encode_product_cache(product)));
+  EXPECT_EQ(
+      sphinx::decode_product_cache_entry(sphinx::encode_product_cache(product), product.id).kind,
+      sphinx::CacheEntryKind::Product);
   EXPECT_FALSE(sphinx::valid_product({42, std::string(129, 'x'), 0, 1}));
   const sphinx::Product chinese{43, "咖啡", 500, 1};
-  EXPECT_TRUE(sphinx::decode_product_cache(sphinx::encode_product_cache(chinese)));
+  EXPECT_EQ(
+      sphinx::decode_product_cache_entry(sphinx::encode_product_cache(chinese), chinese.id).kind,
+      sphinx::CacheEntryKind::Product);
 }
 
 TEST(ProductCodecTest, KeyIsNamespacedAndRejectsZero) {

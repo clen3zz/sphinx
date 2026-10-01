@@ -44,14 +44,6 @@ std::string encode_product_cache(const Product& product) {
       .dump();
 }
 
-std::optional<Product> decode_product_cache(std::string_view bytes) {
-  // 缓存内容不可信：限制长度、检查字段，再复用领域对象校验。
-  if (bytes.size() > 512) {
-    return std::nullopt;
-  }
-  return decode_product(nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false));
-}
-
 std::string encode_product_not_found(std::uint64_t id) {
   if (id == 0) {
     throw std::invalid_argument{"product id must be positive"};
