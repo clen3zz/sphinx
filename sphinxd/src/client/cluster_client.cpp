@@ -79,10 +79,6 @@ ValueHeader parse_value_header(std::string_view target, const std::string& respo
 
   // 5. 解析载荷字节大小字段
   const auto length = body.substr(second_space + 1);
-  if (length.empty()) {
-    throw_node_error(target, "missing value length in get response");
-  }
-
   const auto bytes = parse_decimal(target, "value length", length);
   if (bytes > std::numeric_limits<size_t>::max()) {
     throw_node_error(target, "value length is too large");
@@ -299,9 +295,6 @@ std::vector<std::optional<std::string>> ClusterClient::get_many(
   for (const auto& batch : group_get_keys(keys)) {
     try {
       const auto node_values = connection_for(batch.node).get_many(batch.keys);
-      if (node_values.size() != batch.input_positions.size()) {
-        throw ClientError{"multi-get response count does not match request"};
-      }
       for (std::size_t key_index = 0; key_index < batch.input_positions.size(); ++key_index) {
         for (const auto input_position : batch.input_positions[key_index]) {
           values[input_position] = node_values[key_index];

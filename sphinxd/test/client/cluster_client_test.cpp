@@ -481,19 +481,22 @@ TEST(ClusterClientTest, EarlyCloseIsAnErrorRatherThanAGetMiss) {
 }
 
 TEST(ClusterClientTest, MalformedResponseIsAnError) {
-  FakeServer server{[](int client) {
-    char ignored[64];
-    (void)recv(client, ignored, sizeof(ignored), 0);
-    send_chunks(client, "NOT_A_MEMCACHED_RESPONSE\r\n");
-  }};
-  server.start();
+  for (const std::string_view response : {"NOT_A_MEMCACHED_RESPONSE\r\n", "VALUE key 0 \r\n"}) {
+    SCOPED_TRACE(response);
+    FakeServer server{[response](int client) {
+      char ignored[64];
+      (void)recv(client, ignored, sizeof(ignored), 0);
+      send_chunks(client, response);
+    }};
+    server.start();
 
-  sphinx::ClusterClient client{node_spec(server.port())};
-  try {
-    (void)client.get("key");
-    FAIL() << "expected a client error";
-  } catch (const sphinx::ClientError& error) {
-    EXPECT_NE(std::string{error.what()}.find(node_spec(server.port())), std::string::npos);
+    sphinx::ClusterClient client{node_spec(server.port())};
+    try {
+      (void)client.get("key");
+      FAIL() << "expected a client error";
+    } catch (const sphinx::ClientError& error) {
+      EXPECT_NE(std::string{error.what()}.find(node_spec(server.port())), std::string::npos);
+    }
   }
 }
 

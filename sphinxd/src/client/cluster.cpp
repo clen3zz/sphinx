@@ -5,7 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
-#include <limits>
+#include <charconv>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -45,26 +45,12 @@ void validate_node(const Node& node) {
 
 // 解析并验证端口号字符串（必须是 1~65535 范围内的十进制整数）
 uint16_t parse_port(std::string_view port_text) {
-  if (port_text.empty()) {
-    throw std::invalid_argument("cluster node is missing a port");
+  uint16_t port = 0;
+  const auto parsed = std::from_chars(port_text.data(), port_text.data() + port_text.size(), port);
+  if (parsed.ec != std::errc{} || parsed.ptr != port_text.data() + port_text.size() || port == 0) {
+    throw std::invalid_argument("cluster node port must be decimal and in 1..65535");
   }
-
-  uint32_t port = 0;
-  for (const char character : port_text) {
-    if (character < '0' || character > '9') {
-      throw std::invalid_argument("cluster node port must be decimal");
-    }
-    port = port * 10U + static_cast<uint32_t>(character - '0');
-    if (port > std::numeric_limits<uint16_t>::max()) {
-      throw std::invalid_argument("cluster node port is out of range");
-    }
-  }
-
-  if (port == 0) {
-    throw std::invalid_argument("cluster node port is out of range");
-  }
-
-  return static_cast<uint16_t>(port);
+  return port;
 }
 
 // 校验整个节点列表是否有效且不包含重复节点
@@ -124,7 +110,6 @@ std::vector<Node> parse_nodes(std::string_view specification) {
 
     // 构造节点并验证重复性
     const Node node{std::string(host), parse_port(endpoint.substr(colon + 1))};
-    validate_node(node);
     if (!ids.emplace(node.id()).second) {
       throw std::invalid_argument("duplicate cluster node");
     }
