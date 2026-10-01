@@ -42,40 +42,9 @@ void SphinxProductCache::erase(std::string_view key) {
 
 std::vector<std::optional<std::string>> SphinxProductCache::get_many(
     const std::vector<std::string>& keys) {
-  if (keys.size() > max_product_batch_size) {
-    throw std::invalid_argument{"product cache batch exceeds 32 keys"};
-  }
-  for (const auto& key : keys) {
-    if (!valid_product_cache_key(key)) {
-      throw std::invalid_argument{"product cache batch contains an invalid key"};
-    }
-  }
+  validate_product_cache_keys(keys);
   try {
     return _client.get_many(keys);
-  } catch (const ClientError& error) {
-    throw CacheError{error.what()};
-  }
-}
-
-void SphinxProductCache::put_many(const std::vector<CacheWriteEntry>& entries) {
-  if (entries.size() > max_product_batch_size) {
-    throw std::invalid_argument{"product cache batch exceeds 32 writes"};
-  }
-  for (const auto& entry : entries) {
-    if (!valid_product_cache_key(entry.key)) {
-      throw std::invalid_argument{"product cache batch contains an invalid key"};
-    }
-    if (!valid_product_cache_ttl(entry.ttl_seconds)) {
-      throw std::invalid_argument{"product cache batch contains an invalid TTL"};
-    }
-  }
-
-  try {
-    for (const auto& entry : entries) {
-      if (!_client.set(entry.key, entry.value, entry.ttl_seconds)) {
-        throw CacheError{"cache rejected set"};
-      }
-    }
   } catch (const ClientError& error) {
     throw CacheError{error.what()};
   }

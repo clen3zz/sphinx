@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
+#include <hiredis.h>
 #include <netinet/in.h>
 #include <sphinx/redis_product_cache.h>
 #include <sys/socket.h>
@@ -8,9 +9,11 @@
 
 #include <atomic>
 #include <cerrno>
-#include <charconv>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -27,82 +30,43 @@ namespace {
 using RedisTestCommand = std::vector<std::string>;
 constexpr std::size_t max_request_bulk_size = std::size_t{1024} * 1024;
 
-bool read_byte(int socket, char* value) {
+// 复用 hiredis 的 RESP 解析器；socket 分片和 pipeline 的剩余字节由 reader 保存。
+std::optional<RedisTestCommand> read_command(int socket, redisReader& reader) {
   while (true) {
-    const auto result = recv(socket, value, 1, 0);
-    if (result == 1) {
-      return true;
+    void* raw_reply = nullptr;
+    if (redisReaderGetReply(&reader, &raw_reply) != REDIS_OK) {
+      throw std::runtime_error{"Redis test request contains invalid RESP"};
     }
-    if (result < 0 && errno == EINTR) {
+    if (raw_reply != nullptr) {
+      std::unique_ptr<redisReply, decltype(&freeReplyObject)> reply{
+          static_cast<redisReply*>(raw_reply), freeReplyObject};
+      if (reply->type != REDIS_REPLY_ARRAY || reply->elements == 0 || reply->elements > 64) {
+        throw std::runtime_error{"Redis test request has an invalid argument count"};
+      }
+      RedisTestCommand command;
+      command.reserve(reply->elements);
+      for (std::size_t index = 0; index < reply->elements; ++index) {
+        const auto* argument = reply->element[index];
+        if (argument == nullptr || argument->type != REDIS_REPLY_STRING ||
+            argument->len > max_request_bulk_size) {
+          throw std::runtime_error{"Redis test request contains an invalid bulk value"};
+        }
+        command.emplace_back(argument->len == 0 ? "" : argument->str, argument->len);
+      }
+      return command;
+    }
+    char bytes[4096]{};
+    const auto count = recv(socket, bytes, sizeof(bytes), 0);
+    if (count < 0 && errno == EINTR) {
       continue;
     }
-    return false;
-  }
-}
-
-std::optional<std::string> read_line(int socket) {
-  std::string line;
-  while (line.size() <= 1024) {
-    char value = 0;
-    if (!read_byte(socket, &value)) {
+    if (count <= 0) {
       return std::nullopt;
     }
-    line.push_back(value);
-    if (line.size() >= 2 && line.compare(line.size() - 2, 2, "\r\n") == 0) {
-      line.resize(line.size() - 2);
-      return line;
+    if (redisReaderFeed(&reader, bytes, static_cast<std::size_t>(count)) != REDIS_OK) {
+      throw std::runtime_error{"Redis test request parsing failed"};
     }
   }
-  throw std::runtime_error{"Redis test request line is too long"};
-}
-
-std::size_t parse_size(std::string_view text) {
-  std::size_t result = 0;
-  const auto parsed = std::from_chars(text.data(), text.data() + text.size(), result);
-  if (text.empty() || parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) {
-    throw std::runtime_error{"Redis test request contains an invalid length"};
-  }
-  return result;
-}
-
-std::optional<RedisTestCommand> read_command(int socket) {
-  const auto header = read_line(socket);
-  if (!header) {
-    return std::nullopt;
-  }
-  if (header->empty() || (*header)[0] != '*') {
-    throw std::runtime_error{"Redis test request is not an array"};
-  }
-  const std::size_t count = parse_size(std::string_view{*header}.substr(1));
-  if (count == 0 || count > 64) {
-    throw std::runtime_error{"Redis test request has an invalid argument count"};
-  }
-
-  RedisTestCommand command;
-  command.reserve(count);
-  for (std::size_t index = 0; index < count; ++index) {
-    const auto bulk_header = read_line(socket);
-    if (!bulk_header || bulk_header->empty() || (*bulk_header)[0] != '$') {
-      throw std::runtime_error{"Redis test request contains an invalid bulk value"};
-    }
-    const std::size_t size = parse_size(std::string_view{*bulk_header}.substr(1));
-    if (size > max_request_bulk_size) {
-      throw std::runtime_error{"Redis test request bulk value is too large"};
-    }
-    std::string value(size, '\0');
-    for (std::size_t position = 0; position < size; ++position) {
-      if (!read_byte(socket, &value[position])) {
-        throw std::runtime_error{"Redis test request ended in a bulk value"};
-      }
-    }
-    char suffix[2]{};
-    if (!read_byte(socket, &suffix[0]) || !read_byte(socket, &suffix[1]) || suffix[0] != '\r' ||
-        suffix[1] != '\n') {
-      throw std::runtime_error{"Redis test request has an invalid bulk terminator"};
-    }
-    command.push_back(std::move(value));
-  }
-  return command;
 }
 
 bool write_all(int socket, std::string_view reply) {
@@ -223,8 +187,13 @@ class ScriptedRedisServer final {
 
   void serve_client(int client) noexcept {
     try {
+      std::unique_ptr<redisReader, decltype(&redisReaderFree)> reader{redisReaderCreate(),
+                                                                      redisReaderFree};
+      if (!reader) {
+        throw std::runtime_error{"Redis test reader allocation failed"};
+      }
       while (!_stopping.load(std::memory_order_acquire)) {
-        const auto command = read_command(client);
+        const auto command = read_command(client, *reader);
         if (!command) {
           return;
         }
@@ -402,6 +371,77 @@ TEST(RedisProductCacheTest, DrainsPipelineRepliesAfterServerCommandError) {
   EXPECT_EQ(server.commands().size(), 4U);
   EXPECT_EQ(server.commands()[2][1], "third");
   EXPECT_EQ(server.commands()[3][0], "GET");
+  EXPECT_TRUE(server.error().empty());
+}
+
+TEST(RedisProductCacheTest, DoesNotReplayPipelineAfterMidBatchDisconnect) {
+  ScriptedRedisServer server{[](const RedisTestCommand& command) {
+    if (command[0] == "GET") {
+      return bulk_reply("recovered");
+    }
+    return command[1] == "second" ? std::string{} : std::string{"+OK\r\n"};
+  }};
+  RedisProductCache cache{test_options(server.port())};
+
+  EXPECT_THROW(
+      cache.put_many({{"first", "one", 10}, {"second", "two", 10}, {"third", "three", 10}}),
+      CacheError);
+  EXPECT_EQ(cache.get("after-disconnect").value_or(""), "recovered");
+  EXPECT_EQ(server.commands(), (std::vector<RedisTestCommand>{{"SET", "first", "one", "EX", "10"},
+                                                              {"SET", "second", "two", "EX", "10"},
+                                                              {"GET", "after-disconnect"}}));
+  EXPECT_TRUE(server.error().empty());
+}
+
+TEST(RedisProductCacheTest, ResetsTimedOutGetAndReconnectsWithoutReplaying) {
+  std::atomic<unsigned int> gets{0};
+  ScriptedRedisServer server{[&](const RedisTestCommand&) {
+    if (gets.fetch_add(1, std::memory_order_relaxed) == 0) {
+      // 保持连接开放但不发送完整 bulk，迫使客户端在真实 socket 读取中超时。
+      return std::string{"$5\r\nab"};
+    }
+    return bulk_reply("fresh");
+  }};
+  auto options = test_options(server.port());
+  options.io_timeout = std::chrono::milliseconds{50};
+  RedisProductCache cache{options};
+
+  EXPECT_THROW(cache.get("stalled"), CacheError);
+  EXPECT_EQ(cache.get("after-timeout").value_or(""), "fresh");
+  EXPECT_EQ(server.commands(),
+            (std::vector<RedisTestCommand>{{"GET", "stalled"}, {"GET", "after-timeout"}}));
+  EXPECT_TRUE(server.error().empty());
+}
+
+TEST(RedisProductCacheTest, ResetsTimedOutPipelineBeforeTheNextOperation) {
+  std::mutex mutex;
+  std::condition_variable ready;
+  bool release_server = false;
+  ScriptedRedisServer server{[&](const RedisTestCommand& command) {
+    if (command[0] == "GET") {
+      return bulk_reply("recovered");
+    }
+    if (command[1] == "second") {
+      std::unique_lock lock{mutex};
+      ready.wait_for(lock, std::chrono::seconds{2}, [&] { return release_server; });
+      return std::string{};
+    }
+    return std::string{"+OK\r\n"};
+  }};
+  auto options = test_options(server.port());
+  options.io_timeout = std::chrono::milliseconds{50};
+  RedisProductCache cache{options};
+
+  EXPECT_THROW(cache.put_many({{"first", "one", 10}, {"second", "two", 10}}), CacheError);
+  {
+    std::lock_guard lock{mutex};
+    release_server = true;
+  }
+  ready.notify_all();
+  EXPECT_EQ(cache.get("after-pipeline-timeout").value_or(""), "recovered");
+  EXPECT_EQ(server.commands(), (std::vector<RedisTestCommand>{{"SET", "first", "one", "EX", "10"},
+                                                              {"SET", "second", "two", "EX", "10"},
+                                                              {"GET", "after-pipeline-timeout"}}));
   EXPECT_TRUE(server.error().empty());
 }
 

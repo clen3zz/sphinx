@@ -9,6 +9,21 @@
 #include <utility>
 
 namespace sphinx {
+namespace {
+
+std::optional<Product> decode_product(const nlohmann::json& value) {
+  if (!value.is_object() || value.size() != 4 || !value.contains("id") || !value.contains("name") ||
+      !value.contains("price_cents") || !value.contains("version") ||
+      !value["id"].is_number_unsigned() || !value["name"].is_string() ||
+      !value["price_cents"].is_number_unsigned() || !value["version"].is_number_unsigned()) {
+    return std::nullopt;
+  }
+  Product product{value["id"].get<std::uint64_t>(), value["name"].get<std::string>(),
+                  value["price_cents"].get<std::uint64_t>(), value["version"].get<std::uint64_t>()};
+  return valid_product(product) ? std::optional<Product>{std::move(product)} : std::nullopt;
+}
+
+}  // namespace
 
 std::string make_product_cache_key(std::uint64_t id) {
   if (id == 0) {
@@ -34,19 +49,7 @@ std::optional<Product> decode_product_cache(std::string_view bytes) {
   if (bytes.size() > 512) {
     return std::nullopt;
   }
-  const auto value = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
-  if (!value.is_object() || value.size() != 4 || !value.contains("id") || !value.contains("name") ||
-      !value.contains("price_cents") || !value.contains("version") ||
-      !value["id"].is_number_unsigned() || !value["name"].is_string() ||
-      !value["price_cents"].is_number_unsigned() || !value["version"].is_number_unsigned()) {
-    return std::nullopt;
-  }
-  Product product{value["id"].get<std::uint64_t>(), value["name"].get<std::string>(),
-                  value["price_cents"].get<std::uint64_t>(), value["version"].get<std::uint64_t>()};
-  if (!valid_product(product)) {
-    return std::nullopt;
-  }
-  return product;
+  return decode_product(nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false));
 }
 
 std::string encode_product_not_found(std::uint64_t id) {
@@ -67,12 +70,8 @@ DecodedProductCacheEntry decode_product_cache_entry(std::string_view payload,
     return {};
   }
 
-  if (value.size() == 4 && value.contains("id") && value.contains("name") &&
-      value.contains("price_cents") && value.contains("version")) {
-    auto product = decode_product_cache(payload);
-    if (!product || product->id != expected_id) {
-      return {};
-    }
+  auto product = decode_product(value);
+  if (product && product->id == expected_id) {
     return {CacheEntryKind::Product, std::move(product)};
   }
 
