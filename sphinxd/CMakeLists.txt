@@ -59,11 +59,6 @@ add_executable(sphinxd
 target_compile_definitions(sphinxd PRIVATE SPHINX_VERSION="v${SPHINX_VERSION}-${GIT_COMMIT_HASH}")
 target_link_libraries(sphinxd PRIVATE sphinx_core pthread)
 
-add_executable(sphinx-cluster
-        src/sphinx-cluster.cpp
-)
-target_link_libraries(sphinx-cluster PRIVATE sphinx_client)
-
 add_executable(sphinx_cluster_client_integration_driver
         test/client/cluster_client_integration_driver.cpp
 )
@@ -99,7 +94,7 @@ if (Python3_Interpreter_FOUND)
 
     add_test(NAME sphinxd_cluster_integration_test
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/client/cluster_network_test.py
-            $<TARGET_FILE:sphinxd> $<TARGET_FILE:sphinx-cluster>
+            $<TARGET_FILE:sphinxd>
             $<TARGET_FILE:sphinx_cluster_client_integration_driver>)
     set_tests_properties(sphinxd_cluster_integration_test PROPERTIES TIMEOUT 120)
 endif ()

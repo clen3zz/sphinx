@@ -46,8 +46,7 @@ Sphinx 历史代码中存在 `lower_snake_case`（原有偏好）与部分公开
 ### 2.4 文件命名与历史文件
 
 - 新增头文件与实现文件统一使用 `snake_case.cpp` / `snake_case.h`。
-- 历史遗留的文件名（如 `reactor-epoll.cpp`）和与可执行程序名称对应的实现文件（如 `sphinx-cluster.cpp`
-  ）保持原样，避免引起构建脚本、CMakeLists 或部署流程的不必要变动。
+- 历史遗留的文件名（如 `reactor-epoll.cpp`）保持原样，避免引起构建脚本、CMakeLists 或部署流程的不必要变动。
 
 ### 2.5 命名空间层级
 

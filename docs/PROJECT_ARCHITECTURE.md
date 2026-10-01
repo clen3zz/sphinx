@@ -41,7 +41,6 @@ flowchart TD
 | MySQL | 外部数据库，执行预处理查询和事务更新 | 商品权威数据 |
 | `sphinxd` | 一个或多个独立缓存节点，提供 Memcached 文本协议 | 可过期、可重建的内存缓存 |
 | Redis | 可选的外部单实例缓存，与 Sphinx 做对照 | 同样是可过期、可重建的缓存 |
-| `sphinx-cluster` | 独立命令行客户端，可查询路由、访问 Sphinx 集群 | 辅助观察与操作，不承担商品业务 |
 
 Sphinx 节点不连接 MySQL；商品服务通过网络访问缓存节点，不共享其存储内存。Redis 路径运行时不需要启动 Sphinx 节点，但默认构建仍包含两种适配器与节点程序。
 
@@ -228,7 +227,6 @@ sphinx-product-service → sphinx_product_bootstrap
 sphinx_product_core → JSON 编码支持 + pthread
 sphinx_client → sphinx_hash + pthread
 sphinxd → sphinx_core → sphinx_hash + pthread
-sphinx-cluster → sphinx_client
 ```
 
 业务核心不链接数据库或缓存客户端，HTTP 目标不链接后端。Sphinx 适配器只链接集群客户端，不链接节点存储和 Reactor。节点与客户端共享哈希实现，不因此共享缓存数据。

@@ -74,12 +74,7 @@ curl -i -X PUT http://127.0.0.1:8080/products/42 \
 curl -i http://127.0.0.1:8080/products/42
 ```
 
-正常情况下，三次 GET 的 `X-Cache` 依次是 `MISS`、`HIT`、`MISS`；最后一次返回版本 2。`GET /products/42?fresh=1` 可绕过缓存核对 MySQL 中的值。可用下面的命令查看商品缓存 key 会路由到哪一个节点：
-
-```bash
-./build/sphinxd/sphinx-cluster \
-  --nodes 127.0.0.1:11211,127.0.0.1:11212 route product:v3:42
-```
+正常情况下，三次 GET 的 `X-Cache` 依次是 `MISS`、`HIT`、`MISS`；最后一次返回版本 2。`GET /products/42?fresh=1` 可绕过缓存核对 MySQL 中的值。
 
 节点列表是静态配置；本项目没有副本、自动故障转移或数据迁移。MySQL 是权威数据，缓存节点不可用时商品查询会尝试回源。
 
