@@ -34,16 +34,17 @@ class ProductService final {
  private:
   struct ReadWorkItem;
   struct ReadBatch;
+  using WorkItems = std::vector<ReadWorkItem*>;
 
   std::vector<GetProductResult> read_products(const std::vector<std::uint64_t>& ids,
                                               bool bypass_cache);
   ReadBatch make_read_batch(const std::vector<std::uint64_t>& ids, bool bypass_cache) const;
-  void read_cache(ReadBatch& batch, const std::vector<std::size_t>& positions);
-  void erase_corrupt(ReadBatch& batch, std::size_t position);
-  void load_protected(ReadBatch& batch, const std::vector<std::size_t>& positions);
-  void load_batch(ReadBatch& batch, const std::vector<std::size_t>& positions);
-  void load_from_store(ReadBatch& batch, const std::vector<std::size_t>& positions);
-  void fill_cache(ReadBatch& batch, const std::vector<std::size_t>& positions);
+  void read_cache(ReadBatch& batch, const WorkItems& items);
+  void erase_corrupt(ReadBatch& batch, ReadWorkItem& item);
+  void load_protected(ReadBatch& batch, const WorkItems& items);
+  void load_batch(ReadBatch& batch, const WorkItems& items);
+  void load_from_store(ReadBatch& batch, const WorkItems& items);
+  void fill_cache(ReadBatch& batch, const WorkItems& items);
   std::vector<GetProductResult> restore_results(const ReadBatch& batch) const;
 
   ProductStore& _store;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <sphinx/product/application/protection/product_read_coordinator.h>
 
+#include <cassert>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -57,7 +58,8 @@ ProductLoadResult ProductReadTicket::wait_until(
     _wait_timed_out = true;
     return {ProductStatus::ReadBusy, std::nullopt};
   }
-  return _flight->result.value_or(ProductLoadResult{});
+  assert(_flight->result);
+  return *_flight->result;
 }
 
 bool ProductReadTicket::wait_timed_out() const noexcept { return _wait_timed_out; }
@@ -159,26 +161,21 @@ std::chrono::milliseconds ProductReadCoordinator::wait_timeout() const noexcept 
 void ProductReadCoordinator::complete(std::uint64_t id,
                                       const std::shared_ptr<ProductReadFlight>& flight,
                                       ProductLoadResult result) noexcept {
+  // 只有 Leader 持有完成权；ticket 在调用前清空 owner，移动也只转移这份完成权。
   {
     std::lock_guard lock{flight->mutex};
-    if (!flight->result) {
-      flight->result.emplace(std::move(result));
-    }
+    flight->result.emplace(std::move(result));
   }
   flight->ready.notify_all();
 
   std::lock_guard lock{_mutex};
-  const auto position = _flights.find(id);
-  if (position != _flights.end() && position->second == flight) {
-    _flights.erase(position);
-  }
+  _flights.erase(id);
 }
 
 void ProductReadCoordinator::release_load() noexcept {
   std::lock_guard lock{_mutex};
-  if (_active_loads > 0) {
-    --_active_loads;
-  }
+  // 只由成功获取的 permit 释放一次，默认或已移动的 permit 不会进入这里。
+  --_active_loads;
 }
 
 }  // namespace sphinx

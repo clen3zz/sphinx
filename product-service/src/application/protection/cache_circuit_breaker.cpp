@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <sphinx/product/application/protection/cache_circuit_breaker.h>
 
-#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -75,7 +74,7 @@ CacheBreakerSnapshot CacheCircuitBreaker::snapshot() const {
     const auto now = _now();
     if (_retry_at > now) {
       const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(_retry_at - now);
-      result.retry_after = std::max(remaining, std::chrono::milliseconds{0});
+      result.retry_after = remaining;
     }
   }
   return result;

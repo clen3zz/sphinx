@@ -74,16 +74,9 @@ class RedisProductCache::Impl final {
   }
 
   RedisReplyPtr command(const std::vector<std::string_view>& arguments) {
-    RedisArgv argv{arguments};
     ensure_connection();
-    auto* raw_reply = static_cast<redisReply*>(
-        redisCommandArgv(_context.get(), static_cast<int>(argv.pointers.size()),
-                         argv.pointers.data(), argv.lengths.data()));
-    if (raw_reply == nullptr) {
-      reset_connection();
-      throw CacheError{"Redis command failed"};
-    }
-    return RedisReplyPtr{raw_reply};
+    append_command(arguments);
+    return read_reply();
   }
 
   void append_command(const std::vector<std::string_view>& arguments) {
@@ -104,44 +97,30 @@ class RedisProductCache::Impl final {
     return RedisReplyPtr{static_cast<redisReply*>(raw_reply)};
   }
 
+  void expect_reply(const redisReply& reply, bool valid, std::string_view operation) {
+    if (reply.type == REDIS_REPLY_ERROR) {
+      throw CacheError{"Redis " + std::string{operation} + " was rejected"};
+    }
+    if (!valid) {
+      reset_connection();
+      throw CacheError{"Redis " + std::string{operation} + " returned an unexpected response"};
+    }
+  }
+
   std::optional<std::string> parse_value(const redisReply& reply) {
     if (reply.type == REDIS_REPLY_NIL) {
       return std::nullopt;
     }
-    if (reply.type == REDIS_REPLY_STRING && (reply.str != nullptr || reply.len == 0)) {
-      if (reply.len == 0) {
-        return std::string{};
-      }
-      return std::string{reply.str, reply.len};
-    }
-    if (reply.type == REDIS_REPLY_ERROR) {
-      throw CacheError{"Redis cache read was rejected"};
-    }
-    reset_connection();
-    throw CacheError{"Redis cache read returned an unexpected response"};
+    expect_reply(
+        reply, reply.type == REDIS_REPLY_STRING && (reply.str != nullptr || reply.len == 0), "GET");
+    return reply.len != 0 ? std::string{reply.str, reply.len} : std::string{};
   }
 
-  void expect_ok(const redisReply& reply, const char* operation) {
-    if (reply.type == REDIS_REPLY_ERROR) {
-      throw CacheError{std::string{"Redis "} + operation + " was rejected"};
-    }
-    if (reply.type == REDIS_REPLY_STATUS && reply.str != nullptr && reply.len == 2 &&
-        reply.str[0] == 'O' && reply.str[1] == 'K') {
-      return;
-    }
-    reset_connection();
-    throw CacheError{std::string{"Redis "} + operation + " returned an unexpected response"};
-  }
-
-  void expect_deleted(const redisReply& reply) {
-    if (reply.type == REDIS_REPLY_ERROR) {
-      throw CacheError{"Redis DEL was rejected"};
-    }
-    if (reply.type == REDIS_REPLY_INTEGER && (reply.integer == 0 || reply.integer == 1)) {
-      return;
-    }
-    reset_connection();
-    throw CacheError{"Redis DEL returned an unexpected response"};
+  void expect_ok(const redisReply& reply, std::string_view operation) {
+    expect_reply(reply,
+                 reply.type == REDIS_REPLY_STATUS && reply.str != nullptr &&
+                     std::string_view{reply.str, reply.len} == "OK",
+                 operation);
   }
 
   std::vector<std::optional<std::string>> get_many(const std::vector<std::string>& keys) {
@@ -158,14 +137,10 @@ class RedisProductCache::Impl final {
       arguments.emplace_back(key);
     }
     const RedisReplyPtr reply = command(arguments);
-    if (reply->type == REDIS_REPLY_ERROR) {
-      throw CacheError{"Redis MGET was rejected"};
-    }
-    if (reply->type != REDIS_REPLY_ARRAY || reply->elements != keys.size() ||
-        reply->element == nullptr) {
-      reset_connection();
-      throw CacheError{"Redis MGET returned an unexpected response"};
-    }
+    expect_reply(
+        *reply,
+        reply->type == REDIS_REPLY_ARRAY && reply->elements == keys.size() && reply->element,
+        "MGET");
 
     std::vector<std::optional<std::string>> values;
     values.reserve(keys.size());
@@ -289,7 +264,9 @@ void RedisProductCache::erase(std::string_view key) {
     throw std::invalid_argument{"invalid product cache key"};
   }
   const RedisReplyPtr reply = _impl->command({"DEL", key});
-  _impl->expect_deleted(*reply);
+  _impl->expect_reply(
+      *reply, reply->type == REDIS_REPLY_INTEGER && (reply->integer == 0 || reply->integer == 1),
+      "DEL");
 }
 
 std::vector<std::optional<std::string>> RedisProductCache::get_many(

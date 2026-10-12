@@ -38,10 +38,8 @@ MySqlRuntime::~MySqlRuntime() {
   if (active_thread_guards != 0) {
     std::terminate();
   }
-  if (library_initialized) {
-    mysql_library_end();
-    library_initialized = false;
-  }
+  mysql_library_end();
+  library_initialized = false;
 }
 
 MySqlThreadGuard::MySqlThreadGuard() {

@@ -5,6 +5,7 @@
 #include <sphinx/product/domain/product.h>
 
 #include <array>
+#include <cassert>
 #include <charconv>
 #include <cstdint>
 #include <exception>
@@ -121,7 +122,7 @@ std::optional<std::uint64_t> parse_positive_id(std::string_view text) {
 }
 
 std::optional<std::uint64_t> parse_product_id(const httplib::Request& request) {
-  return request.matches.size() < 2 ? std::nullopt : parse_positive_id(request.matches[1].str());
+  return parse_positive_id(request.matches[1].str());
 }
 
 /// 只接受无查询参数或原样的 "fresh=1"；其他查询形式返回 nullopt。
@@ -142,71 +143,52 @@ struct ProductBatchQuery {
   bool bypass_cache = false;
 };
 
+std::vector<std::string_view> split(std::string_view text, char separator) {
+  std::vector<std::string_view> parts;
+  std::size_t start = 0;
+  do {
+    const auto end = text.find(separator, start);
+    parts.push_back(text.substr(start, end == text.npos ? end : end - start));
+    if (end == text.npos) {
+      break;
+    }
+    start = end + 1;
+  } while (true);
+  return parts;
+}
+
 std::optional<ProductBatchQuery> parse_product_batch_query(const httplib::Request& request) {
   const std::string_view target{request.target};
   const auto query_start = target.find('?');
-  if (query_start == std::string_view::npos ||
-      target.find('?', query_start + 1) != std::string_view::npos) {
+  if (query_start == target.npos) {
     return std::nullopt;
   }
-
   ProductBatchQuery query;
-  const std::string_view raw_query = target.substr(query_start + 1);
-  std::size_t token_start = 0;
-  while (token_start <= raw_query.size()) {
-    const auto separator = raw_query.find('&', token_start);
-    const auto token_end = separator == std::string_view::npos ? raw_query.size() : separator;
-    const auto parameter = raw_query.substr(token_start, token_end - token_start);
-    if (parameter.empty()) {
-      return std::nullopt;
-    }
+  for (const auto parameter : split(target.substr(query_start + 1), '&')) {
     const auto equals = parameter.find('=');
-    if (equals == std::string_view::npos) {
+    if (equals == parameter.npos) {
       return std::nullopt;
     }
     const auto name = parameter.substr(0, equals);
     const auto value = parameter.substr(equals + 1);
-
-    if (name == "ids") {
-      if (!query.ids.empty() || value.empty()) {
-        return std::nullopt;
-      }
-      std::size_t id_start = 0;
-      while (id_start <= value.size()) {
-        const auto comma = value.find(',', id_start);
-        const auto id_end = comma == std::string_view::npos ? value.size() : comma;
-        const auto text = value.substr(id_start, id_end - id_start);
-        if (text.empty() || query.ids.size() >= max_product_batch_size) {
-          return std::nullopt;
-        }
-        const auto id = parse_positive_id(text);
-        if (!id) {
-          return std::nullopt;
-        }
-        query.ids.push_back(*id);
-        if (comma == std::string_view::npos) {
-          break;
-        }
-        id_start = comma + 1;
-      }
-    } else if (name == "fresh") {
+    if (name == "fresh") {
       if (query.bypass_cache || value != "1") {
         return std::nullopt;
       }
       query.bypass_cache = true;
+    } else if (name == "ids" && query.ids.empty()) {
+      for (const auto text : split(value, ',')) {
+        const auto id = parse_positive_id(text);
+        if (!id || query.ids.size() >= max_product_batch_size) {
+          return std::nullopt;
+        }
+        query.ids.push_back(*id);
+      }
     } else {
       return std::nullopt;
     }
-
-    if (separator == std::string_view::npos) {
-      break;
-    }
-    token_start = separator + 1;
   }
-  if (query.ids.empty()) {
-    return std::nullopt;
-  }
-  return query;
+  return query.ids.empty() ? std::nullopt : std::optional{std::move(query)};
 }
 
 bool is_json_content_type(const httplib::Request& request) {
@@ -252,24 +234,17 @@ std::optional<UpdateProductRequest> parse_update_request(const httplib::Request&
       !parse_unsigned_integer(body.at("expected_version"), &expected_version)) {
     return std::nullopt;
   }
-  UpdateProductRequest update{id, std::move(name), price_cents, expected_version};
-  if (!valid_update_request(update)) {
-    return std::nullopt;
-  }
-  return update;
+  return UpdateProductRequest{id, std::move(name), price_cents, expected_version};
 }
 
-void handle_get_result(httplib::Response& response, const GetProductResult& result) {
-  response.set_header("X-Cache", cache_source_name(result.cache_source));
-  if (result.status != ProductStatus::Ok) {
-    set_product_status_error(response, result.status);
-    return;
+void handle_product_result(httplib::Response& response, ProductStatus status,
+                           const std::optional<Product>& product) {
+  if (status == ProductStatus::Ok) {
+    assert(product);
+    set_json_response(response, 200, product_json(*product).dump());
+  } else {
+    set_product_status_error(response, status);
   }
-  if (!result.product || !valid_product(*result.product)) {
-    set_internal_error(response);
-    return;
-  }
-  set_json_response(response, 200, product_json(*result.product).dump());
 }
 
 void handle_get_products_result(httplib::Response& response, const GetProductsResult& result) {
@@ -292,8 +267,8 @@ void handle_get_products_result(httplib::Response& response, const GetProductsRe
 
     Json value;
     value["id"] = item.id;
-    if (item.result.status == ProductStatus::Ok && item.result.product &&
-        valid_product(*item.result.product) && item.result.product->id == item.id) {
+    if (item.result.status == ProductStatus::Ok) {
+      assert(item.result.product);
       value["product"] = product_json(*item.result.product);
     } else {
       value["error"] = product_http_error(item.result.status).name;
@@ -305,23 +280,6 @@ void handle_get_products_result(httplib::Response& response, const GetProductsRe
                                      ? (mixed_sources ? "MIXED" : cache_source_name(*common_source))
                                      : "NOT_CHECKED");
   set_json_response(response, 200, body.dump());
-}
-
-void handle_update_result(httplib::Response& response, const UpdateProductResult& result,
-                          std::uint64_t id) {
-  if (result.cache_invalidation_failed) {
-    response.set_header("X-Cache-Invalidation", "failed");
-    std::cerr << "product cache invalidation failed id=" << id << '\n';
-  }
-  if (result.status != ProductStatus::Ok) {
-    set_product_status_error(response, result.status);
-    return;
-  }
-  if (!result.product || !valid_product(*result.product) || result.product->id != id) {
-    set_internal_error(response);
-    return;
-  }
-  set_json_response(response, 200, product_json(*result.product).dump());
 }
 
 bool is_product_path(std::string_view path) noexcept {
@@ -419,7 +377,9 @@ void install_product_routes(httplib::Server& server,
                      set_error_response(response, 400, "invalid_argument");
                      return;
                    }
-                   handle_get_result(response, current_service().get(*id, *fresh));
+                   const auto result = current_service().get(*id, *fresh);
+                   response.set_header("X-Cache", cache_source_name(result.cache_source));
+                   handle_product_result(response, result.status, result.product);
                  }));
 
   server.Put(R"(/products/([^/]+))",
@@ -435,16 +395,17 @@ void install_product_routes(httplib::Server& server,
                      set_error_response(response, 415, "unsupported_media_type");
                      return;
                    }
-                   if (request.body.size() > 65536) {
-                     set_error_response(response, 413, "payload_too_large");
-                     return;
-                   }
                    const auto update = parse_update_request(request, *id);
                    if (!update) {
                      set_error_response(response, 400, "invalid_argument");
                      return;
                    }
-                   handle_update_result(response, current_service().update(*update), *id);
+                   const auto result = current_service().update(*update);
+                   if (result.cache_invalidation_failed) {
+                     response.set_header("X-Cache-Invalidation", "failed");
+                     std::cerr << "product cache invalidation failed id=" << *id << '\n';
+                   }
+                   handle_product_result(response, result.status, result.product);
                  }));
 }
 
