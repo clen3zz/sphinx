@@ -97,7 +97,7 @@ struct ProductRowBuffer final {
     bind_unsigned_result(&bindings[0], &id, &null_flags[0], &error_flags[0]);
     bindings[1].buffer_type = MYSQL_TYPE_STRING;
     bindings[1].buffer = name.data();
-    bindings[1].buffer_length = static_cast<unsigned long>(name.size());
+    bindings[1].buffer_length = name.size();
     bindings[1].length = &lengths[1];
     bindings[1].is_null = &null_flags[1];
     bindings[1].error = &error_flags[1];
@@ -346,7 +346,6 @@ struct MySqlProductStore::Impl {
     for (std::size_t index = 0; index < parameter_ids.size(); ++index) {
       bind_unsigned_parameter(&parameters[index], &parameter_ids[index]);
     }
-    const std::unordered_set<std::uint64_t> requested_ids{ids.begin(), ids.end()};
     std::unordered_map<std::uint64_t, Product> products_by_id;
     products_by_id.reserve(parameter_ids.size());
     try {
@@ -383,14 +382,7 @@ struct MySqlProductStore::Impl {
         }
 
         Product product = row.to_product();
-        if (requested_ids.find(product.id) == requested_ids.end()) {
-          throw StoreError{StoreErrorCode::InvalidData,
-                           "MySQL product batch returned an unrequested row"};
-        }
-        if (!products_by_id.emplace(product.id, std::move(product)).second) {
-          throw StoreError{StoreErrorCode::InvalidData,
-                           "MySQL product batch returned a duplicate row"};
-        }
+        products_by_id.emplace(product.id, std::move(product));
       }
     } catch (...) {
       (void)clear_statement_result(slot, statement);
