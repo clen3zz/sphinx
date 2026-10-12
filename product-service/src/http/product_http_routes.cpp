@@ -2,6 +2,7 @@
 #include "product_http_routes.h"
 
 #include <sphinx/product/application/product_metrics.h>
+#include <sphinx/product/bootstrap/product_config.h>
 #include <sphinx/product/domain/product.h>
 
 #include <array>
@@ -33,10 +34,6 @@ void set_error_response(httplib::Response& response, int status, const char* err
   set_json_response(response, status, std::string{"{\"error\":\""} + error + "\"}");
 }
 
-void set_internal_error(httplib::Response& response) {
-  set_error_response(response, 500, "internal_error");
-}
-
 template <typename Handler>
 auto product_handler(Handler handler) {
   return
@@ -47,7 +44,7 @@ auto product_handler(Handler handler) {
           if (request.method == "GET") {
             response.set_header("X-Cache", "NOT_CHECKED");
           }
-          set_internal_error(response);
+          set_error_response(response, 500, "internal_error");
         }
       };
 }
@@ -298,8 +295,8 @@ const char* cache_breaker_state_name(CacheBreakerState state) noexcept {
   return "closed";
 }
 
-Json make_metrics_response(const ProductSharedState& shared, const std::string& backend,
-                           const std::string& policy) {
+Json make_metrics_response(const ProductSharedState& shared, CacheBackend backend,
+                           CachePolicyMode policy) {
   constexpr std::array<std::string_view, product_metric_count> metric_names{
       "get_requests",           "batch_requests",        "update_requests",
       "request_unique_ids",     "cache_lookup_keys",     "cache_hits",
@@ -319,8 +316,8 @@ Json make_metrics_response(const ProductSharedState& shared, const std::string& 
   const auto reads_active_keys = shared.reads.active_key_count();
   const auto reads_active_loads = shared.reads.active_load_count();
   const auto breaker = shared.breaker.snapshot();
-  return Json{{"backend", backend},
-              {"policy", policy},
+  return Json{{"backend", backend == CacheBackend::Redis ? "redis" : "sphinx"},
+              {"policy", policy == CachePolicyMode::Protected ? "protected" : "basic"},
               {"counters", std::move(counters)},
               {"read_coordinator",
                Json{{"active_keys", reads_active_keys}, {"active_loads", reads_active_loads}}},
@@ -331,10 +328,8 @@ Json make_metrics_response(const ProductSharedState& shared, const std::string& 
 
 }  // namespace
 
-void install_product_routes(httplib::Server& server,
-                            const std::function<ProductService&()>& current_service,
-                            const ProductSharedState& shared, const std::string& backend,
-                            const std::string& policy) {
+void install_product_routes(httplib::Server& server, const ProductSharedState& shared,
+                            const ProductRuntimeConfig& config) {
   server.set_post_routing_handler([](const httplib::Request&, httplib::Response& response) {
     response.set_header("Cache-Control", "no-store");
   });
@@ -349,13 +344,14 @@ void install_product_routes(httplib::Server& server,
     return httplib::Server::HandlerResponse::Unhandled;
   });
 
-  server.Get(
-      "/metrics", [&shared, backend, policy](const httplib::Request&, httplib::Response& response) {
-        set_json_response(response, 200, make_metrics_response(shared, backend, policy).dump());
-      });
+  server.Get("/metrics", [&shared, &config](const httplib::Request&, httplib::Response& response) {
+    set_json_response(
+        response, 200,
+        make_metrics_response(shared, config.cache.backend, config.cache_policy.mode).dump());
+  });
 
-  server.Get("/products", product_handler([current_service](const httplib::Request& request,
-                                                            httplib::Response& response) {
+  server.Get("/products",
+             product_handler([](const httplib::Request& request, httplib::Response& response) {
                const auto query = parse_product_batch_query(request);
                if (!query) {
                  response.set_header("X-Cache", "NOT_CHECKED");
@@ -363,50 +359,48 @@ void install_product_routes(httplib::Server& server,
                  return;
                }
                handle_get_products_result(
-                   response, current_service().get_many(query->ids, query->bypass_cache));
+                   response, current_product_service().get_many(query->ids, query->bypass_cache));
              }));
 
   server.Get(R"(/products/([^/]+))",
-             product_handler(
-                 [current_service](const httplib::Request& request, httplib::Response& response) {
-                   // HTTP 层只解析请求并映射响应；缓存命中、回源和结果分类由 ProductService 决定。
-                   const auto id = parse_product_id(request);
-                   const auto fresh = parse_fresh_query(request);
-                   if (!id || !fresh) {
-                     response.set_header("X-Cache", "NOT_CHECKED");
-                     set_error_response(response, 400, "invalid_argument");
-                     return;
-                   }
-                   const auto result = current_service().get(*id, *fresh);
-                   response.set_header("X-Cache", cache_source_name(result.cache_source));
-                   handle_product_result(response, result.status, result.product);
-                 }));
+             product_handler([](const httplib::Request& request, httplib::Response& response) {
+               // HTTP 层只解析请求并映射响应；缓存命中、回源和结果分类由 ProductService 决定。
+               const auto id = parse_product_id(request);
+               const auto fresh = parse_fresh_query(request);
+               if (!id || !fresh) {
+                 response.set_header("X-Cache", "NOT_CHECKED");
+                 set_error_response(response, 400, "invalid_argument");
+                 return;
+               }
+               const auto result = current_product_service().get(*id, *fresh);
+               response.set_header("X-Cache", cache_source_name(result.cache_source));
+               handle_product_result(response, result.status, result.product);
+             }));
 
   server.Put(R"(/products/([^/]+))",
-             product_handler(
-                 [current_service](const httplib::Request& request, httplib::Response& response) {
-                   // 更新请求携带 expected_version，交给业务层和 MySQL 事务完成并发检查。
-                   const auto id = parse_product_id(request);
-                   if (!id) {
-                     set_error_response(response, 400, "invalid_argument");
-                     return;
-                   }
-                   if (!is_json_content_type(request)) {
-                     set_error_response(response, 415, "unsupported_media_type");
-                     return;
-                   }
-                   const auto update = parse_update_request(request, *id);
-                   if (!update) {
-                     set_error_response(response, 400, "invalid_argument");
-                     return;
-                   }
-                   const auto result = current_service().update(*update);
-                   if (result.cache_invalidation_failed) {
-                     response.set_header("X-Cache-Invalidation", "failed");
-                     std::cerr << "product cache invalidation failed id=" << *id << '\n';
-                   }
-                   handle_product_result(response, result.status, result.product);
-                 }));
+             product_handler([](const httplib::Request& request, httplib::Response& response) {
+               // 更新请求携带 expected_version，交给业务层和 MySQL 事务完成并发检查。
+               const auto id = parse_product_id(request);
+               if (!id) {
+                 set_error_response(response, 400, "invalid_argument");
+                 return;
+               }
+               if (!is_json_content_type(request)) {
+                 set_error_response(response, 415, "unsupported_media_type");
+                 return;
+               }
+               const auto update = parse_update_request(request, *id);
+               if (!update) {
+                 set_error_response(response, 400, "invalid_argument");
+                 return;
+               }
+               const auto result = current_product_service().update(*update);
+               if (result.cache_invalidation_failed) {
+                 response.set_header("X-Cache-Invalidation", "failed");
+                 std::cerr << "product cache invalidation failed id=" << *id << '\n';
+               }
+               handle_product_result(response, result.status, result.product);
+             }));
 }
 
 }  // namespace sphinx

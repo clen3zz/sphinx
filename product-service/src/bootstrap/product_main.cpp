@@ -74,8 +74,11 @@ int main() {
     // server 最先析构并等待 Worker 退出，随后销毁共享状态与 MySQL 客户端运行时。
     sphinx::MySqlRuntime mysql_runtime;
     sphinx::ProductSharedState shared{config.read_options, config.breaker_options};
-    sphinx::ProductHttpServer server{config.http,
-                                     sphinx::make_product_worker_factory(config, shared), shared};
+    sphinx::ProductHttpServer server{config,
+                                     [&](const sphinx::ProductWorkerLoop& run_jobs) {
+                                       sphinx::run_product_worker(config, shared, run_jobs);
+                                     },
+                                     shared};
     const bool served = serve_until_shutdown(server, shutdown_signals);
     const int restore_result = pthread_sigmask(SIG_SETMASK, &previous_mask, nullptr);
     if (restore_result != 0) {

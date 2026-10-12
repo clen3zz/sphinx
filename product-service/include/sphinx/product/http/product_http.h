@@ -6,6 +6,7 @@
 #include <sphinx/product/application/protection/product_shared_state.h>
 
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -16,17 +17,17 @@ struct ProductHttpConfig {
   std::string bind_address = "127.0.0.1";
   std::uint16_t port = 8080;
   std::uint32_t worker_count = 4;
-  // 只作为指标标签，不参与后端选择或连接配置。
-  std::string cache_backend = "sphinx";
-  std::string cache_policy = "basic";
 };
 
-using ProductServiceFactory = std::function<ProductService&()>;
+struct ProductRuntimeConfig;
 
-/// 回调须返回当前 Worker 的业务服务，并保持服务及共享状态存活至 HTTP Worker 退出。
+using ProductWorkerLoop = std::function<void(ProductService&)>;
+using ProductWorkerRunner = std::function<void(const ProductWorkerLoop&)>;
+
+/// config/shared 必须长于服务；runner 创建线程资源并调用一次工作循环，返回后销毁资源。
 class ProductHttpServer final {
  public:
-  ProductHttpServer(ProductHttpConfig config, ProductServiceFactory current_service,
+  ProductHttpServer(const ProductRuntimeConfig& config, ProductWorkerRunner run_worker,
                     const ProductSharedState& shared);
   ~ProductHttpServer();
   ProductHttpServer(const ProductHttpServer&) = delete;
@@ -38,9 +39,10 @@ class ProductHttpServer final {
   void stop() noexcept;
 
  private:
-  ProductHttpConfig _config;
-  ProductServiceFactory _current_service;
+  const ProductRuntimeConfig& _config;
+  ProductWorkerRunner _run_worker;
   const ProductSharedState& _shared;
+  std::exception_ptr _worker_failure;
   httplib::Server _server;
   std::mutex _state_mutex;
   bool _stopping = false;

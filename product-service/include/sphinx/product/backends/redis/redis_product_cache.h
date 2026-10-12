@@ -42,7 +42,6 @@ class RedisProductCache final : public ProductCache {
 
   void check_owner() const;
   void ensure_connection();
-  void reset_connection() noexcept;
   ReplyPtr command(const std::vector<std::string_view>& arguments);
   void append_command(const std::vector<std::string_view>& arguments);
   ReplyPtr read_reply();

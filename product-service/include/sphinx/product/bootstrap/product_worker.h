@@ -5,8 +5,8 @@
 
 namespace sphinx {
 
-/// config 和 shared 必须长于使用此回调的 HTTP 服务。
-ProductServiceFactory make_product_worker_factory(const ProductRuntimeConfig& config,
-                                                  ProductSharedState& shared);
+/// 在当前 HTTP 工作线程创建资源，工作循环返回后按逆序销毁。
+void run_product_worker(const ProductRuntimeConfig& config, ProductSharedState& shared,
+                        const ProductWorkerLoop& run_jobs);
 
 }  // namespace sphinx

@@ -24,15 +24,10 @@ struct WorkerContext final {
 
 }  // namespace
 
-ProductServiceFactory make_product_worker_factory(const ProductRuntimeConfig& config,
-                                                  ProductSharedState& shared) {
-  return [&config, &shared]() -> ProductService& {
-    thread_local std::unique_ptr<WorkerContext> context;
-    if (!context) {
-      context = std::make_unique<WorkerContext>(config, shared);
-    }
-    return context->service;
-  };
+void run_product_worker(const ProductRuntimeConfig& config, ProductSharedState& shared,
+                        const ProductWorkerLoop& run_jobs) {
+  WorkerContext worker{config, shared};
+  run_jobs(worker.service);
 }
 
 }  // namespace sphinx

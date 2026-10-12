@@ -12,10 +12,6 @@ constexpr std::chrono::milliseconds max_open_interval{60000};
 
 }  // namespace
 
-std::chrono::steady_clock::time_point default_cache_now() noexcept {
-  return std::chrono::steady_clock::now();
-}
-
 CacheOperationPermit::CacheOperationPermit(CacheCircuitBreaker* owner,
                                            std::uint64_t generation) noexcept
     : _owner{owner}, _generation{generation} {}

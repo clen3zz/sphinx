@@ -31,14 +31,13 @@ class MySqlProductStore final : public ProductStore {
  private:
   struct Connection;
   struct Transaction;
+  struct StatementUse;
 
   void check_owner() const;
   void ensure_connection();
   [[noreturn]] void throw_mysql_error(unsigned int error, const char* message);
   void check_statement(int result, MYSQL_STMT* statement, const char* message);
   unsigned int clear_statement_result(MYSQL_STMT* statement);
-  template <typename Operation>
-  auto execute_statement(const std::string& sql, MYSQL_BIND* parameters, Operation operation);
   std::vector<std::optional<Product>> read_products(std::vector<std::uint64_t> ids,
                                                     bool for_update = false);
 

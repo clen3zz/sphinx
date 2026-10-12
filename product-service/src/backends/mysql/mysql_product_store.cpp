@@ -197,40 +197,43 @@ unsigned int MySqlProductStore::clear_statement_result(MYSQL_STMT* statement) {
   return free_error != 0 ? free_error : 1;
 }
 
-template <typename Operation>
-auto MySqlProductStore::execute_statement(const std::string& sql, MYSQL_BIND* parameters,
-                                          Operation operation) {
-  ensure_connection();
-  // 出错时连接可能从 store 移除；局部引用保证语句清理前连接仍存活。
-  auto session = _connection;
-  auto& cached = session->statements[sql];
-  if (!cached) {
-    Connection::Statement statement{mysql_stmt_init(session->handle.get())};
-    if (!statement) {
-      throw StoreError{StoreErrorCode::Unexpected, "MySQL statement allocation failed"};
+struct MySqlProductStore::StatementUse {
+  StatementUse(MySqlProductStore& store, const std::string& sql) : store{store} {
+    store.ensure_connection();
+    // 出错时 store 可能丢弃连接；本次操作保持资源存活至清理结束。
+    session = store._connection;
+    auto& cached = session->statements[sql];
+    if (!cached) {
+      Connection::Statement prepared{mysql_stmt_init(session->handle.get())};
+      if (!prepared) {
+        throw StoreError{StoreErrorCode::Unexpected, "MySQL statement allocation failed"};
+      }
+      store.check_statement(mysql_stmt_prepare(prepared.get(), sql.data(), sql.size()),
+                            prepared.get(), "MySQL statement preparation failed");
+      cached = std::move(prepared);
     }
-    check_statement(mysql_stmt_prepare(statement.get(), sql.data(), sql.size()), statement.get(),
-                    "MySQL statement preparation failed");
-    cached = std::move(statement);
+    statement = cached.get();
   }
-  MYSQL_STMT* statement = cached.get();
-  try {
-    check_statement(mysql_stmt_bind_param(statement, parameters), statement,
-                    "MySQL parameter binding failed");
-    check_statement(mysql_stmt_execute(statement), statement, "MySQL query failed");
-    auto result = operation(statement);
-    const auto error = clear_statement_result(statement);
-    if (error) {
-      throw_mysql_error(error, "MySQL query cleanup failed");
+  ~StatementUse() {
+    if (active && store._connection == session) {
+      (void)store.clear_statement_result(statement);
     }
-    return result;
-  } catch (...) {
-    if (_connection == session) {
-      (void)clear_statement_result(statement);
-    }
-    throw;
   }
-}
+  void finish() {
+    active = false;
+    const auto error = store.clear_statement_result(statement);
+    if (error != 0) {
+      store.throw_mysql_error(error, "MySQL query cleanup failed");
+    }
+  }
+  StatementUse(const StatementUse&) = delete;
+  StatementUse& operator=(const StatementUse&) = delete;
+
+  MySqlProductStore& store;
+  std::shared_ptr<Connection> session;
+  MYSQL_STMT* statement = nullptr;
+  bool active = true;
+};
 
 std::vector<std::optional<Product>> MySqlProductStore::read_products(std::vector<std::uint64_t> ids,
                                                                      bool for_update) {
@@ -247,33 +250,37 @@ std::vector<std::optional<Product>> MySqlProductStore::read_products(std::vector
     sql += index ? ",?" : "?";
   }
   sql += for_update ? ") FOR UPDATE" : ")";
-  return execute_statement(sql, parameters.data(), [&](MYSQL_STMT* statement) {
-    ProductRowBuffer row;
-    check_statement(mysql_stmt_bind_result(statement, row.bindings.data()), statement,
-                    "MySQL result binding failed");
-    check_statement(mysql_stmt_store_result(statement), statement, "MySQL result buffering failed");
-    std::unordered_map<std::uint64_t, Product> found;
-    for (;;) {
-      row.reset_flags();
-      const auto status = mysql_stmt_fetch(statement);
-      if (status == MYSQL_NO_DATA) {
-        break;
-      }
-      if (status == MYSQL_DATA_TRUNCATED) {
-        throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
-      }
-      check_statement(status, statement, "MySQL row fetch failed");
-      auto product = row.to_product();
-      found.emplace(product.id, std::move(product));
+  StatementUse use{*this, sql};
+  MYSQL_STMT* statement = use.statement;
+  check_statement(mysql_stmt_bind_param(statement, parameters.data()), statement,
+                  "MySQL parameter binding failed");
+  check_statement(mysql_stmt_execute(statement), statement, "MySQL query failed");
+  ProductRowBuffer row;
+  check_statement(mysql_stmt_bind_result(statement, row.bindings.data()), statement,
+                  "MySQL result binding failed");
+  check_statement(mysql_stmt_store_result(statement), statement, "MySQL result buffering failed");
+  std::unordered_map<std::uint64_t, Product> found;
+  for (;;) {
+    row.reset_flags();
+    const auto status = mysql_stmt_fetch(statement);
+    if (status == MYSQL_NO_DATA) {
+      break;
     }
-    std::vector<std::optional<Product>> products;
-    products.reserve(ids.size());
-    for (auto id : ids) {
-      const auto position = found.find(id);
-      products.push_back(position == found.end() ? std::nullopt : std::optional{position->second});
+    if (status == MYSQL_DATA_TRUNCATED) {
+      throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
     }
-    return products;
-  });
+    check_statement(status, statement, "MySQL row fetch failed");
+    auto product = row.to_product();
+    found.emplace(product.id, std::move(product));
+  }
+  std::vector<std::optional<Product>> products;
+  products.reserve(ids.size());
+  for (auto id : ids) {
+    const auto position = found.find(id);
+    products.push_back(position == found.end() ? std::nullopt : std::optional{position->second});
+  }
+  use.finish();
+  return products;
 }
 
 struct MySqlProductStore::Transaction {
@@ -351,10 +358,15 @@ StoreUpdateResult MySqlProductStore::update(const UpdateProductRequest& request)
   std::array<MYSQL_BIND, 4> parameters{name, unsigned_binding(product.price_cents),
                                        unsigned_binding(product.id),
                                        unsigned_binding(expected_version)};
-  const auto affected = execute_statement(
-      "UPDATE products SET name = ?, price_cents = ?, version = version + 1 WHERE id = ? AND "
-      "version = ?",
-      parameters.data(), [](MYSQL_STMT* statement) { return mysql_stmt_affected_rows(statement); });
+  StatementUse use{*this,
+                   "UPDATE products SET name = ?, price_cents = ?, version = version + 1 "
+                   "WHERE id = ? AND version = ?"};
+  MYSQL_STMT* statement = use.statement;
+  check_statement(mysql_stmt_bind_param(statement, parameters.data()), statement,
+                  "MySQL parameter binding failed");
+  check_statement(mysql_stmt_execute(statement), statement, "MySQL query failed");
+  const auto affected = mysql_stmt_affected_rows(statement);
+  use.finish();
   if (affected != 1) {
     throw StoreError{StoreErrorCode::Unexpected, "MySQL update affected an unexpected row count"};
   }

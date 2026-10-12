@@ -530,7 +530,7 @@ class ProductHttpIntegrationTest(unittest.TestCase):
 
         self.assertEqual(json.loads(refreshed[2])["version"], 2)
 
-    def test_metrics_does_not_create_a_worker_or_connect_to_mysql(self):
+    def test_metrics_does_not_connect_to_mysql(self):
         dead_mysql_port = reserve_port()
         self.start_service(mysql_port=dead_mysql_port)
 

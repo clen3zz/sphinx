@@ -110,9 +110,6 @@ ProductRuntimeConfig load_product_config() {
   validate_product_cache_policy(config.cache_policy);
   validate_product_cache_options(config.cache);
   validate_mysql_options(config.mysql);
-  config.http.cache_backend = config.cache.backend == CacheBackend::Redis ? "redis" : "sphinx";
-  config.http.cache_policy =
-      config.cache_policy.mode == CachePolicyMode::Protected ? "protected" : "basic";
   return config;
 }
 

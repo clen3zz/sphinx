@@ -24,8 +24,6 @@ struct CacheBreakerSnapshot {
 
 using CacheNowFunction = std::function<std::chrono::steady_clock::time_point()>;
 
-std::chrono::steady_clock::time_point default_cache_now() noexcept;
-
 class CacheCircuitBreaker;
 
 class CacheOperationPermit final {
@@ -53,7 +51,7 @@ class CacheOperationPermit final {
 class CacheCircuitBreaker final {
  public:
   explicit CacheCircuitBreaker(CacheBreakerOptions options,
-                               CacheNowFunction now = default_cache_now);
+                               CacheNowFunction now = std::chrono::steady_clock::now);
   CacheCircuitBreaker(const CacheCircuitBreaker&) = delete;
   CacheCircuitBreaker& operator=(const CacheCircuitBreaker&) = delete;
   CacheCircuitBreaker(CacheCircuitBreaker&&) = delete;

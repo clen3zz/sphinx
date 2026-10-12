@@ -20,23 +20,6 @@ timeval to_timeval(std::chrono::milliseconds timeout) noexcept {
   return result;
 }
 
-struct RedisArgv {
-  explicit RedisArgv(const std::vector<std::string_view>& arguments) {
-    // 只接收本文件构造的命令；批量入口已限制为最多 32 个 key。
-    assert(!arguments.empty() && arguments.size() <= max_product_batch_size + 1);
-    // hiredis 在 command/append 调用内复制字节；此处只借用参数，无需复制 payload。
-    pointers.reserve(arguments.size());
-    lengths.reserve(arguments.size());
-    for (const auto argument : arguments) {
-      pointers.push_back(argument.empty() ? "" : argument.data());
-      lengths.push_back(argument.size());
-    }
-  }
-
-  std::vector<const char*> pointers;
-  std::vector<std::size_t> lengths;
-};
-
 }  // namespace
 
 void validate_redis_options(const RedisOptions& options) {
@@ -70,10 +53,19 @@ RedisProductCache::ReplyPtr RedisProductCache::command(
 }
 
 void RedisProductCache::append_command(const std::vector<std::string_view>& arguments) {
-  RedisArgv argv{arguments};
-  if (redisAppendCommandArgv(_context.get(), static_cast<int>(argv.pointers.size()),
-                             argv.pointers.data(), argv.lengths.data()) != REDIS_OK) {
-    reset_connection();
+  assert(!arguments.empty() && arguments.size() <= max_product_batch_size + 1);
+  std::vector<const char*> pointers;
+  std::vector<std::size_t> lengths;
+  pointers.reserve(arguments.size());
+  lengths.reserve(arguments.size());
+  // hiredis 在 append 内复制字节；这里借用参数，无需复制 payload。
+  for (const auto argument : arguments) {
+    pointers.push_back(argument.empty() ? "" : argument.data());
+    lengths.push_back(argument.size());
+  }
+  if (redisAppendCommandArgv(_context.get(), static_cast<int>(pointers.size()), pointers.data(),
+                             lengths.data()) != REDIS_OK) {
+    _context.reset();
     throw CacheError{"Redis pipeline append failed"};
   }
 }
@@ -81,7 +73,7 @@ void RedisProductCache::append_command(const std::vector<std::string_view>& argu
 RedisProductCache::ReplyPtr RedisProductCache::read_reply() {
   void* raw_reply = nullptr;
   if (redisGetReply(_context.get(), &raw_reply) != REDIS_OK || raw_reply == nullptr) {
-    reset_connection();
+    _context.reset();
     throw CacheError{"Redis pipeline reply failed"};
   }
   return ReplyPtr{static_cast<redisReply*>(raw_reply)};
@@ -93,7 +85,7 @@ void RedisProductCache::expect_reply(const redisReply& reply, bool valid,
     throw CacheError{"Redis " + std::string{operation} + " was rejected"};
   }
   if (!valid) {
-    reset_connection();
+    _context.reset();
     throw CacheError{"Redis " + std::string{operation} + " returned an unexpected response"};
   }
 }
@@ -137,7 +129,7 @@ std::vector<std::optional<std::string>> RedisProductCache::get_many(
   values.reserve(keys.size());
   for (std::size_t index = 0; index < keys.size(); ++index) {
     if (reply->element[index] == nullptr) {
-      reset_connection();
+      _context.reset();
       throw CacheError{"Redis MGET returned an invalid element"};
     }
     values.push_back(parse_value(*reply->element[index]));
@@ -169,7 +161,7 @@ void RedisProductCache::put_many(const std::vector<CacheWriteEntry>& entries) {
     }
   } catch (...) {
     // 未读完的回复或尚未发送的命令不能留给下一次操作。
-    reset_connection();
+    _context.reset();
     throw;
   }
   if (command_rejected) {
@@ -202,7 +194,7 @@ void RedisProductCache::ensure_connection() {
       expect_startup_ok({"SELECT", database}, "SELECT");
     }
   } catch (...) {
-    reset_connection();
+    _context.reset();
     throw;
   }
 }
@@ -212,8 +204,6 @@ void RedisProductCache::expect_startup_ok(const std::vector<std::string_view>& a
   ReplyPtr reply = command(arguments);
   expect_ok(*reply, operation);
 }
-
-void RedisProductCache::reset_connection() noexcept { _context.reset(); }
 
 RedisProductCache::RedisProductCache(RedisOptions options) : _options{std::move(options)} {
   validate_redis_options(_options);
