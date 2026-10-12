@@ -19,7 +19,7 @@
 #include <unordered_map>
 #include <utility>
 
-// 只有商品服务链接 MySQL 客户端库；C API 的细节只留在本文件。
+// MySQL 客户端依赖只属于存储后端，不进入业务核心。
 // StoreError::what() 不包含凭据、SQL 文本或用户输入，避免向上层泄露敏感信息。
 
 namespace sphinx {
@@ -113,7 +113,9 @@ struct ProductRowBuffer {
   std::array<MYSQL_BIND, 4> bindings{};
 };
 
-struct MySqlConnection {
+}  // namespace
+
+struct MySqlProductStore::Connection {
   struct CloseConnection {
     void operator()(MYSQL* handle) const { mysql_close(handle); }
   };
@@ -126,8 +128,6 @@ struct MySqlConnection {
   std::unordered_map<std::string, Statement> statements;
 };
 
-}  // namespace
-
 void validate_mysql_options(const MySqlOptions& options) {
   if (options.host.empty() || options.user.empty() || options.database.empty() ||
       options.port == 0 || options.connect_timeout_seconds == 0 ||
@@ -138,208 +138,199 @@ void validate_mysql_options(const MySqlOptions& options) {
   }
 }
 
-struct MySqlProductStore::Impl {
-  explicit Impl(const MySqlOptions& options) : options{options} {}
-  ~Impl() { assert(owner_thread == std::this_thread::get_id()); }
-  void check_owner() const {
-    if (owner_thread != std::this_thread::get_id() || !mysql_thread_initialized()) {
-      throw StoreError{StoreErrorCode::Unexpected, "MySQL store used from a non-owner thread"};
-    }
+void MySqlProductStore::check_owner() const {
+  if (_owner_thread != std::this_thread::get_id() || !mysql_thread_initialized()) {
+    throw StoreError{StoreErrorCode::Unexpected, "MySQL store used from a non-owner thread"};
   }
-  void ensure_connection() {
-    if (connection) {
-      return;
-    }
-    auto session = std::make_shared<MySqlConnection>();
-    MYSQL* handle = session->handle.get();
-    if (handle == nullptr) {
-      throw StoreError{StoreErrorCode::Unexpected, "MySQL connection allocation failed"};
-    }
-    constexpr unsigned int protocol = MYSQL_PROTOCOL_TCP;
-    if (mysql_options(handle, MYSQL_OPT_CONNECT_TIMEOUT, &options.connect_timeout_seconds) ||
-        mysql_options(handle, MYSQL_OPT_READ_TIMEOUT, &options.read_timeout_seconds) ||
-        mysql_options(handle, MYSQL_OPT_WRITE_TIMEOUT, &options.write_timeout_seconds) ||
-        mysql_options(handle, MYSQL_OPT_PROTOCOL, &protocol)) {
-      throw StoreError{StoreErrorCode::Unexpected, "MySQL connection option setup failed"};
-    }
-    if (!mysql_real_connect(handle, options.host.c_str(), options.user.c_str(),
-                            options.password.c_str(), options.database.c_str(), options.port,
-                            nullptr, 0)) {
-      throw StoreError{StoreErrorCode::Unavailable, "MySQL connection unavailable"};
-    }
-    if (mysql_set_character_set(handle, "utf8mb4")) {
-      throw StoreError{StoreErrorCode::Unexpected, "MySQL character set setup failed"};
-    }
-    connection = std::move(session);
+}
+void MySqlProductStore::ensure_connection() {
+  if (_connection) {
+    return;
   }
-  [[noreturn]] void throw_mysql_error(unsigned int error, const char* message) {
-    if (is_connection_failure(error)) {
-      connection.reset();
-    }
-    throw StoreError{
-        is_unavailable_error(error) ? StoreErrorCode::Unavailable : StoreErrorCode::Unexpected,
-        message};
+  auto session = std::make_shared<Connection>();
+  MYSQL* handle = session->handle.get();
+  if (handle == nullptr) {
+    throw StoreError{StoreErrorCode::Unexpected, "MySQL connection allocation failed"};
   }
-  void check_statement(int result, MYSQL_STMT* statement, const char* message) {
-    if (result != 0) {
-      throw_mysql_error(mysql_stmt_errno(statement), message);
-    }
+  constexpr unsigned int protocol = MYSQL_PROTOCOL_TCP;
+  if (mysql_options(handle, MYSQL_OPT_CONNECT_TIMEOUT, &_options.connect_timeout_seconds) ||
+      mysql_options(handle, MYSQL_OPT_READ_TIMEOUT, &_options.read_timeout_seconds) ||
+      mysql_options(handle, MYSQL_OPT_WRITE_TIMEOUT, &_options.write_timeout_seconds) ||
+      mysql_options(handle, MYSQL_OPT_PROTOCOL, &protocol)) {
+    throw StoreError{StoreErrorCode::Unexpected, "MySQL connection option setup failed"};
   }
-  unsigned int clear_statement_result(MYSQL_STMT* statement) {
-    const bool free_failed = mysql_stmt_free_result(statement);
-    const auto free_error = free_failed ? mysql_stmt_errno(statement) : 0;
-    const bool reset_failed = mysql_stmt_reset(statement);
-    const auto reset_error = reset_failed ? mysql_stmt_errno(statement) : 0;
-    if (!free_failed && !reset_failed) {
-      return 0;
-    }
-    connection.reset();
-    if (reset_error != 0) {
-      return reset_error;
-    }
-    return free_error != 0 ? free_error : 1;
+  if (!mysql_real_connect(handle, _options.host.c_str(), _options.user.c_str(),
+                          _options.password.c_str(), _options.database.c_str(), _options.port,
+                          nullptr, 0)) {
+    throw StoreError{StoreErrorCode::Unavailable, "MySQL connection unavailable"};
   }
+  if (mysql_set_character_set(handle, "utf8mb4")) {
+    throw StoreError{StoreErrorCode::Unexpected, "MySQL character set setup failed"};
+  }
+  _connection = std::move(session);
+}
+[[noreturn]] void MySqlProductStore::throw_mysql_error(unsigned int error, const char* message) {
+  if (is_connection_failure(error)) {
+    _connection.reset();
+  }
+  throw StoreError{
+      is_unavailable_error(error) ? StoreErrorCode::Unavailable : StoreErrorCode::Unexpected,
+      message};
+}
+void MySqlProductStore::check_statement(int result, MYSQL_STMT* statement, const char* message) {
+  if (result != 0) {
+    throw_mysql_error(mysql_stmt_errno(statement), message);
+  }
+}
+unsigned int MySqlProductStore::clear_statement_result(MYSQL_STMT* statement) {
+  const bool free_failed = mysql_stmt_free_result(statement);
+  const auto free_error = free_failed ? mysql_stmt_errno(statement) : 0;
+  const bool reset_failed = mysql_stmt_reset(statement);
+  const auto reset_error = reset_failed ? mysql_stmt_errno(statement) : 0;
+  if (!free_failed && !reset_failed) {
+    return 0;
+  }
+  _connection.reset();
+  if (reset_error != 0) {
+    return reset_error;
+  }
+  return free_error != 0 ? free_error : 1;
+}
 
-  template <typename Operation>
-  auto execute_statement(const std::string& sql, MYSQL_BIND* parameters, Operation operation) {
-    ensure_connection();
-    // 出错时连接可能从 store 移除；局部引用保证语句清理前连接仍存活。
-    auto session = connection;
-    auto& cached = session->statements[sql];
-    if (!cached) {
-      MySqlConnection::Statement statement{mysql_stmt_init(session->handle.get())};
-      if (!statement) {
-        throw StoreError{StoreErrorCode::Unexpected, "MySQL statement allocation failed"};
-      }
-      check_statement(mysql_stmt_prepare(statement.get(), sql.data(), sql.size()), statement.get(),
-                      "MySQL statement preparation failed");
-      cached = std::move(statement);
+template <typename Operation>
+auto MySqlProductStore::execute_statement(const std::string& sql, MYSQL_BIND* parameters,
+                                          Operation operation) {
+  ensure_connection();
+  // 出错时连接可能从 store 移除；局部引用保证语句清理前连接仍存活。
+  auto session = _connection;
+  auto& cached = session->statements[sql];
+  if (!cached) {
+    Connection::Statement statement{mysql_stmt_init(session->handle.get())};
+    if (!statement) {
+      throw StoreError{StoreErrorCode::Unexpected, "MySQL statement allocation failed"};
     }
-    MYSQL_STMT* statement = cached.get();
-    try {
-      check_statement(mysql_stmt_bind_param(statement, parameters), statement,
-                      "MySQL parameter binding failed");
-      check_statement(mysql_stmt_execute(statement), statement, "MySQL query failed");
-      auto result = operation(statement);
-      const auto error = clear_statement_result(statement);
-      if (error) {
-        throw_mysql_error(error, "MySQL query cleanup failed");
+    check_statement(mysql_stmt_prepare(statement.get(), sql.data(), sql.size()), statement.get(),
+                    "MySQL statement preparation failed");
+    cached = std::move(statement);
+  }
+  MYSQL_STMT* statement = cached.get();
+  try {
+    check_statement(mysql_stmt_bind_param(statement, parameters), statement,
+                    "MySQL parameter binding failed");
+    check_statement(mysql_stmt_execute(statement), statement, "MySQL query failed");
+    auto result = operation(statement);
+    const auto error = clear_statement_result(statement);
+    if (error) {
+      throw_mysql_error(error, "MySQL query cleanup failed");
+    }
+    return result;
+  } catch (...) {
+    if (_connection == session) {
+      (void)clear_statement_result(statement);
+    }
+    throw;
+  }
+}
+
+std::vector<std::optional<Product>> MySqlProductStore::read_products(std::vector<std::uint64_t> ids,
+                                                                     bool for_update) {
+  if (ids.empty()) {
+    return {};
+  }
+  std::vector<MYSQL_BIND> parameters;
+  parameters.reserve(ids.size());
+  for (auto& id : ids) {
+    parameters.push_back(unsigned_binding(id));
+  }
+  std::string sql = "SELECT id, name, price_cents, version FROM products WHERE id IN (";
+  for (std::size_t index = 0; index < ids.size(); ++index) {
+    sql += index ? ",?" : "?";
+  }
+  sql += for_update ? ") FOR UPDATE" : ")";
+  return execute_statement(sql, parameters.data(), [&](MYSQL_STMT* statement) {
+    ProductRowBuffer row;
+    check_statement(mysql_stmt_bind_result(statement, row.bindings.data()), statement,
+                    "MySQL result binding failed");
+    check_statement(mysql_stmt_store_result(statement), statement, "MySQL result buffering failed");
+    std::unordered_map<std::uint64_t, Product> found;
+    for (;;) {
+      row.reset_flags();
+      const auto status = mysql_stmt_fetch(statement);
+      if (status == MYSQL_NO_DATA) {
+        break;
       }
-      return result;
-    } catch (...) {
-      if (connection == session) {
-        (void)clear_statement_result(statement);
+      if (status == MYSQL_DATA_TRUNCATED) {
+        throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
       }
-      throw;
+      check_statement(status, statement, "MySQL row fetch failed");
+      auto product = row.to_product();
+      found.emplace(product.id, std::move(product));
+    }
+    std::vector<std::optional<Product>> products;
+    products.reserve(ids.size());
+    for (auto id : ids) {
+      const auto position = found.find(id);
+      products.push_back(position == found.end() ? std::nullopt : std::optional{position->second});
+    }
+    return products;
+  });
+}
+
+struct MySqlProductStore::Transaction {
+  explicit Transaction(MySqlProductStore& store) : store{store} {
+    store.ensure_connection();
+    if (mysql_query(store._connection->handle.get(), "START TRANSACTION")) {
+      store.throw_mysql_error(mysql_errno(store._connection->handle.get()),
+                              "MySQL transaction start failed");
     }
   }
-
-  std::vector<std::optional<Product>> read_products(std::vector<std::uint64_t> ids,
-                                                    bool for_update = false) {
-    if (ids.empty()) {
-      return {};
+  ~Transaction() {
+    if (active && store._connection && mysql_rollback(store._connection->handle.get())) {
+      store._connection.reset();
     }
-    std::vector<MYSQL_BIND> parameters;
-    parameters.reserve(ids.size());
-    for (auto& id : ids) {
-      parameters.push_back(unsigned_binding(id));
-    }
-    std::string sql = "SELECT id, name, price_cents, version FROM products WHERE id IN (";
-    for (std::size_t index = 0; index < ids.size(); ++index) {
-      sql += index ? ",?" : "?";
-    }
-    sql += for_update ? ") FOR UPDATE" : ")";
-    return execute_statement(sql, parameters.data(), [&](MYSQL_STMT* statement) {
-      ProductRowBuffer row;
-      check_statement(mysql_stmt_bind_result(statement, row.bindings.data()), statement,
-                      "MySQL result binding failed");
-      check_statement(mysql_stmt_store_result(statement), statement,
-                      "MySQL result buffering failed");
-      std::unordered_map<std::uint64_t, Product> found;
-      for (;;) {
-        row.reset_flags();
-        const auto status = mysql_stmt_fetch(statement);
-        if (status == MYSQL_NO_DATA) {
-          break;
-        }
-        if (status == MYSQL_DATA_TRUNCATED) {
-          throw StoreError{StoreErrorCode::InvalidData, "MySQL product row is invalid"};
-        }
-        check_statement(status, statement, "MySQL row fetch failed");
-        auto product = row.to_product();
-        found.emplace(product.id, std::move(product));
-      }
-      std::vector<std::optional<Product>> products;
-      products.reserve(ids.size());
-      for (auto id : ids) {
-        const auto position = found.find(id);
-        products.push_back(position == found.end() ? std::nullopt
-                                                   : std::optional{position->second});
-      }
-      return products;
-    });
   }
-
-  struct Transaction {
-    explicit Transaction(Impl& store) : store{store} {
-      store.ensure_connection();
-      if (mysql_query(store.connection->handle.get(), "START TRANSACTION")) {
-        store.throw_mysql_error(mysql_errno(store.connection->handle.get()),
-                                "MySQL transaction start failed");
-      }
-    }
-    ~Transaction() {
-      if (active && store.connection && mysql_rollback(store.connection->handle.get())) {
-        store.connection.reset();
-      }
-    }
-    void commit() {
-      if (mysql_commit(store.connection->handle.get())) {
-        store.connection.reset();
-        active = false;
-        throw StoreError{StoreErrorCode::CommitUnknown, "MySQL commit result is unknown"};
-      }
+  void commit() {
+    if (mysql_commit(store._connection->handle.get())) {
+      store._connection.reset();
       active = false;
+      throw StoreError{StoreErrorCode::CommitUnknown, "MySQL commit result is unknown"};
     }
-    Impl& store;
-    bool active = true;
-  };
-  MySqlOptions options;
-  const std::thread::id owner_thread = std::this_thread::get_id();
-  std::shared_ptr<MySqlConnection> connection;
+    active = false;
+  }
+  MySqlProductStore& store;
+  bool active = true;
 };
 
-MySqlProductStore::MySqlProductStore(const MySqlOptions& options) {
+MySqlProductStore::MySqlProductStore(const MySqlOptions& options) : _options{options} {
   validate_mysql_options(options);
   if (!mysql_thread_initialized()) {
     throw StoreError{StoreErrorCode::Unexpected, "MySQL store requires a thread guard"};
   }
-  _impl = std::make_unique<Impl>(options);
 }
-MySqlProductStore::~MySqlProductStore() = default;
+MySqlProductStore::~MySqlProductStore() { assert(_owner_thread == std::this_thread::get_id()); }
 
 std::optional<Product> MySqlProductStore::find(std::uint64_t id) {
-  _impl->check_owner();
+  check_owner();
   if (id == 0) {
     throw std::invalid_argument{"product id must be positive"};
   }
-  return std::move(_impl->read_products({id}).front());
+  return std::move(read_products({id}).front());
 }
 std::vector<std::optional<Product>> MySqlProductStore::find_many(
     const std::vector<std::uint64_t>& ids) {
-  _impl->check_owner();
+  check_owner();
   if (ids.size() > max_product_batch_size || std::find(ids.begin(), ids.end(), 0) != ids.end()) {
     throw std::invalid_argument{"invalid product store batch IDs"};
   }
-  return _impl->read_products(ids);
+  return read_products(ids);
 }
 StoreUpdateResult MySqlProductStore::update(const UpdateProductRequest& request) {
-  _impl->check_owner();
+  check_owner();
   if (!valid_update_request(request)) {
     throw std::invalid_argument{"invalid product update request"};
   }
-  Impl::Transaction transaction{*_impl};
-  const auto existing = _impl->read_products({request.id}, true).front();
+  Transaction transaction{*this};
+  const auto existing = read_products({request.id}, true).front();
   if (!existing) {
     return {StoreUpdateStatus::NotFound, std::nullopt};
   }
@@ -360,7 +351,7 @@ StoreUpdateResult MySqlProductStore::update(const UpdateProductRequest& request)
   std::array<MYSQL_BIND, 4> parameters{name, unsigned_binding(product.price_cents),
                                        unsigned_binding(product.id),
                                        unsigned_binding(expected_version)};
-  const auto affected = _impl->execute_statement(
+  const auto affected = execute_statement(
       "UPDATE products SET name = ?, price_cents = ?, version = version + 1 WHERE id = ? AND "
       "version = ?",
       parameters.data(), [](MYSQL_STMT* statement) { return mysql_stmt_affected_rows(statement); });

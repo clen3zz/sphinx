@@ -12,17 +12,6 @@
 namespace sphinx {
 namespace {
 
-struct RedisContextDeleter {
-  void operator()(redisContext* context) const noexcept { redisFree(context); }
-};
-
-struct RedisReplyDeleter {
-  void operator()(redisReply* reply) const noexcept { freeReplyObject(reply); }
-};
-
-using RedisContextPtr = std::unique_ptr<redisContext, RedisContextDeleter>;
-using RedisReplyPtr = std::unique_ptr<redisReply, RedisReplyDeleter>;
-
 timeval to_timeval(std::chrono::milliseconds timeout) noexcept {
   const auto milliseconds = timeout.count();
   timeval result{};
@@ -60,193 +49,190 @@ void validate_redis_options(const RedisOptions& options) {
   }
 }
 
-class RedisProductCache::Impl final {
- public:
-  explicit Impl(RedisOptions options)
-      : _options{std::move(options)}, _owner_thread{std::this_thread::get_id()} {
-    validate_redis_options(_options);
+void RedisProductCache::ContextDeleter::operator()(redisContext* context) const noexcept {
+  redisFree(context);
+}
+void RedisProductCache::ReplyDeleter::operator()(redisReply* reply) const noexcept {
+  freeReplyObject(reply);
+}
+
+void RedisProductCache::check_owner() const {
+  if (std::this_thread::get_id() != _owner_thread) {
+    throw CacheError{"Redis cache used from a different thread"};
+  }
+}
+
+RedisProductCache::ReplyPtr RedisProductCache::command(
+    const std::vector<std::string_view>& arguments) {
+  ensure_connection();
+  append_command(arguments);
+  return read_reply();
+}
+
+void RedisProductCache::append_command(const std::vector<std::string_view>& arguments) {
+  RedisArgv argv{arguments};
+  if (redisAppendCommandArgv(_context.get(), static_cast<int>(argv.pointers.size()),
+                             argv.pointers.data(), argv.lengths.data()) != REDIS_OK) {
+    reset_connection();
+    throw CacheError{"Redis pipeline append failed"};
+  }
+}
+
+RedisProductCache::ReplyPtr RedisProductCache::read_reply() {
+  void* raw_reply = nullptr;
+  if (redisGetReply(_context.get(), &raw_reply) != REDIS_OK || raw_reply == nullptr) {
+    reset_connection();
+    throw CacheError{"Redis pipeline reply failed"};
+  }
+  return ReplyPtr{static_cast<redisReply*>(raw_reply)};
+}
+
+void RedisProductCache::expect_reply(const redisReply& reply, bool valid,
+                                     std::string_view operation) {
+  if (reply.type == REDIS_REPLY_ERROR) {
+    throw CacheError{"Redis " + std::string{operation} + " was rejected"};
+  }
+  if (!valid) {
+    reset_connection();
+    throw CacheError{"Redis " + std::string{operation} + " returned an unexpected response"};
+  }
+}
+
+std::optional<std::string> RedisProductCache::parse_value(const redisReply& reply) {
+  if (reply.type == REDIS_REPLY_NIL) {
+    return std::nullopt;
+  }
+  expect_reply(reply, reply.type == REDIS_REPLY_STRING && (reply.str != nullptr || reply.len == 0),
+               "GET");
+  return reply.len != 0 ? std::string{reply.str, reply.len} : std::string{};
+}
+
+void RedisProductCache::expect_ok(const redisReply& reply, std::string_view operation) {
+  expect_reply(reply,
+               reply.type == REDIS_REPLY_STATUS && reply.str != nullptr &&
+                   std::string_view{reply.str, reply.len} == "OK",
+               operation);
+}
+
+std::vector<std::optional<std::string>> RedisProductCache::get_many(
+    const std::vector<std::string>& keys) {
+  check_owner();
+  validate_product_cache_keys(keys);
+  if (keys.empty()) {
+    return {};
   }
 
-  void check_owner() const {
-    if (std::this_thread::get_id() != _owner_thread) {
-      throw CacheError{"Redis cache used from a different thread"};
-    }
+  std::vector<std::string_view> arguments;
+  arguments.reserve(keys.size() + 1);
+  arguments.emplace_back("MGET");
+  for (const auto& key : keys) {
+    arguments.emplace_back(key);
   }
+  const ReplyPtr reply = command(arguments);
+  expect_reply(*reply,
+               reply->type == REDIS_REPLY_ARRAY && reply->elements == keys.size() && reply->element,
+               "MGET");
 
-  RedisReplyPtr command(const std::vector<std::string_view>& arguments) {
-    ensure_connection();
-    append_command(arguments);
-    return read_reply();
-  }
-
-  void append_command(const std::vector<std::string_view>& arguments) {
-    RedisArgv argv{arguments};
-    if (redisAppendCommandArgv(_context.get(), static_cast<int>(argv.pointers.size()),
-                               argv.pointers.data(), argv.lengths.data()) != REDIS_OK) {
+  std::vector<std::optional<std::string>> values;
+  values.reserve(keys.size());
+  for (std::size_t index = 0; index < keys.size(); ++index) {
+    if (reply->element[index] == nullptr) {
       reset_connection();
-      throw CacheError{"Redis pipeline append failed"};
+      throw CacheError{"Redis MGET returned an invalid element"};
     }
+    values.push_back(parse_value(*reply->element[index]));
+  }
+  return values;
+}
+
+void RedisProductCache::put_many(const std::vector<CacheWriteEntry>& entries) {
+  check_owner();
+  validate_product_cache_writes(entries);
+  if (entries.empty()) {
+    return;
   }
 
-  RedisReplyPtr read_reply() {
-    void* raw_reply = nullptr;
-    if (redisGetReply(_context.get(), &raw_reply) != REDIS_OK || raw_reply == nullptr) {
-      reset_connection();
-      throw CacheError{"Redis pipeline reply failed"};
+  ensure_connection();
+  bool command_rejected = false;
+  try {
+    for (const auto& entry : entries) {
+      const std::string ttl = std::to_string(entry.ttl_seconds);
+      append_command({"SET", entry.key, entry.value, "EX", ttl});
     }
-    return RedisReplyPtr{static_cast<redisReply*>(raw_reply)};
-  }
-
-  void expect_reply(const redisReply& reply, bool valid, std::string_view operation) {
-    if (reply.type == REDIS_REPLY_ERROR) {
-      throw CacheError{"Redis " + std::string{operation} + " was rejected"};
-    }
-    if (!valid) {
-      reset_connection();
-      throw CacheError{"Redis " + std::string{operation} + " returned an unexpected response"};
-    }
-  }
-
-  std::optional<std::string> parse_value(const redisReply& reply) {
-    if (reply.type == REDIS_REPLY_NIL) {
-      return std::nullopt;
-    }
-    expect_reply(
-        reply, reply.type == REDIS_REPLY_STRING && (reply.str != nullptr || reply.len == 0), "GET");
-    return reply.len != 0 ? std::string{reply.str, reply.len} : std::string{};
-  }
-
-  void expect_ok(const redisReply& reply, std::string_view operation) {
-    expect_reply(reply,
-                 reply.type == REDIS_REPLY_STATUS && reply.str != nullptr &&
-                     std::string_view{reply.str, reply.len} == "OK",
-                 operation);
-  }
-
-  std::vector<std::optional<std::string>> get_many(const std::vector<std::string>& keys) {
-    check_owner();
-    validate_product_cache_keys(keys);
-    if (keys.empty()) {
-      return {};
-    }
-
-    std::vector<std::string_view> arguments;
-    arguments.reserve(keys.size() + 1);
-    arguments.emplace_back("MGET");
-    for (const auto& key : keys) {
-      arguments.emplace_back(key);
-    }
-    const RedisReplyPtr reply = command(arguments);
-    expect_reply(
-        *reply,
-        reply->type == REDIS_REPLY_ARRAY && reply->elements == keys.size() && reply->element,
-        "MGET");
-
-    std::vector<std::optional<std::string>> values;
-    values.reserve(keys.size());
-    for (std::size_t index = 0; index < keys.size(); ++index) {
-      if (reply->element[index] == nullptr) {
-        reset_connection();
-        throw CacheError{"Redis MGET returned an invalid element"};
+    for (std::size_t index = 0; index < entries.size(); ++index) {
+      const ReplyPtr reply = read_reply();
+      if (reply->type == REDIS_REPLY_ERROR) {
+        command_rejected = true;
+      } else {
+        expect_ok(*reply, "SET");
       }
-      values.push_back(parse_value(*reply->element[index]));
     }
-    return values;
+  } catch (...) {
+    // 未读完的回复或尚未发送的命令不能留给下一次操作。
+    reset_connection();
+    throw;
   }
-
-  void put_many(const std::vector<CacheWriteEntry>& entries) {
-    check_owner();
-    validate_product_cache_writes(entries);
-    if (entries.empty()) {
-      return;
-    }
-
-    ensure_connection();
-    bool command_rejected = false;
-    try {
-      for (const auto& entry : entries) {
-        const std::string ttl = std::to_string(entry.ttl_seconds);
-        append_command({"SET", entry.key, entry.value, "EX", ttl});
-      }
-      for (std::size_t index = 0; index < entries.size(); ++index) {
-        const RedisReplyPtr reply = read_reply();
-        if (reply->type == REDIS_REPLY_ERROR) {
-          command_rejected = true;
-        } else {
-          expect_ok(*reply, "SET");
-        }
-      }
-    } catch (...) {
-      // 未读完的回复或尚未发送的命令不能留给下一次操作。
-      reset_connection();
-      throw;
-    }
-    if (command_rejected) {
-      throw CacheError{"Redis pipeline SET was rejected"};
-    }
+  if (command_rejected) {
+    throw CacheError{"Redis pipeline SET was rejected"};
   }
+}
 
- private:
-  void ensure_connection() {
-    if (_context != nullptr) {
-      return;
-    }
-    RedisContextPtr context{redisConnectWithTimeout(_options.host.c_str(),
-                                                    static_cast<int>(_options.port),
-                                                    to_timeval(_options.connect_timeout))};
-    if (context == nullptr || context->err != 0) {
-      throw CacheError{"Redis connection failed"};
-    }
-    if (redisSetTimeout(context.get(), to_timeval(_options.io_timeout)) != REDIS_OK) {
-      throw CacheError{"Redis I/O timeout setup failed"};
-    }
-    _context = std::move(context);
-
-    try {
-      if (!_options.username.empty()) {
-        expect_startup_ok({"AUTH", _options.username, _options.password}, "AUTH");
-      } else if (!_options.password.empty()) {
-        expect_startup_ok({"AUTH", _options.password}, "AUTH");
-      }
-      if (_options.database != 0) {
-        const std::string database = std::to_string(_options.database);
-        expect_startup_ok({"SELECT", database}, "SELECT");
-      }
-    } catch (...) {
-      reset_connection();
-      throw;
-    }
+void RedisProductCache::ensure_connection() {
+  if (_context != nullptr) {
+    return;
   }
-
-  void expect_startup_ok(const std::vector<std::string_view>& arguments, const char* operation) {
-    RedisReplyPtr reply = command(arguments);
-    expect_ok(*reply, operation);
+  ContextPtr context{redisConnectWithTimeout(_options.host.c_str(), static_cast<int>(_options.port),
+                                             to_timeval(_options.connect_timeout))};
+  if (context == nullptr || context->err != 0) {
+    throw CacheError{"Redis connection failed"};
   }
+  if (redisSetTimeout(context.get(), to_timeval(_options.io_timeout)) != REDIS_OK) {
+    throw CacheError{"Redis I/O timeout setup failed"};
+  }
+  _context = std::move(context);
 
-  void reset_connection() noexcept { _context.reset(); }
+  try {
+    if (!_options.username.empty()) {
+      expect_startup_ok({"AUTH", _options.username, _options.password}, "AUTH");
+    } else if (!_options.password.empty()) {
+      expect_startup_ok({"AUTH", _options.password}, "AUTH");
+    }
+    if (_options.database != 0) {
+      const std::string database = std::to_string(_options.database);
+      expect_startup_ok({"SELECT", database}, "SELECT");
+    }
+  } catch (...) {
+    reset_connection();
+    throw;
+  }
+}
 
-  RedisOptions _options;
-  std::thread::id _owner_thread;
-  RedisContextPtr _context;
-};
+void RedisProductCache::expect_startup_ok(const std::vector<std::string_view>& arguments,
+                                          const char* operation) {
+  ReplyPtr reply = command(arguments);
+  expect_ok(*reply, operation);
+}
 
-RedisProductCache::RedisProductCache(RedisOptions options)
-    : _impl{std::make_unique<Impl>(std::move(options))} {}
+void RedisProductCache::reset_connection() noexcept { _context.reset(); }
+
+RedisProductCache::RedisProductCache(RedisOptions options) : _options{std::move(options)} {
+  validate_redis_options(_options);
+}
 
 RedisProductCache::~RedisProductCache() = default;
 
 std::optional<std::string> RedisProductCache::get(std::string_view key) {
-  _impl->check_owner();
+  check_owner();
   if (!valid_product_cache_key(key)) {
     throw std::invalid_argument{"invalid product cache key"};
   }
-  const RedisReplyPtr reply = _impl->command({"GET", key});
-  return _impl->parse_value(*reply);
+  const ReplyPtr reply = command({"GET", key});
+  return parse_value(*reply);
 }
 
 void RedisProductCache::put(std::string_view key, std::string_view value,
                             std::uint32_t ttl_seconds) {
-  _impl->check_owner();
+  check_owner();
   if (!valid_product_cache_key(key)) {
     throw std::invalid_argument{"invalid product cache key"};
   }
@@ -254,28 +240,19 @@ void RedisProductCache::put(std::string_view key, std::string_view value,
     throw std::invalid_argument{"cache TTL must be in 1..30 days"};
   }
   const std::string ttl = std::to_string(ttl_seconds);
-  const RedisReplyPtr reply = _impl->command({"SET", key, value, "EX", ttl});
-  _impl->expect_ok(*reply, "SET");
+  const ReplyPtr reply = command({"SET", key, value, "EX", ttl});
+  expect_ok(*reply, "SET");
 }
 
 void RedisProductCache::erase(std::string_view key) {
-  _impl->check_owner();
+  check_owner();
   if (!valid_product_cache_key(key)) {
     throw std::invalid_argument{"invalid product cache key"};
   }
-  const RedisReplyPtr reply = _impl->command({"DEL", key});
-  _impl->expect_reply(
-      *reply, reply->type == REDIS_REPLY_INTEGER && (reply->integer == 0 || reply->integer == 1),
-      "DEL");
-}
-
-std::vector<std::optional<std::string>> RedisProductCache::get_many(
-    const std::vector<std::string>& keys) {
-  return _impl->get_many(keys);
-}
-
-void RedisProductCache::put_many(const std::vector<CacheWriteEntry>& entries) {
-  _impl->put_many(entries);
+  const ReplyPtr reply = command({"DEL", key});
+  expect_reply(*reply,
+               reply->type == REDIS_REPLY_INTEGER && (reply->integer == 0 || reply->integer == 1),
+               "DEL");
 }
 
 }  // namespace sphinx

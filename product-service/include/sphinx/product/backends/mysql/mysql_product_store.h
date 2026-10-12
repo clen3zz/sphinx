@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <mysql.h>
 #include <sphinx/product/application/ports/product_store.h>
 #include <sphinx/product/backends/mysql/mysql_options.h>
 
@@ -8,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace sphinx {
@@ -27,8 +29,22 @@ class MySqlProductStore final : public ProductStore {
   StoreUpdateResult update(const UpdateProductRequest& request) override;
 
  private:
-  struct Impl;
-  std::unique_ptr<Impl> _impl;
+  struct Connection;
+  struct Transaction;
+
+  void check_owner() const;
+  void ensure_connection();
+  [[noreturn]] void throw_mysql_error(unsigned int error, const char* message);
+  void check_statement(int result, MYSQL_STMT* statement, const char* message);
+  unsigned int clear_statement_result(MYSQL_STMT* statement);
+  template <typename Operation>
+  auto execute_statement(const std::string& sql, MYSQL_BIND* parameters, Operation operation);
+  std::vector<std::optional<Product>> read_products(std::vector<std::uint64_t> ids,
+                                                    bool for_update = false);
+
+  MySqlOptions _options;
+  std::thread::id _owner_thread = std::this_thread::get_id();
+  std::shared_ptr<Connection> _connection;
 };
 
 }  // namespace sphinx

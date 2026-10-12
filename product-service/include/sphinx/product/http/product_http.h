@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <httplib.h>
 #include <sphinx/product/application/product_service.h>
 #include <sphinx/product/application/protection/product_shared_state.h>
 
 #include <cstdint>
 #include <functional>
-#include <memory>
+#include <mutex>
 #include <string>
 
 namespace sphinx {
@@ -37,8 +38,13 @@ class ProductHttpServer final {
   void stop() noexcept;
 
  private:
-  struct Impl;
-  std::unique_ptr<Impl> _impl;
+  ProductHttpConfig _config;
+  ProductServiceFactory _current_service;
+  const ProductSharedState& _shared;
+  httplib::Server _server;
+  std::mutex _state_mutex;
+  bool _stopping = false;
+  bool _serve_called = false;
 };
 
 }  // namespace sphinx

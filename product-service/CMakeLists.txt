@@ -38,10 +38,10 @@ add_library(sphinx_product_mysql STATIC
         src/backends/mysql/mysql_product_store.cpp
         src/backends/mysql/mysql_runtime.cpp
 )
-target_link_libraries(sphinx_product_mysql PUBLIC sphinx_product_core PRIVATE PkgConfig::MYSQLCLIENT)
+target_link_libraries(sphinx_product_mysql PUBLIC sphinx_product_core PkgConfig::MYSQLCLIENT)
 
 add_library(sphinx_product_redis STATIC src/backends/redis/redis_product_cache.cpp)
-target_link_libraries(sphinx_product_redis PUBLIC sphinx_product_core PRIVATE PkgConfig::HIREDIS)
+target_link_libraries(sphinx_product_redis PUBLIC sphinx_product_core PkgConfig::HIREDIS)
 
 add_library(sphinx_product_sphinx STATIC src/backends/sphinx/sphinx_product_cache.cpp)
 target_link_libraries(sphinx_product_sphinx PUBLIC sphinx_product_core sphinx_client)
@@ -50,7 +50,7 @@ add_library(sphinx_product_http STATIC
         src/http/product_http.cpp
         src/http/product_http_routes.cpp
 )
-target_link_libraries(sphinx_product_http PUBLIC sphinx_product_core PRIVATE sphinx_httplib sphinx_json)
+target_link_libraries(sphinx_product_http PUBLIC sphinx_product_core sphinx_httplib PRIVATE sphinx_json)
 
 add_library(sphinx_product_bootstrap STATIC
         src/bootstrap/product_cache_factory.cpp
