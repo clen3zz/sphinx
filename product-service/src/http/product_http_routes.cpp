@@ -3,6 +3,7 @@
 
 #include <sphinx/product/application/product_metrics.h>
 #include <sphinx/product/bootstrap/product_config.h>
+#include <sphinx/product/bootstrap/product_worker.h>
 #include <sphinx/product/domain/product.h>
 
 #include <array>

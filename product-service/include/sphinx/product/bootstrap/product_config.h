@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <sphinx/product/application/cache/product_cache_policy.h>
 #include <sphinx/product/backends/mysql/mysql_options.h>
 #include <sphinx/product/bootstrap/product_cache_factory.h>
 #include <sphinx/product/http/product_http.h>
@@ -16,7 +17,7 @@ struct ProductRuntimeConfig {
   MySqlOptions mysql;
 };
 
-/// 启动阶段读取环境变量并校验，工作线程只使用配置副本。
+/// 启动阶段读取环境变量并校验，工作线程只读配置。
 ProductRuntimeConfig load_product_config();
 
 }  // namespace sphinx

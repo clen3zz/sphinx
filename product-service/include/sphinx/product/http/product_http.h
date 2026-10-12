@@ -2,12 +2,9 @@
 #pragma once
 
 #include <httplib.h>
-#include <sphinx/product/application/product_service.h>
 #include <sphinx/product/application/protection/product_shared_state.h>
 
 #include <cstdint>
-#include <exception>
-#include <functional>
 #include <mutex>
 #include <string>
 
@@ -21,14 +18,10 @@ struct ProductHttpConfig {
 
 struct ProductRuntimeConfig;
 
-using ProductWorkerLoop = std::function<void(ProductService&)>;
-using ProductWorkerRunner = std::function<void(const ProductWorkerLoop&)>;
-
-/// config/shared 必须长于服务；runner 创建线程资源并调用一次工作循环，返回后销毁资源。
+/// config/shared 必须长于服务；每个 HTTP 线程持有并销毁自己的 WorkerContext。
 class ProductHttpServer final {
  public:
-  ProductHttpServer(const ProductRuntimeConfig& config, ProductWorkerRunner run_worker,
-                    const ProductSharedState& shared);
+  ProductHttpServer(const ProductRuntimeConfig& config, ProductSharedState& shared);
   ~ProductHttpServer();
   ProductHttpServer(const ProductHttpServer&) = delete;
   ProductHttpServer& operator=(const ProductHttpServer&) = delete;
@@ -40,9 +33,7 @@ class ProductHttpServer final {
 
  private:
   const ProductRuntimeConfig& _config;
-  ProductWorkerRunner _run_worker;
-  const ProductSharedState& _shared;
-  std::exception_ptr _worker_failure;
+  ProductSharedState& _shared;
   httplib::Server _server;
   std::mutex _state_mutex;
   bool _stopping = false;

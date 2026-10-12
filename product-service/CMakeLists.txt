@@ -49,16 +49,15 @@ target_link_libraries(sphinx_product_sphinx PUBLIC sphinx_product_core sphinx_cl
 add_library(sphinx_product_http STATIC
         src/http/product_http.cpp
         src/http/product_http_routes.cpp
-)
-target_link_libraries(sphinx_product_http PUBLIC sphinx_product_core sphinx_httplib PRIVATE sphinx_json)
-
-add_library(sphinx_product_bootstrap STATIC
-        src/bootstrap/product_cache_factory.cpp
-        src/bootstrap/product_config.cpp
         src/bootstrap/product_worker.cpp
+        src/bootstrap/product_cache_factory.cpp
 )
+target_link_libraries(sphinx_product_http PUBLIC sphinx_product_core sphinx_httplib
+        PRIVATE sphinx_json sphinx_product_mysql sphinx_product_redis sphinx_product_sphinx)
+
+add_library(sphinx_product_bootstrap STATIC src/bootstrap/product_config.cpp)
 target_link_libraries(sphinx_product_bootstrap PUBLIC sphinx_product_core sphinx_product_http
-        PRIVATE sphinx_product_mysql sphinx_product_redis sphinx_product_sphinx)
+        PRIVATE sphinx_product_mysql)
 
 add_executable(sphinx-product-service src/bootstrap/product_main.cpp)
 target_link_libraries(sphinx-product-service PRIVATE sphinx_product_bootstrap)
