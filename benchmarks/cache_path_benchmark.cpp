@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <httplib.h>
-#include <sphinx/product/backends/redis/redis_product_cache.h>
-#include <sphinx/product/backends/sphinx/sphinx_product_cache.h>
+#include <backends/redis/redis_product_cache.h>
+#include <backends/sphinx/sphinx_product_cache.h>
 
 #include <algorithm>
 #include <chrono>

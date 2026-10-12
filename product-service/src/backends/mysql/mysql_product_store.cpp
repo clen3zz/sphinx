@@ -2,8 +2,8 @@
 #include <errmsg.h>
 #include <mysql.h>
 #include <mysqld_error.h>
-#include <sphinx/product/backends/mysql/mysql_product_store.h>
-#include <sphinx/product/backends/mysql/mysql_runtime.h>
+#include <backends/mysql/mysql_product_store.h>
+#include <backends/mysql/mysql_runtime.h>
 
 #include <algorithm>
 #include <array>

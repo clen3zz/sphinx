@@ -2,8 +2,8 @@
 #pragma once
 
 #include <httplib.h>
-#include <sphinx/product/application/product_service.h>
-#include <sphinx/product/application/protection/product_shared_state.h>
+#include <application/product_service.h>
+#include <application/product_shared_state.h>
 
 #include <string>
 

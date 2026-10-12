@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "product_http_routes.h"
 
-#include <sphinx/product/application/product_metrics.h>
-#include <sphinx/product/bootstrap/product_config.h>
-#include <sphinx/product/bootstrap/product_worker.h>
-#include <sphinx/product/domain/product.h>
+#include <application/product_metrics.h>
+#include <bootstrap/product_config.h>
+#include <bootstrap/product_worker.h>
+#include <product.h>
 
 #include <array>
 #include <cassert>

@@ -46,17 +46,19 @@ Sphinx 节点不连接 MySQL；商品服务通过网络访问缓存节点，不�
 
 ## 3. 商品服务的代码分层
 
-源文件位于 `product-service/src`，公开头文件位于 `product-service/include/sphinx/product`，测试位于 `product-service/test`。三者按对应职责组织；商品模型定义在公开头文件中，领域校验实现放在 `src/domain`。
+源文件位于 `product-service/src`，公开头文件位于 `product-service/include`，测试位于 `product-service/test`。头文件按 application/backends/bootstrap/http 组织，application 下的接口、缓存策略和并发保护头文件集中存放；商品模型定义在 `include/product.h`，领域校验实现放在 `src/product_rules.cpp`。源文件的 application 目录同样集中存放业务实现，测试保留职责子目录。
 
 ```text
 product-service/
-  include/sphinx/product/        公开接口，按下列职责组织
+  include/                      公开接口
+    product.h                   商品模型与修改请求
+    application/                服务、接口、缓存策略、并发保护、结果与指标
+    backends/                   按 mysql/redis/sphinx 区分后端
+    bootstrap/                  配置与装配接口
+    http/                       HTTP 服务接口
   src/
-    domain/                     商品字段与更新请求的约束校验
-    application/                读写流程、业务结果、限制与指标
-      ports/                    权威存储与缓存接口
-      cache/                    统一缓存编码与 basic/protected 策略
-      protection/               回源合并、数据库读准入和缓存熔断
+    product_rules.cpp           商品字段与更新请求的约束校验
+    application/                读写流程、接口、缓存策略、并发保护与指标
     backends/
       mysql/                    MySQL 配置、客户端运行时、存储实现
       sphinx/                   Sphinx 配置与缓存适配器
@@ -71,11 +73,11 @@ product-service/
 
 | 层 | 核心类型或入口 | 负责什么 |
 | --- | --- | --- |
-| domain | [Product、UpdateProductRequest](../product-service/include/sphinx/product/domain/product.h) | 定义商品与修改请求；校验 ID、版本、名称和整数价格 |
-| application | [ProductService](../product-service/include/sphinx/product/application/product_service.h) | `get`、`get_many`、`update`；缓存旁路、错误分类与保护流程 |
-| application/ports | [ProductStore](../product-service/include/sphinx/product/application/ports/product_store.h)、[ProductCache](../product-service/include/sphinx/product/application/ports/product_cache.h) | 规定权威存储和缓存的调用契约，隔离具体协议与客户端 |
-| application/cache | [codec](../product-service/src/application/cache/product_codec.cpp)、[ProductCachePolicy](../product-service/include/sphinx/product/application/cache/product_cache_policy.h) | 统一 key、正负缓存格式、解码校验与 TTL 规则 |
-| application/protection | [ProductSharedState](../product-service/include/sphinx/product/application/protection/product_shared_state.h) | 组织共享指标、读协调器与熔断器 |
+| domain | [Product、UpdateProductRequest](../product-service/include/product.h) | 定义商品与修改请求；校验 ID、版本、名称和整数价格 |
+| application | [ProductService](../product-service/include/application/product_service.h) | `get`、`get_many`、`update`；缓存旁路、错误分类与保护流程 |
+| application（存储与缓存接口） | [ProductStore](../product-service/include/application/product_store.h)、[ProductCache](../product-service/include/application/product_cache.h) | 规定权威存储和缓存的调用契约，隔离具体协议与客户端 |
+| application（缓存编码与策略） | [codec](../product-service/src/application/product_codec.cpp)、[ProductCachePolicy](../product-service/include/application/product_cache_policy.h) | 统一 key、正负缓存格式、解码校验与 TTL 规则 |
+| application（并发保护） | [ProductSharedState](../product-service/include/application/product_shared_state.h) | 组织共享指标、读协调器与熔断器 |
 | backends/mysql | [MySqlProductStore](../product-service/src/backends/mysql/mysql_product_store.cpp)、[MySqlRuntime](../product-service/src/backends/mysql/mysql_runtime.cpp) | 连接、预处理 SQL、事务、版本更新和客户端资源生命周期 |
 | backends/sphinx | [SphinxProductCache](../product-service/src/backends/sphinx/sphinx_product_cache.cpp) | 把缓存接口转换为 ClusterClient 调用 |
 | backends/redis | [RedisProductCache](../product-service/src/backends/redis/redis_product_cache.cpp) | 把缓存接口转换为 hiredis 命令并管理回复、连接与故障恢复 |

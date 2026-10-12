@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
-#include <sphinx/product/application/protection/cache_circuit_breaker.h>
+#include <application/cache_circuit_breaker.h>
 
 #include <chrono>
 #include <cstddef>

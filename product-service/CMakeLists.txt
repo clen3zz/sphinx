@@ -21,15 +21,15 @@ target_include_directories(sphinx_httplib INTERFACE ${cpp_httplib_SOURCE_DIR})
 
 # 业务核心只依赖统一编码与线程支持，不包含任何后端客户端。
 add_library(sphinx_product_core STATIC
-        src/domain/product_rules.cpp
-        src/application/ports/product_cache.cpp
-        src/application/ports/product_store.cpp
-        src/application/cache/product_codec.cpp
-        src/application/cache/product_cache_policy.cpp
+        src/product_rules.cpp
+        src/application/product_cache.cpp
+        src/application/product_store.cpp
+        src/application/product_codec.cpp
+        src/application/product_cache_policy.cpp
         src/application/product_service.cpp
         src/application/product_metrics.cpp
-        src/application/protection/product_read_coordinator.cpp
-        src/application/protection/cache_circuit_breaker.cpp
+        src/application/product_read_coordinator.cpp
+        src/application/cache_circuit_breaker.cpp
 )
 target_include_directories(sphinx_product_core PUBLIC include)
 target_link_libraries(sphinx_product_core PUBLIC sphinx_json pthread)

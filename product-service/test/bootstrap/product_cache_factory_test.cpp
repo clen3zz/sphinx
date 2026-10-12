@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
-#include <sphinx/product/application/ports/product_cache.h>
-#include <sphinx/product/backends/redis/redis_product_cache.h>
-#include <sphinx/product/backends/sphinx/sphinx_product_cache.h>
-#include <sphinx/product/bootstrap/product_cache_factory.h>
+#include <application/product_cache.h>
+#include <backends/redis/redis_product_cache.h>
+#include <backends/sphinx/sphinx_product_cache.h>
+#include <bootstrap/product_cache_factory.h>
 
 #include <memory>
 #include <stdexcept>

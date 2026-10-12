@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <hiredis.h>
-#include <sphinx/product/backends/redis/redis_product_cache.h>
+#include <backends/redis/redis_product_cache.h>
 #include <sys/time.h>
 
 #include <cassert>

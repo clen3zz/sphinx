@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include <sphinx/product/bootstrap/product_config.h>
+#include <bootstrap/product_config.h>
 
 #include <algorithm>
 #include <charconv>

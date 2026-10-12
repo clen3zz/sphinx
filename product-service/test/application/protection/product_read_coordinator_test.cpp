@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
-#include <sphinx/product/application/protection/product_read_coordinator.h>
+#include <application/product_read_coordinator.h>
 
 #include <array>
 #include <chrono>

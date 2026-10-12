@@ -2,7 +2,7 @@
 #include <gtest/gtest.h>
 #include <hiredis.h>
 #include <netinet/in.h>
-#include <sphinx/product/backends/redis/redis_product_cache.h>
+#include <backends/redis/redis_product_cache.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>

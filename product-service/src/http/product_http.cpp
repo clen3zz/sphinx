@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-#include <sphinx/product/bootstrap/product_config.h>
-#include <sphinx/product/bootstrap/product_worker.h>
-#include <sphinx/product/http/product_http.h>
+#include <bootstrap/product_config.h>
+#include <bootstrap/product_worker.h>
+#include <http/product_http.h>
 
 #include <mutex>
 #include <stdexcept>

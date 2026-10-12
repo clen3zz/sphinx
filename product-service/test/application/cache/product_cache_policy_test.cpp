@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
-#include <sphinx/product/application/cache/product_cache_policy.h>
+#include <application/product_cache_policy.h>
 
 #include <stdexcept>
 

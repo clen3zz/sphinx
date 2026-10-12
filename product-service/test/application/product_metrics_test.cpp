@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
-#include <sphinx/product/application/product_metrics.h>
+#include <application/product_metrics.h>
 
 #include <array>
 #include <cstddef>

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <mysql.h>
-#include <sphinx/product/application/ports/product_store.h>
-#include <sphinx/product/backends/mysql/mysql_runtime.h>
+#include <application/product_store.h>
+#include <backends/mysql/mysql_runtime.h>
 
 #include <cassert>
 #include <cstddef>
